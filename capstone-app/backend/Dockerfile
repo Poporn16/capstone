@@ -6,7 +6,6 @@ RUN apk add --no-cache \
     supervisor \
     postgresql-dev \
     libxml2-dev \
-    @force-install \
     bash
 
 RUN docker-php-ext-install pdo pdo_pgsql pdo_mysql xml
