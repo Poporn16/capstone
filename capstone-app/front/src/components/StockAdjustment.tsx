@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react"
 import type { InventoryItem } from "../App"
 import { supabase } from "./apiClient"
-import { Search, Plus, Minus, Layers, AlertCircle, RefreshCw, Trash2, Calendar } from "lucide-react"
+import { Plus, Minus, Layers, AlertCircle, Trash2, Calendar } from "lucide-react"
 
 interface StockAdjustmentProps {
   inventory: InventoryItem[]

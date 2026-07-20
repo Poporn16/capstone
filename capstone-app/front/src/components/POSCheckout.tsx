@@ -1,6 +1,6 @@
 import { useState } from "react"
 import type { InventoryItem, Sale } from "../App"
-import { Search, Plus, Minus, Trash2, ArrowLeft } from "lucide-react"
+import { ArrowLeft } from "lucide-react"
 
 interface POSCheckoutProps {
   inventory: InventoryItem[]

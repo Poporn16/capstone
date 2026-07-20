@@ -1,7 +1,7 @@
 import { useState } from "react"
 import type { InventoryItem } from "../App"
 import { supabase } from "./apiClient"
-import { Search, Plus, X, Trash2, FolderPlus } from "lucide-react"
+import { FolderPlus } from "lucide-react"
 
 interface InventoryManagerProps {
   inventory: InventoryItem[]
