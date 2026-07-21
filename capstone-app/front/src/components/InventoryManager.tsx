@@ -49,7 +49,6 @@ export function InventoryManager({
   })
 
   const handleDownloadTemplate = () => {
-    // Clean CSV template with only headers (no sample rows)
     const csvHeader = "Barcode,Product Name,Category,Manufacturer,Procurement Cost,Retail Price,Min Safety Stock,Initial Stock Quantity,Batch Expiry Date (MM/DD/YYYY or YYYY-MM-DD)\n"
     const blob = new Blob([csvHeader], { type: "text/csv;charset=utf-8;" })
     const url = URL.createObjectURL(blob)
@@ -132,12 +131,13 @@ export function InventoryManager({
           const name = columns[1]?.trim()
           const categoryInput = columns[2]?.trim().toLowerCase()
           const manufacturer = columns[3]?.trim() || null
-          const cost = parseFloat(columns[4]) || 0
-          const price = parseFloat(columns[5]) || 0
-          const minStock = Math.floor(parseFloat(columns[6]) || 10)
-          const initialStock = Math.floor(parseFloat(columns[7]) || 0)
+          const minStock = Math.floor(parseFloat(columns[4]) || 10)
+          const batchLabelInput = columns[5]?.trim()
+          const initialStock = Math.floor(parseFloat(columns[6]) || 0)
+          const cost = parseFloat(columns[7]) || 0
+          const price = parseFloat(columns[8]) || 0
           
-          const rawExpiry = columns[8]?.trim() || null
+          const rawExpiry = columns[9]?.trim() || null
           const expiryDate = parseDateToISO(rawExpiry)
 
           if (!name) continue
@@ -197,7 +197,9 @@ export function InventoryManager({
 
           if (initialStock > 0) {
             const cleanedName = name.replace(/\s+/g, "").substring(0, 5).toUpperCase()
-            const batchLabel = `IMPORT-${cleanedName}-${Date.now().toString().slice(-4)}`
+            const batchLabel = batchLabelInput && batchLabelInput !== "NO-BATCH" 
+              ? batchLabelInput 
+              : `BULK-${cleanedName}-${Date.now().toString().slice(-4)}`
 
             await supabase.from("inventory_batches").insert({
               item_id: targetItemId,
@@ -216,10 +218,10 @@ export function InventoryManager({
         await refreshInventory()
 
         if (onLogAction) {
-          await onLogAction("BULK_CSV_IMPORT", "ITEM_SPECIFICATIONS", `Bulk imported ${successCount} products from CSV file.`)
+          await onLogAction("BULK_CSV_IMPORT", "ITEM_SPECIFICATIONS", `Bulk imported/exported stock items from CSV file.`)
         }
 
-        alert(`Successfully imported ${successCount} products into database.`)
+        alert(`Successfully synchronized ${successCount} item records with stock batches.`)
       } catch (err) {
         alert("Error reading file. Please save file as CSV (Comma delimited) inside Excel.")
       } finally {
@@ -307,7 +309,7 @@ export function InventoryManager({
           <FileSpreadsheet className="w-5 h-5 text-green-600" />
           <div>
             <h3 className="font-bold text-gray-800 text-sm">Bulk Data Management</h3>
-            <p className="text-[10px] text-gray-500">Download formatted template or upload Excel CSV file to insert batch data.</p>
+            <p className="text-[10px] text-gray-500">Download blank template or upload CSV files.</p>
           </div>
         </div>
 
@@ -315,10 +317,10 @@ export function InventoryManager({
           <button
             type="button"
             onClick={handleDownloadTemplate}
-            className="px-3.5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-lg flex items-center gap-1.5 border transition-colors"
+            className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-lg flex items-center gap-1.5 border transition-colors"
           >
             <Download className="w-4 h-4 text-gray-500" />
-            Download Excel Template
+            Download Blank Template
           </button>
 
           <input 
@@ -333,10 +335,10 @@ export function InventoryManager({
             type="button"
             disabled={isBulkUploading}
             onClick={() => fileInputRef.current?.click()}
-            className="px-3.5 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors disabled:opacity-50"
+            className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors disabled:opacity-50"
           >
             <Upload className="w-4 h-4" />
-            {isBulkUploading ? "Processing Import..." : "Upload CSV File"}
+            {isBulkUploading ? "Processing..." : "Upload CSV"}
           </button>
         </div>
       </div>

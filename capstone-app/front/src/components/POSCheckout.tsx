@@ -409,7 +409,7 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
                 onClick={()=>setDiscountType("senior")} 
                 className={`p-1.5 border rounded text-[10px] font-bold uppercase transition-all ${discountType==='senior'?'bg-blue-600 text-white border-blue-600':'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
               >
-                SNR
+                SENIOR
               </button>
               <button 
                 type="button" 

@@ -4,9 +4,10 @@ import { Package, AlertTriangle, TrendingUp, Award } from "lucide-react";
 interface DashboardProps {
   inventory: InventoryItem[];
   sales: Sale[];
+  categoriesList?: string[];
 }
 
-export function Dashboard({ inventory, sales }: DashboardProps) {
+export function Dashboard({ inventory, sales, categoriesList = [] }: DashboardProps) {
   const activeSales = sales.filter(s => !s.isRefunded);
 
   const todayRevenue = activeSales
@@ -25,18 +26,28 @@ export function Dashboard({ inventory, sales }: DashboardProps) {
 
   const lowStockAlerts = inventory.filter(item => (item.stock || 0) <= (item.minStock || 10));
 
-  // Gather all unique categories dynamically from inventory items
-  const uniqueCategories = Array.from(new Set(inventory.map(item => (item.category || "unmarked category").toLowerCase())));
-  
-  const categoryData = uniqueCategories.map(catName => {
-    const matchingItems = inventory.filter(item => (item.category || "unmarked category").toLowerCase() === catName);
-    return {
-      name: catName,
-      units: matchingItems.reduce((sum, item) => sum + (item.stock || 0), 0),
-      value: matchingItems.reduce((sum, item) => sum + ((item.price || 0) * (item.stock || 0)), 0)
-    };
-  }).sort((a, b) => b.value - a.value);
+  // Merge categoriesList prop and existing inventory categories to show all categories
+  const allCategoryNames = Array.from(
+    new Set([
+      ...categoriesList.map(c => c.trim()),
+      ...inventory.map(item => (item.category || "unmarked category").trim())
+    ])
+  );
 
+  const categoryData = allCategoryNames
+    .map(catName => {
+      const matchingItems = inventory.filter(
+        item => (item.category || "unmarked category").trim().toLowerCase() === catName.toLowerCase()
+      );
+      return {
+        name: catName,
+        units: matchingItems.reduce((sum, item) => sum + (item.stock || 0), 0),
+        value: matchingItems.reduce((sum, item) => sum + ((item.price || 0) * (item.stock || 0)), 0)
+      };
+    })
+    .sort((a, b) => b.value - a.value);
+
+  // Removed .slice(0, 5) so all nearly expired products display
   const nearlyExpiredProducts = inventory
     .flatMap(item => 
       (item.batches || []).map(batch => ({
@@ -52,8 +63,7 @@ export function Dashboard({ inventory, sales }: DashboardProps) {
       return { ...b, daysLeft: Math.ceil(diffTime / (1000 * 60 * 60 * 24)) };
     })
     .filter(b => b.daysLeft > 0 && b.daysLeft <= 90)
-    .sort((a, b) => a.daysLeft - b.daysLeft)
-    .slice(0, 5);
+    .sort((a, b) => a.daysLeft - b.daysLeft);
 
   const productSalesMap: Record<string, { name: string, quantity: number, revenue: number }> = {};
   
