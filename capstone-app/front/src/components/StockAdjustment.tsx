@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react"
 import type { InventoryItem } from "../App"
 import { supabase } from "./apiClient"
-import { Plus, Minus, Layers, AlertCircle, Trash2, Calendar } from "lucide-react"
+import { Search, Plus, Minus, Layers, AlertCircle, RefreshCw, Trash2, Calendar } from "lucide-react"
 
 interface StockAdjustmentProps {
   inventory: InventoryItem[]
@@ -17,12 +17,16 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
   
   const [batchLabel, setBatchLabel] = useState("")
   const [batchQty, setBatchQty] = useState<string>("")
+  const [batchCost, setBatchCost] = useState<string>("")
+  const [batchPrice, setBatchPrice] = useState<string>("")
   const [expiryDate, setExpiryDate] = useState("")
   
   const [isProcessing, setIsProcessing] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   const [localQuantities, setLocalQuantities] = useState<Record<string, string>>({})
+  const [localCosts, setLocalCosts] = useState<Record<string, string>>({})
+  const [localPrices, setLocalPrices] = useState<Record<string, string>>({})
 
   const dynamicCategories = categoriesList.filter(c => c !== "unmarked category")
 
@@ -40,12 +44,18 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
       const cleanedName = selectedItem.name.replace(/\s+/g, "").substring(0, 5).toUpperCase()
       const timestampString = Date.now().toString().slice(-4)
       setBatchLabel(`LOT-${cleanedName}-${timestampString}`)
+      setBatchCost("")
+      setBatchPrice("")
     } else {
       setBatchLabel("")
+      setBatchCost("")
+      setBatchPrice("")
     }
     setBatchQty("")
     setExpiryDate("")
     setLocalQuantities({})
+    setLocalCosts({})
+    setLocalPrices({})
     setErrorMessage(null)
   }, [selectedItem])
 
@@ -67,12 +77,17 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
     setIsProcessing(true)
     setErrorMessage(null)
 
+    const parsedCost = parseFloat(batchCost) || 0
+    const parsedPrice = parseFloat(batchPrice) || 0
+
     const { error } = await supabase
       .from("inventory_batches")
       .insert({
         item_id: Number(selectedItem.id),
         batch_label: batchLabel.trim().toUpperCase(),
         stock: parsedQty,
+        cost: parsedCost,
+        price: parsedPrice,
         expiry_date: expiryDate || null
       })
 
@@ -83,11 +98,13 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
     }
 
     if (onLogAction) {
-      const logDetails = `Added new batch "${batchLabel.toUpperCase()}" with ${parsedQty} units for item "${selectedItem.name}" (Expiry: ${expiryDate || "None"})`
+      const logDetails = `Added new batch "${batchLabel.toUpperCase()}" with ${parsedQty} units at Cost: ₱${parsedCost.toFixed(2)}, Price: ₱${parsedPrice.toFixed(2)} for item "${selectedItem.name}" (Expiry: ${expiryDate || "None"})`
       await onLogAction("ADD_BATCH", "INVENTORY_MANAGEMENT", logDetails)
     }
 
     setBatchQty("")
+    setBatchCost("")
+    setBatchPrice("")
     setExpiryDate("")
     await fetchInventory()
     setIsProcessing(false)
@@ -132,6 +149,28 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
       }
       await fetchInventory()
     }
+  }
+
+  const handleUpdateBatchCost = async (batchId: string, typedCost: string, batchName: string) => {
+    if (!selectedItem) return
+    const parsed = parseFloat(typedCost) || 0
+
+    await supabase.from("inventory_batches").update({ cost: parsed }).eq("id", Number(batchId))
+    if (onLogAction) {
+      await onLogAction("EDIT_BATCH_COST", "INVENTORY_MANAGEMENT", `Updated batch "${batchName}" cost to ₱${parsed.toFixed(2)} for item "${selectedItem.name}"`)
+    }
+    await fetchInventory()
+  }
+
+  const handleUpdateBatchPrice = async (batchId: string, typedPrice: string, batchName: string) => {
+    if (!selectedItem) return
+    const parsed = parseFloat(typedPrice) || 0
+
+    await supabase.from("inventory_batches").update({ price: parsed }).eq("id", Number(batchId))
+    if (onLogAction) {
+      await onLogAction("EDIT_BATCH_PRICE", "INVENTORY_MANAGEMENT", `Updated batch "${batchName}" selling price to ₱${parsed.toFixed(2)} for item "${selectedItem.name}"`)
+    }
+    await fetchInventory()
   }
 
   const handleUpdateBatchExpiry = async (batchId: string, oldExpiry: string, newExpiry: string, batchName: string) => {
@@ -249,14 +288,58 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
                 ) : (
                   selectedItem.batches.map(batch => {
                     const isExpired = batch.expiryDate && new Date(batch.expiryDate).getTime() < new Date().getTime()
-                    const displayValue = localQuantities[batch.id] !== undefined ? localQuantities[batch.id] : batch.stock
+                    const displayQty = localQuantities[batch.id] !== undefined ? localQuantities[batch.id] : batch.stock
+                    const displayCost = localCosts[batch.id] !== undefined ? localCosts[batch.id] : String(batch.cost || 0)
+                    const displayPrice = localPrices[batch.id] !== undefined ? localPrices[batch.id] : String(batch.price || 0)
 
                     return (
-                      <div key={batch.id} className="p-3 bg-gray-50 border border-gray-100 rounded-xl flex items-center justify-between transition-colors hover:bg-gray-50/80 gap-4">
+                      <div key={batch.id} className="p-3 bg-gray-50 border border-gray-100 rounded-xl flex items-center justify-between transition-colors hover:bg-gray-50/80 gap-3">
                         <div className="min-w-0 flex-1 space-y-1.5">
                           <p className="font-bold text-gray-900 font-mono text-xs truncate">{batch.batchLabel}</p>
                           
-                          {/* Inline Dynamic Expiry Date Modification Field */}
+                          {/* Editable Cost & Price Inputs per Batch */}
+                          <div className="flex items-center gap-2 font-mono text-[10px] text-gray-600">
+                            <div className="flex items-center gap-1">
+                              <span>Cost: ₱</span>
+                              <input 
+                                type="text"
+                                value={displayCost}
+                                onChange={e => {
+                                  const val = e.target.value.replace(/[^0-9.]/g, "")
+                                  setLocalCosts(prev => ({ ...prev, [batch.id]: val }))
+                                }}
+                                onBlur={() => {
+                                  if (localCosts[batch.id] !== undefined) {
+                                    handleUpdateBatchCost(batch.id, localCosts[batch.id], batch.batchLabel)
+                                    setLocalCosts(prev => { const n = { ...prev }; delete n[batch.id]; return n })
+                                  }
+                                }}
+                                className="w-14 px-1 border rounded bg-white font-mono text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
+
+                            <span>•</span>
+
+                            <div className="flex items-center gap-1">
+                              <span>Price: ₱</span>
+                              <input 
+                                type="text"
+                                value={displayPrice}
+                                onChange={e => {
+                                  const val = e.target.value.replace(/[^0-9.]/g, "")
+                                  setLocalPrices(prev => ({ ...prev, [batch.id]: val }))
+                                }}
+                                onBlur={() => {
+                                  if (localPrices[batch.id] !== undefined) {
+                                    handleUpdateBatchPrice(batch.id, localPrices[batch.id], batch.batchLabel)
+                                    setLocalPrices(prev => { const n = { ...prev }; delete n[batch.id]; return n })
+                                  }
+                                }}
+                                className="w-14 px-1 border rounded bg-white font-mono font-bold text-gray-900 text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
+                          </div>
+
                           <div className="flex items-center gap-1.5 text-gray-500">
                             <Calendar className="w-3 h-3 flex-shrink-0 text-gray-400" />
                             <input 
@@ -281,7 +364,7 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
                           
                           <input
                             type="text"
-                            value={displayValue}
+                            value={displayQty}
                             onChange={e => {
                               const inputVal = e.target.value
                               const cleanVal = inputVal.replace(/[^0-9]/g, "")
@@ -324,7 +407,6 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
                             <Plus className="w-2.5 h-2.5" />
                           </button>
 
-                          {/* Dedicated Explicit Remove Batch Option row control button */}
                           <button 
                             type="button" 
                             onClick={() => handleDeleteBatch(batch.id, batch.batchLabel)}
@@ -383,6 +465,32 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
                     }}
                     className="w-full p-2 border border-gray-200 rounded-lg text-xs bg-white font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500" 
                   />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="block text-gray-500 font-bold uppercase text-[9px] tracking-wider">Supply Cost (₱)</label>
+                    <input 
+                      type="number" 
+                      step="0.01"
+                      placeholder="0.00" 
+                      value={batchCost}
+                      onChange={e => setBatchCost(e.target.value)}
+                      className="w-full p-2 border border-gray-200 rounded-lg text-xs bg-white font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500" 
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-gray-500 font-bold uppercase text-[9px] tracking-wider">Selling Price (₱)</label>
+                    <input 
+                      type="number" 
+                      step="0.01"
+                      placeholder="0.00" 
+                      value={batchPrice}
+                      onChange={e => setBatchPrice(e.target.value)}
+                      className="w-full p-2 border border-gray-200 rounded-lg text-xs bg-white font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500" 
+                    />
+                  </div>
                 </div>
 
                 <div className="space-y-1">

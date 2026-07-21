@@ -1,5 +1,5 @@
 import type { InventoryItem, Sale } from "../App";
-import { Package, AlertTriangle, TrendingUp, DollarSign, Award } from "lucide-react";
+import { Package, AlertTriangle, TrendingUp, Award } from "lucide-react";
 
 interface DashboardProps {
   inventory: InventoryItem[];
@@ -7,28 +7,39 @@ interface DashboardProps {
 }
 
 export function Dashboard({ inventory, sales }: DashboardProps) {
-  const totalRevenue = sales
-    .filter(s => !s.isRefunded)
+  const activeSales = sales.filter(s => !s.isRefunded);
+
+  const todayRevenue = activeSales
+    .filter(s => new Date(s.date).toDateString() === new Date().toDateString())
     .reduce((sum, s) => sum + s.total, 0);
 
-  const totalTransactions = sales.filter(s => !s.isRefunded).length;
+  const totalRevenue = activeSales.reduce((sum, s) => sum + s.total, 0);
+  const totalTransactions = activeSales.length;
   const totalUniqueItems = inventory.length;
-  const totalInventoryValue = inventory.reduce((sum, item) => sum + item.price * item.stock, 0);
-  const lowStockAlerts = inventory.filter(item => item.stock <= item.minStock);
 
-  const uniqueCategories = Array.from(new Set(inventory.map(item => item.category)));
-  const categoryData = uniqueCategories.map(cat => {
-    const matchingItems = inventory.filter(item => item.category === cat);
+  const totalInventoryValue = inventory.reduce((sum, item) => {
+    const itemStock = item.stock || 0;
+    const itemPrice = item.price || 0;
+    return sum + (itemPrice * itemStock);
+  }, 0);
+
+  const lowStockAlerts = inventory.filter(item => (item.stock || 0) <= (item.minStock || 10));
+
+  // Gather all unique categories dynamically from inventory items
+  const uniqueCategories = Array.from(new Set(inventory.map(item => (item.category || "unmarked category").toLowerCase())));
+  
+  const categoryData = uniqueCategories.map(catName => {
+    const matchingItems = inventory.filter(item => (item.category || "unmarked category").toLowerCase() === catName);
     return {
-      name: cat,
-      units: matchingItems.reduce((sum, item) => sum + item.stock, 0),
-      value: matchingItems.reduce((sum, item) => sum + item.price * item.stock, 0)
+      name: catName,
+      units: matchingItems.reduce((sum, item) => sum + (item.stock || 0), 0),
+      value: matchingItems.reduce((sum, item) => sum + ((item.price || 0) * (item.stock || 0)), 0)
     };
   }).sort((a, b) => b.value - a.value);
 
   const nearlyExpiredProducts = inventory
     .flatMap(item => 
-      item.batches.map(batch => ({
+      (item.batches || []).map(batch => ({
         name: item.name,
         category: item.category,
         expiryDate: batch.expiryDate,
@@ -45,13 +56,21 @@ export function Dashboard({ inventory, sales }: DashboardProps) {
     .slice(0, 5);
 
   const productSalesMap: Record<string, { name: string, quantity: number, revenue: number }> = {};
-  sales.filter(s => !s.isRefunded).forEach(sale => {
+  
+  activeSales.forEach(sale => {
     sale.items.forEach(si => {
-      if (!productSalesMap[si.item.id]) {
-        productSalesMap[si.item.id] = { name: si.item.name, quantity: 0, revenue: 0 };
+      const itemId = si.item.id;
+      const qty = Number(si.quantity) || 0;
+
+      const matchedInventory = inventory.find(inv => String(inv.id) === String(itemId));
+      const activePrice = Number(si.item.price) || Number(matchedInventory?.price) || 0;
+      const lineRevenue = qty * activePrice;
+
+      if (!productSalesMap[itemId]) {
+        productSalesMap[itemId] = { name: si.item.name, quantity: 0, revenue: 0 };
       }
-      productSalesMap[si.item.id].quantity += si.quantity;
-      productSalesMap[si.item.id].revenue += si.quantity * si.item.price;
+      productSalesMap[itemId].quantity += qty;
+      productSalesMap[itemId].revenue += lineRevenue;
     });
   });
 
@@ -69,16 +88,20 @@ export function Dashboard({ inventory, sales }: DashboardProps) {
   return (
     <div className="space-y-6 text-xs font-medium">
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white p-4 rounded-xl border flex justify-between items-center shadow-sm">
+        <div className="bg-white p-4 rounded-xl border flex justify-between items-center shadow-xs">
           <div>
             <p className="text-gray-500 font-bold tracking-wide uppercase text-[10px]">Today's Revenue</p>
-            <h3 className="text-gray-900 font-bold text-lg mt-1">₱{totalRevenue.toFixed(2)}</h3>
-            <p className="text-gray-400 text-[10px] mt-0.5">{totalTransactions} transactions</p>
+            <h3 className="text-gray-900 font-bold text-lg mt-1">₱{todayRevenue.toFixed(2)}</h3>
+            <p className="text-gray-400 text-[10px] mt-0.5">
+              {activeSales.filter(s => new Date(s.date).toDateString() === new Date().toDateString()).length} transactions
+            </p>
           </div>
-          <div className="w-10 h-10 bg-green-50 rounded-lg flex items-center justify-center text-green-600"><DollarSign className="w-5 h-5"/></div>
+          <div className="w-10 h-10 bg-green-50 rounded-lg flex items-center justify-center font-bold text-green-600 text-lg">
+            ₱
+          </div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border flex justify-between items-center shadow-sm">
+        <div className="bg-white p-4 rounded-xl border flex justify-between items-center shadow-xs">
           <div>
             <p className="text-gray-500 font-bold tracking-wide uppercase text-[10px]">Total Revenue</p>
             <h3 className="text-gray-900 font-bold text-lg mt-1">₱{totalRevenue.toFixed(2)}</h3>
@@ -87,7 +110,7 @@ export function Dashboard({ inventory, sales }: DashboardProps) {
           <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center text-blue-600"><TrendingUp className="w-5 h-5"/></div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border flex justify-between items-center shadow-sm">
+        <div className="bg-white p-4 rounded-xl border flex justify-between items-center shadow-xs">
           <div>
             <p className="text-gray-500 font-bold tracking-wide uppercase text-[10px]">Inventory Value</p>
             <h3 className="text-gray-900 font-bold text-lg mt-1">₱{totalInventoryValue.toFixed(2)}</h3>
@@ -96,7 +119,7 @@ export function Dashboard({ inventory, sales }: DashboardProps) {
           <div className="w-10 h-10 bg-indigo-50 rounded-lg flex items-center justify-center text-indigo-600"><Package className="w-5 h-5"/></div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border flex justify-between items-center shadow-sm">
+        <div className="bg-white p-4 rounded-xl border flex justify-between items-center shadow-xs">
           <div>
             <p className="text-gray-500 font-bold tracking-wide uppercase text-[10px]">Low Stock Alerts</p>
             <h3 className="text-gray-900 font-bold text-lg mt-1">{lowStockAlerts.length}</h3>
@@ -107,7 +130,7 @@ export function Dashboard({ inventory, sales }: DashboardProps) {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-white p-4 rounded-xl border space-y-3">
+        <div className="bg-white p-4 rounded-xl border space-y-3 shadow-xs">
           <h4 className="font-bold text-gray-800 text-sm flex items-center gap-1.5"><AlertTriangle className="w-4 h-4 text-orange-500"/> Low Stock Alerts</h4>
           <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
             {lowStockAlerts.length === 0 ? (
@@ -129,7 +152,7 @@ export function Dashboard({ inventory, sales }: DashboardProps) {
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border space-y-3">
+        <div className="bg-white p-4 rounded-xl border space-y-3 shadow-xs">
           <h4 className="font-bold text-gray-800 text-sm">Nearly Expired Products</h4>
           <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
             {nearlyExpiredProducts.length === 0 ? (
@@ -153,7 +176,7 @@ export function Dashboard({ inventory, sales }: DashboardProps) {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-white p-5 rounded-xl border shadow-sm space-y-4">
+        <div className="bg-white p-5 rounded-xl border shadow-xs space-y-4">
           <h4 className="font-bold text-gray-800 text-sm tracking-wide flex items-center gap-1.5">
             <Package className="w-4 h-4 text-blue-600" />
             Inventory by Category
@@ -177,10 +200,9 @@ export function Dashboard({ inventory, sales }: DashboardProps) {
           </div>
         </div>
 
-        {/* Updated Box: Scrollable Most Sold Items List View */}
-        <div className="bg-white p-5 rounded-xl border shadow-sm space-y-4">
+        <div className="bg-white p-5 rounded-xl border shadow-xs space-y-4">
           <h4 className="font-bold text-gray-800 text-sm tracking-wide flex items-center gap-1.5">
-            <Award className="w-4 h-4 text-yellow-500" />
+            <Award className="w-4 h-4 text-amber-500" />
             Most Sold Items
           </h4>
           <div className="space-y-3 max-h-64 overflow-y-auto pr-1">

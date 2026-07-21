@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { Sale } from "../App";
 import { Search, RotateCcw, FileText, Download, User } from "lucide-react";
+import { supabase } from "./apiClient";
 
 interface SalesHistoryProps {
   sales: Sale[];
@@ -17,6 +18,24 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
   const [statusCondition, setStatusCondition] = useState<StatusCondition>("all");
   const [paymentRoute, setPaymentRoute] = useState<PaymentRoute>("all");
   const [selectedInvoice, setSelectedInvoice] = useState<Sale | null>(null);
+
+  useEffect(() => {
+    // Enable real-time updates for sales history
+    const salesChannel = supabase
+      .channel("realtime-sales-history")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "sales" },
+        () => {
+          window.dispatchEvent(new Event("refresh_sales_data"));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(salesChannel);
+    };
+  }, []);
 
   const getFilteredSales = () => {
     let result = [...sales];
@@ -158,7 +177,10 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
 
       <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
         <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-          <h3 className="font-bold text-gray-800 text-sm tracking-wide">Logged Invoices Explorer</h3>
+          <h3 className="font-bold text-gray-800 text-sm tracking-wide flex items-center gap-2">
+            Logged Invoices Explorer
+            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" title="Realtime Active" />
+          </h3>
           <button 
             type="button" 
             onClick={handleExportCSV} 
@@ -176,7 +198,7 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
               <tr className="text-gray-500 font-bold">
                 <th className="p-4">Transaction ID</th>
                 <th className="p-4">Date & Time</th>
-                <th className="p-4">Operator</th> {/* New Column Title */}
+                <th className="p-4">Operator</th>
                 <th className="p-4">Payment Type</th>
                 <th className="p-4">Status Profile</th>
                 <th className="p-4">Total Cost</th>
@@ -220,6 +242,7 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
                           type="button" 
                           onClick={() => setSelectedInvoice(sale)}
                           className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
+                          title="View Invoice Sheet Details"
                         >
                           <FileText className="w-4 h-4" />
                         </button>
@@ -227,6 +250,7 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
                           type="button" 
                           onClick={() => handleToggleAction(sale.id, !!sale.isRefunded)}
                           className={`p-1 transition-colors ${sale.isRefunded ? 'text-gray-400 hover:text-green-600' : 'text-gray-400 hover:text-red-500'}`}
+                          title={sale.isRefunded ? "Revert Void" : "Void Invoice"}
                         >
                           <RotateCcw className="w-4 h-4" />
                         </button>

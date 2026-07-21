@@ -14,6 +14,8 @@ export interface InventoryBatch {
   batchLabel: string
   stock: number
   expiryDate: string
+  cost: number
+  price: number
 }
 
 export interface InventoryItem {
@@ -60,16 +62,31 @@ export default function App() {
       fetchInventory()
       fetchSales()
     }
+
+    const handleRealtimeRefresh = () => {
+      fetchInventory()
+      fetchSales()
+    }
+
+    window.addEventListener("refresh_sales_data", handleRealtimeRefresh)
+    return () => {
+      window.removeEventListener("refresh_sales_data", handleRealtimeRefresh)
+    }
   }, [currentOperator])
 
   const logSystemAction = async (actionType: string, moduleTarget: string, details: string) => {
-    if (!currentOperator) return
-    await supabase.from("system_audit_logs").insert({
-      operator_username: currentOperator.username,
+    const operatorName = currentOperator ? currentOperator.username : "admin"
+    
+    const { error } = await supabase.from("system_audit_logs").insert({
+      operator_username: operatorName,
       action_type: actionType,
       module_target: moduleTarget,
       details_summary: details
     })
+
+    if (error) {
+      console.error("Audit log insert failed:", error.message)
+    }
   }
 
   const fetchCategories = async () => {
@@ -90,17 +107,23 @@ export default function App() {
         id: String(b.id),
         batchLabel: b.batch_label,
         stock: Math.floor(Number(b.stock)) || 0,
-        expiryDate: b.expiry_date || ""
+        expiryDate: b.expiry_date || "",
+        cost: Number(b.cost) || 0,
+        price: Number(b.price) || 0
       })) || []
       
       const totalStock = itemBatches.reduce((sum, b) => sum + b.stock, 0)
+
+      const activeBatchWithPrice = itemBatches.find(b => b.stock > 0 && b.price > 0) || itemBatches[0]
+      const effectivePrice = activeBatchWithPrice ? activeBatchWithPrice.price : (Number(item.price) || 0)
+      const effectiveCost = activeBatchWithPrice ? activeBatchWithPrice.cost : (Number(item.cost) || 0)
 
       return {
         id: String(item.id),
         name: item.name,
         category: item.category || "unmarked category",
-        price: Number(item.price) || 0,
-        cost: Number(item.cost) || 0,
+        price: effectivePrice,
+        cost: effectiveCost,
         stock: totalStock, 
         minStock: Math.floor(Number(item.min_stock)) || 0,
         barcode: item.barcode,
@@ -113,43 +136,62 @@ export default function App() {
   }
 
   const fetchSales = async () => {
-    const { data } = await supabase.from('sales').select(`
-      id, date, total, payment_method, senior_discount, is_refunded, processed_by,
-      gross_total, subtotal, discount, taxable_base, vat, cash_received, change, discount_label,
-      sale_items ( quantity, inventory ( id, name, category, price, cost, min_stock, barcode ) )
-    `)
-    
-    const formattedSales = data?.map((sale: any) => ({
-      id: String(sale.id),
-      date: new Date(sale.date),
-      grossTotal: Number(sale.gross_total) || Number(sale.total),
-      subtotal: Number(sale.subtotal) || Number(sale.total),
-      discount: Number(sale.discount) || 0,
-      taxableBase: Number(sale.taxable_base) || Number(sale.total),
-      vat: Number(sale.vat) || 0,
-      total: Number(sale.total),
-      cashReceived: Number(sale.cash_received) || 0,
-      change: Number(sale.change) || 0,
-      paymentMethod: sale.payment_method || "cash",
-      discountLabel: sale.discount_label || "NONE",
-      processedBy: sale.processed_by || "System",
-      isRefunded: sale.is_refunded || false,
-      items: sale.sale_items?.map((si: any) => ({
-        quantity: si.quantity,
-        item: {
-          id: String(si.inventory.id),
-          name: si.inventory.name,
-          category: si.inventory.category,
-          price: si.inventory.price,
-          cost: si.inventory.cost || 0,
-          stock: 0,
-          minStock: si.inventory.min_stock,
-          barcode: si.inventory.barcode,
-          batches: []
+    // 1. Fetch sales master records directly
+    const { data: salesData, error: salesErr } = await supabase
+      .from('sales')
+      .select('*')
+      .order('id', { ascending: false })
+
+    if (salesErr) {
+      console.error("Error fetching sales:", salesErr.message)
+      return
+    }
+
+    // 2. Fetch sale items and inventory separately
+    const { data: saleItemsData } = await supabase.from('sale_items').select('*')
+    const { data: inventoryData } = await supabase.from('inventory').select('*')
+
+    const formattedSales: Sale[] = salesData?.map((sale: any) => {
+      // Find items belonging to this sale
+      const matchingSaleItems = saleItemsData?.filter(si => String(si.sale_id) === String(sale.id)) || []
+
+      const items = matchingSaleItems.map(si => {
+        const inv = inventoryData?.find(inv => String(inv.id) === String(si.item_id))
+        return {
+          quantity: Math.floor(Number(si.quantity)) || 1,
+          item: {
+            id: String(si.item_id || 0),
+            name: inv?.name || "Product Item",
+            category: inv?.category || "Uncategorized",
+            price: Number(inv?.price) || 0,
+            cost: Number(inv?.cost) || 0,
+            stock: 0,
+            minStock: Number(inv?.min_stock) || 0,
+            barcode: inv?.barcode || "",
+            batches: []
+          }
         }
-      })) || []
-    })) || []
-    
+      })
+
+      return {
+        id: String(sale.id),
+        date: new Date(sale.date || sale.created_at || Date.now()),
+        items: items, // Added missing required property
+        grossTotal: Number(sale.gross_total) || Number(sale.total) || 0,
+        subtotal: Number(sale.subtotal) || Number(sale.total) || 0,
+        discount: Number(sale.discount) || 0,
+        taxableBase: Number(sale.taxable_base) || Number(sale.total) || 0,
+        vat: Number(sale.vat) || 0,
+        total: Number(sale.total) || 0,
+        cashReceived: Number(sale.cash_received) || 0,
+        change: Number(sale.change) || 0,
+        paymentMethod: (sale.payment_method || "cash").toLowerCase() as "cash" | "gcash",
+        discountLabel: sale.discount_label || "NONE",
+        processedBy: sale.processed_by || "admin",
+        isRefunded: Boolean(sale.is_refunded)
+      }
+    }) || []
+
     setSales(formattedSales)
   }
 
@@ -199,6 +241,16 @@ export default function App() {
           if (neededQty <= 0) break
           const currentBatchStock = Math.floor(batch.stock)
           if (currentBatchStock > 0) {
+            const qtyDeducted = Math.min(neededQty, currentBatchStock)
+            
+            await supabase.from('sale_item_batches').insert({
+              sale_id: Number(newSale.id),
+              item_name: si.item.name,
+              batch_label: batch.batch_label,
+              quantity_deducted: qtyDeducted,
+              unit_price: Number(batch.price) || Number(si.item.price) || 0
+            })
+
             if (currentBatchStock > neededQty) {
               await supabase.from('inventory_batches').update({ stock: currentBatchStock - neededQty }).eq('id', batch.id)
               neededQty = 0
@@ -220,8 +272,6 @@ export default function App() {
     const payload: any = {
       name: item.name,
       category: item.category,
-      price: Number(item.price) || 0,
-      cost: Number(item.cost) || 0,
       min_stock: Math.floor(Number(item.minStock)) || 10,
       barcode: item.barcode,
       manufacturer: item.manufacturer || null
@@ -229,10 +279,10 @@ export default function App() {
 
     if (item.id && item.id.trim() !== "") {
       await supabase.from('inventory').update(payload).eq('id', Number(item.id))
-      await logSystemAction("UPDATE_PRODUCT", "ITEM_SPECIFICATIONS", `Modified product template specifications for "${item.name}" (Barcode: ${item.barcode})`)
+      await logSystemAction("UPDATE_PRODUCT", "ITEM_SPECIFICATIONS", `Modified product specifications for "${item.name}" (Barcode: ${item.barcode})`)
     } else {
       await supabase.from('inventory').insert(payload)
-      await logSystemAction("CREATE_PRODUCT", "ITEM_SPECIFICATIONS", `Registered new product template definition for "${item.name}" (Barcode: ${item.barcode})`)
+      await logSystemAction("CREATE_PRODUCT", "ITEM_SPECIFICATIONS", `Registered new product definition for "${item.name}" (Barcode: ${item.barcode})`)
     }
     fetchInventory()
   }
@@ -254,15 +304,26 @@ export default function App() {
   }
 
   if (!currentOperator) {
-    return <LoginScreen onAuthSuccess={async (operator: any) => {
-      setCurrentOperator(operator)
-      await supabase.from("system_audit_logs").insert({
-        operator_username: operator.username,
-        action_type: "SESSION_LOGIN",
-        module_target: "AUTHENTICATION Portal",
-        details_summary: `User terminal log-in verification session authorized successfully.`
-      })
-    }} />
+    return (
+      <LoginScreen
+        onAuthSuccess={async (operator: any) => {
+          setCurrentOperator(operator)
+
+          if (operator.systemRole === "admin") {
+            setActiveTab("admin_control")
+          } else {
+            setActiveTab("dashboard")
+          }
+
+          await supabase.from("system_audit_logs").insert({
+            operator_username: operator.username,
+            action_type: "SESSION_LOGIN",
+            module_target: "AUTHENTICATION Portal",
+            details_summary: `User terminal log-in verification session authorized successfully.`
+          })
+        }}
+      />
+    )
   }
 
   const navigationTabs = [
@@ -283,7 +344,11 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-lg flex items-center justify-center text-xl">💊</div>
+              <img 
+                src="https://scontent.fmnl33-4.fna.fbcdn.net/v/t39.30808-6/401504104_122095038878121591_4438502913040853748_n.jpg?stp=dst-jpg_tt6&cstp=mx411x390&ctp=s411x390&_nc_cat=106&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=OAvw0FXl_VoQ7kNvwHstYTv&_nc_oc=Adqj1kOXBM2s7duawflc5sv4jZBMQ9sRcfFj48udvMHTKk442l_Jef-L4C0e0TsKRbsOTRWx3X0nP8jYscL_RV0t&_nc_zt=23&_nc_ht=scontent.fmnl33-4.fna&_nc_gid=FUUM0mCkdj0gg6kxt7ZDsw&_nc_ss=7b289&oh=00_AQDViRkSBwjzENhANdCtluESuiSTujHdKczu-fqk41CJHA&oe=6A64F4B5" 
+                alt="Malabon Pharmacy Logo" 
+                className="w-10 h-10 rounded-lg object-cover shadow-sm border border-gray-100"
+              />
               <div>
                 <h1 className="text-gray-900 font-bold">Malabon Pharmacy and Clinic</h1>
                 <p className="text-xs text-gray-500">Pharmacy Management System</p>
@@ -336,10 +401,12 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {activeTab === "dashboard"     && <Dashboard inventory={inventory} sales={sales} />}
         {activeTab === "pos"           && <POSCheckout inventory={inventory} categoriesList={categoriesList} onCompleteSale={addSale} />}
-        {activeTab === "inventory"     && <InventoryManager inventory={inventory} categoriesList={categoriesList} refreshCategories={fetchCategories} refreshInventory={fetchInventory} onUpdateInventory={updateInventoryItem} onDeleteProduct={deleteInventoryItem} />}
+        {activeTab === "inventory"     && <InventoryManager inventory={inventory} categoriesList={categoriesList} refreshCategories={fetchCategories} refreshInventory={fetchInventory} onUpdateInventory={updateInventoryItem} onDeleteProduct={deleteInventoryItem} onLogAction={logSystemAction} />}
         {activeTab === "stock_adjust"  && <StockAdjustment inventory={inventory} categoriesList={categoriesList} fetchInventory={fetchInventory} onLogAction={logSystemAction} />}
         {activeTab === "history"       && <SalesHistory sales={sales} onToggleRefund={handleToggleRefund} />}
-        {activeTab === "admin_control" && currentOperator.systemRole === "admin" && <AdminPanel onLogAction={logSystemAction} />}
+        {activeTab === "admin_control" && currentOperator.systemRole === "admin" && (
+          <AdminPanel currentOperator={currentOperator} onLogAction={logSystemAction} />
+        )}
       </main>
     </div>
   )

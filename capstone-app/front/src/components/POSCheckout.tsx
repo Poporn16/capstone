@@ -29,7 +29,6 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
   const [cashReceived, setCashReceived] = useState<string>("")
   const [selectedGenericGroup, setSelectedGenericGroup] = useState<string | null>(null)
 
-  // Isolate the remaining custom layout options
   const dynamicCategories = categoriesList.filter(c => c !== "unmarked category")
 
   const getGenericGroupName = (name: string) => {
@@ -57,6 +56,34 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
     return getItemsInGroup(groupName).reduce((sum, item) => sum + item.stock, 0)
   }
 
+  const getItemBatchAwarePrice = (item: InventoryItem, quantity: number): number => {
+    if (!item.batches || item.batches.length === 0) return (item.price || 0) * quantity
+
+    let remainingQty = quantity
+    let totalBatchPrice = 0
+
+    const sortedBatches = [...item.batches]
+      .filter(b => b.stock > 0)
+      .sort((a, b) => {
+        if (!a.expiryDate) return 1
+        if (!b.expiryDate) return -1
+        return new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime()
+      })
+
+    for (const batch of sortedBatches) {
+      if (remainingQty <= 0) break
+      const qtyFromBatch = Math.min(remainingQty, batch.stock)
+      totalBatchPrice += qtyFromBatch * (batch.price || item.price || 0)
+      remainingQty -= qtyFromBatch
+    }
+
+    if (remainingQty > 0) {
+      totalBatchPrice += remainingQty * (item.price || 0)
+    }
+
+    return totalBatchPrice
+  }
+
   const addToCart = (item: InventoryItem) => {
     setCart(prev => {
       const existing = prev.find(ci => ci.item.id === item.id)
@@ -71,25 +98,28 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
 
   const handleManualQtyChange = (id: string, value: string, maxStock: number) => {
     let parsed = parseInt(value)
-    if (value === "") {
-      setCart(prev => prev.map(ci => ci.item.id === id ? { ...ci, quantity: 0 } : ci))
+    if (value === "" || Number.isNaN(parsed) || parsed < 1) {
+      setCart(prev => prev.filter(ci => ci.item.id !== id))
       return
     }
-    if (Number.isNaN(parsed) || parsed < 1) parsed = 1
     if (parsed > maxStock) parsed = maxStock
     setCart(prev => prev.map(ci => ci.item.id === id ? { ...ci, quantity: parsed } : ci))
   }
 
+  // Updated updateQtyDelta: removes item when quantity reaches 0
   const updateQtyDelta = (id: string, delta: number, maxStock: number) => {
-    setCart(prev => prev.map(ci => {
-      if (ci.item.id !== id) return ci
-      const next = ci.quantity + delta
-      if (next < 1 || next > maxStock) return ci
-      return { ...ci, quantity: next }
-    }))
+    setCart(prev => {
+      return prev.map(ci => {
+        if (ci.item.id !== id) return ci
+        const next = ci.quantity + delta
+        if (next < 1) return null
+        if (next > maxStock) return ci
+        return { ...ci, quantity: next }
+      }).filter(Boolean) as CartItem[]
+    })
   }
 
-  const subtotal = cart.reduce((s, ci) => s + ci.item.price * ci.quantity, 0)
+  const subtotal = cart.reduce((s, ci) => s + getItemBatchAwarePrice(ci.item, ci.quantity), 0)
   const isStatutoryDiscount = ["senior", "pwd", "soloparent", "naac"].includes(discountType)
   let computedDiscount = 0, vat = 0, total = subtotal
 
@@ -164,7 +194,6 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
               ALL
             </button>
             
-            {/* Manually assign Unmarked Category next to the ALL button */}
             <button 
               type="button" 
               onClick={()=>{setActiveCategoryTab("unmarked category"); setSelectedGenericGroup(null);}} 
@@ -173,7 +202,6 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
               UNMARKED CATEGORY
             </button>
 
-            {/* Print the remainder custom configuration array list keys */}
             {dynamicCategories.map((t) => (
               <button 
                 key={t} 
@@ -203,22 +231,26 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {getItemsInGroup(selectedGenericGroup).map(item => (
-                  <button 
-                    key={item.id} 
-                    type="button" 
-                    onClick={() => addToCart(item)}
-                    disabled={item.stock === 0}
-                    className={`relative text-left p-4 rounded-xl border-2 bg-white transition-all flex flex-col justify-between min-h-[110px] ${item.stock === 0 ? 'opacity-40 border-gray-200 bg-gray-50 cursor-not-allowed':'border-blue-500 hover:shadow-md hover:scale-[1.01]'}`}
-                  >
-                    <span className="absolute top-2 right-3 font-mono text-gray-500 font-bold text-[10px]">{item.stock}</span>
-                    <div className="pr-6 font-bold text-gray-900 text-[11px] leading-tight mt-1">{item.name}</div>
-                    <div className="flex justify-between items-center border-t border-gray-100 pt-2 mt-2 font-mono">
-                      <span className="text-gray-400 text-[9px] font-normal">{item.barcode}</span>
-                      <span className="text-blue-600 font-bold text-xs">₱{item.price.toFixed(2)}</span>
-                    </div>
-                  </button>
-                ))}
+                {getItemsInGroup(selectedGenericGroup).map(item => {
+                  const displayUnitPrice = getItemBatchAwarePrice(item, 1)
+
+                  return (
+                    <button 
+                      key={item.id} 
+                      type="button" 
+                      onClick={() => addToCart(item)}
+                      disabled={item.stock === 0}
+                      className={`relative text-left p-4 rounded-xl border-2 bg-white transition-all flex flex-col justify-between min-h-[110px] ${item.stock === 0 ? 'opacity-40 border-gray-200 bg-gray-50 cursor-not-allowed':'border-blue-500 hover:shadow-md hover:scale-[1.01]'}`}
+                    >
+                      <span className="absolute top-2 right-3 font-mono text-gray-500 font-bold text-[10px]">{item.stock}</span>
+                      <div className="pr-6 font-bold text-gray-900 text-[11px] leading-tight mt-1">{item.name}</div>
+                      <div className="flex justify-between items-center border-t border-gray-100 pt-2 mt-2 font-mono">
+                        <span className="text-gray-400 text-[9px] font-normal">{item.barcode}</span>
+                        <span className="text-blue-600 font-bold text-xs">₱{displayUnitPrice.toFixed(2)}</span>
+                      </div>
+                    </button>
+                  )
+                })}
               </div>
             </div>
           ) : (
@@ -229,6 +261,8 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
                   const itemsInGroup = getItemsInGroup(groupName)
                   const totalStock = getGroupTotalStock(groupName)
                   const hasVariants = itemsInGroup.length > 1
+                  const primaryItem = itemsInGroup[0]
+                  const displayUnitPrice = primaryItem ? getItemBatchAwarePrice(primaryItem, 1) : 0
 
                   return (
                     <button 
@@ -237,8 +271,8 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
                       onClick={() => {
                         if (hasVariants) {
                           setSelectedGenericGroup(groupName)
-                        } else if (itemsInGroup[0]) {
-                          addToCart(itemsInGroup[0])
+                        } else if (primaryItem) {
+                          addToCart(primaryItem)
                         }
                       }}
                       disabled={totalStock === 0}
@@ -253,7 +287,7 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
                           </span>
                         ) : (
                           <span className="text-blue-600 font-bold text-xs font-mono">
-                            ₱{itemsInGroup[0]?.price.toFixed(2)}
+                            ₱{displayUnitPrice.toFixed(2)}
                           </span>
                         )}
                       </div>
@@ -273,20 +307,25 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
             {cart.length === 0 ? (
               <p className="text-xs text-gray-500 text-center py-8">Cart is empty</p>
             ) : (
-              cart.map(ci => (
-                <div key={ci.item.id} className="p-3 bg-gray-50 rounded-lg border flex justify-between items-center">
-                  <div className="flex-1 min-w-0 pr-2">
-                    <p className="font-bold text-gray-900 truncate">{ci.item.name}</p>
-                    <p className="text-gray-500 font-mono text-[10px]">₱{ci.item.price.toFixed(2)} each</p>
+              cart.map(ci => {
+                const itemTotal = getItemBatchAwarePrice(ci.item, ci.quantity)
+                const avgUnitPrice = itemTotal / ci.quantity
+
+                return (
+                  <div key={ci.item.id} className="p-3 bg-gray-50 rounded-lg border flex justify-between items-center">
+                    <div className="flex-1 min-w-0 pr-2">
+                      <p className="font-bold text-gray-900 truncate">{ci.item.name}</p>
+                      <p className="text-gray-500 font-mono text-[10px]">₱{avgUnitPrice.toFixed(2)} each</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={()=>updateQtyDelta(ci.item.id, -1, ci.item.stock)} className="px-2 py-0.5 border bg-white rounded font-bold hover:bg-gray-50">-</button>
+                      <input type="text" value={ci.quantity} onChange={e=>handleManualQtyChange(ci.item.id, e.target.value, ci.item.stock)} className="w-10 text-center border rounded font-bold text-gray-900 bg-white" />
+                      <button type="button" onClick={()=>updateQtyDelta(ci.item.id, 1, ci.item.stock)} className="px-2 py-0.5 border bg-white rounded font-bold hover:bg-gray-50">+</button>
+                      <button type="button" onClick={()=>setCart(prev => prev.filter(i => i.item.id !== ci.item.id))} className="text-red-500 ml-1 font-bold text-base hover:text-red-700">×</button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button type="button" onClick={()=>updateQtyDelta(ci.item.id, -1, ci.item.stock)} className="px-2 py-0.5 border bg-white rounded font-bold hover:bg-gray-50">-</button>
-                    <input type="text" value={ci.quantity} onChange={e=>handleManualQtyChange(ci.item.id, e.target.value, ci.item.stock)} className="w-10 text-center border rounded font-bold text-gray-900 bg-white" />
-                    <button type="button" onClick={()=>updateQtyDelta(ci.item.id, 1, ci.item.stock)} className="px-2 py-0.5 border bg-white rounded font-bold hover:bg-gray-50">+</button>
-                    <button type="button" onClick={()=>setCart(prev => prev.filter(i => i.item.id !== ci.item.id))} className="text-red-500 ml-1 font-bold text-base hover:text-red-700">×</button>
-                  </div>
-                </div>
-              ))
+                )
+              })
             )}
           </div>
 
@@ -456,12 +495,15 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
             </div>
             
             <div className="border-t border-b border-dashed py-2.5 space-y-1">
-              {lastSale.items.map((ci: any, idx: number) => (
-                <div key={idx} className="flex justify-between items-start">
-                  <span className="pr-4">{ci.quantity}x {ci.item.name}</span>
-                  <span className="font-bold whitespace-nowrap">₱{(ci.item.price * ci.quantity).toFixed(2)}</span>
-                </div>
-              ))}
+              {lastSale.items.map((ci: any, idx: number) => {
+                const itemLineTotal = getItemBatchAwarePrice(ci.item, ci.quantity)
+                return (
+                  <div key={idx} className="flex justify-between items-start">
+                    <span className="pr-4">{ci.quantity}x {ci.item.name}</span>
+                    <span className="font-bold whitespace-nowrap">₱{itemLineTotal.toFixed(2)}</span>
+                  </div>
+                )
+              })}
             </div>
 
             <div className="space-y-1 text-gray-600">
@@ -474,7 +516,7 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
               )}
               <div className="flex justify-between"><span>Net Taxable Base (VAT Ex):</span><span>₱{lastSale.taxableBase?.toFixed(2) || lastSale.total.toFixed(2)}</span></div>
               <div className="flex justify-between"><span>Value Added Tax (12%):</span><span>₱{lastSale.vat?.toFixed(2) || "0.00"}</span></div>
-              <div className="flex justify-between border-t border-dashed pt-1 font-bold text-sm">
+              <div className="flex justify-between border-t border-dashed pt-1 font-bold text-sm text-gray-900">
                 <span>Grand Total Cost</span>
                 <span>₱{lastSale.total.toFixed(2)}</span>
               </div>
