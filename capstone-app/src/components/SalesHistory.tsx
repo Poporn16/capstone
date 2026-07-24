@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import type { Sale } from "../App";
-import { Search, RotateCcw, FileText, Download, User } from "lucide-react";
+import { Search, RotateCcw, FileText, Download, User, Printer } from "lucide-react";
 import { supabase } from "./apiClient";
 
 interface SalesHistoryProps {
@@ -10,7 +10,7 @@ interface SalesHistoryProps {
 
 type DateFrame = "all" | "today" | "week" | "month";
 type StatusCondition = "all" | "completed" | "voided";
-type PaymentRoute = "all" | "cash" | "gcash";
+type PaymentRoute = "all" | "cash" | "other";
 
 export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -20,7 +20,6 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
   const [selectedInvoice, setSelectedInvoice] = useState<Sale | null>(null);
 
   useEffect(() => {
-    // Enable real-time updates for sales history
     const salesChannel = supabase
       .channel("realtime-sales-history")
       .on(
@@ -71,8 +70,8 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
 
     if (paymentRoute === "cash") {
       result = result.filter(sale => sale.paymentMethod === "cash");
-    } else if (paymentRoute === "gcash") {
-      result = result.filter(sale => sale.paymentMethod === "gcash");
+    } else if (paymentRoute === "other") {
+      result = result.filter(sale => sale.paymentMethod !== "cash");
     }
 
     return result.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -84,21 +83,25 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
   const averageValue = totalCount > 0 ? matrixRevenue / totalCount : 0;
 
   const handleToggleAction = (saleId: string, currentStatus: boolean) => {
-    const actionLabel = currentStatus ? "revert and re-activate" : "void and invalidate";
-    if (!window.confirm(`Are you sure you want to ${actionLabel} transaction #${saleId}?`)) return;
     onToggleRefund(saleId, currentStatus);
   };
 
   const handleExportCSV = () => {
     if (filteredSales.length === 0) return;
-    let csvContent = "data:text/csv;charset=utf-8,Transaction ID,Date,Operator,Payment Type,Status,Total Cost\n";
+    let csv = "\uFEFFTransaction ID,Date & Time,Operator,Payment Option,Status,Items Summary,Subtotal (PHP),Discount (PHP),VAT (PHP),Grand Total (PHP)\n";
     filteredSales.forEach(s => {
-      const dateStr = new Date(s.date).toLocaleDateString();
-      csvContent += `#${s.id},${dateStr},${s.processedBy},${s.paymentMethod.toUpperCase()},${s.isRefunded ? "Voided" : "Completed"},${s.total.toFixed(2)}\n`;
+      const dateStr = formatReceiptDate(s.date);
+      const itemsSummary = s.items.map(ci => `${ci.quantity}x ${ci.item.name}`).join(" | ");
+      const statusStr = s.isRefunded ? "Voided" : "Completed";
+      const payStr = s.paymentMethod === "cash" ? "Cash" : "Other (Online)";
+
+      csv += `"#${s.id}","${dateStr}","${s.processedBy}","${payStr}","${statusStr}","${itemsSummary.replace(/"/g, '""')}","${(s.grossTotal || s.total).toFixed(2)}","${(s.discount || 0).toFixed(2)}","${(s.vat || 0).toFixed(2)}","${s.total.toFixed(2)}"\n`;
     });
-    const encodedUri = encodeURI(csvContent);
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
+    link.setAttribute("href", url);
     link.setAttribute("download", `sales_history_export_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
@@ -152,7 +155,7 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
           <div className="space-y-1.5">
             <span className="block text-gray-400">Payment Route</span>
             <div className="flex bg-gray-100 p-0.5 rounded-lg border">
-              {(["all", "cash", "gcash"] as const).map(p => (
+              {(["all", "cash", "other"] as const).map(p => (
                 <button key={p} type="button" onClick={() => setPaymentRoute(p)} className={`px-3 py-1 rounded-md transition-all ${paymentRoute === p ? 'bg-white text-blue-600 shadow-xs font-black' : 'text-gray-600 hover:text-gray-900'}`}>{p}</button>
               ))}
             </div>
@@ -224,8 +227,8 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
                       </div>
                     </td>
                     <td className="p-4">
-                      <span className={`px-2 py-0.5 rounded font-bold text-[9px] border ${sale.paymentMethod === 'gcash' ? 'bg-blue-50 border-blue-100 text-blue-600' : 'bg-green-50 border-green-100 text-green-600'}`}>
-                        {sale.paymentMethod.toUpperCase()}
+                      <span className={`px-2 py-0.5 rounded font-bold text-[9px] border ${sale.paymentMethod === 'cash' ? 'bg-green-50 border-green-200 text-green-700' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>
+                        {sale.paymentMethod === 'cash' ? 'CASH' : 'OTHER (ONLINE)'}
                       </span>
                     </td>
                     <td className="p-4">
@@ -266,7 +269,7 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
 
       {selectedInvoice && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-md w-full p-6 font-mono text-[11px] text-gray-800 space-y-4 shadow-xl border">
+          <div className="bg-white rounded-xl max-w-md w-full p-6 font-mono text-[11px] text-gray-800 space-y-4 shadow-xl border printable-receipt">
             <div className="text-center">
               <h3 className="font-bold text-sm text-gray-900">Malabon Pharmacy and Clinic</h3>
               <p className="text-gray-500 text-[10px]">Invoice Record Voucher #{selectedInvoice.id}</p>
@@ -274,12 +277,19 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
             </div>
             
             <div className="border-t border-b border-dashed py-2.5 space-y-1">
-              {selectedInvoice.items.map((ci: any, idx: number) => (
-                <div key={idx} className="flex justify-between items-start">
-                  <span className="pr-4">{ci.quantity}x {ci.item.name}</span>
-                  <span className="font-bold whitespace-nowrap">₱{(ci.item.price * ci.quantity).toFixed(2)}</span>
-                </div>
-              ))}
+              {selectedInvoice.items.map((ci: any, idx: number) => {
+                const totalItemsInInvoice = selectedInvoice.items.reduce((sum: number, it: any) => sum + (it.quantity || 1), 0)
+                const fallbackUnitPrice = (selectedInvoice.grossTotal || selectedInvoice.total) / Math.max(1, totalItemsInInvoice)
+                const itemPrice = ci.item.price > 0 ? ci.item.price : fallbackUnitPrice
+                const lineTotal = itemPrice * ci.quantity
+
+                return (
+                  <div key={idx} className="flex justify-between items-start">
+                    <span className="pr-4">{ci.quantity}x {ci.item.name}</span>
+                    <span className="font-bold whitespace-nowrap">₱{lineTotal.toFixed(2)}</span>
+                  </div>
+                )
+              })}
             </div>
 
             <div className="space-y-1 text-gray-600">
@@ -300,7 +310,7 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
 
             <div className="border-t border-dashed pt-2 space-y-1 bg-gray-50/50 p-2 rounded border">
               <div className="flex justify-between"><span>Operator Token:</span><span className="uppercase font-bold text-gray-700">{selectedInvoice.processedBy}</span></div>
-              <div className="flex justify-between"><span>Payment Mode Route:</span><span className="uppercase font-bold text-blue-700">{selectedInvoice.paymentMethod}</span></div>
+              <div className="flex justify-between"><span>Payment Mode Route:</span><span className="uppercase font-bold text-blue-700">{selectedInvoice.paymentMethod === "cash" ? "Cash" : "Other (Online / Card)"}</span></div>
               <div className="flex justify-between"><span>Cash Tendered Amount:</span><span>₱{(selectedInvoice.cashReceived || selectedInvoice.total).toFixed(2)}</span></div>
               <div className="flex justify-between font-bold text-blue-800"><span>Change Return Cash:</span><span>₱{selectedInvoice.change?.toFixed(2) || "0.00"}</span></div>
               <div className="flex justify-between pt-1 border-t mt-1 font-bold">
@@ -311,16 +321,26 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
               </div>
             </div>
 
-            <button 
-              type="button" 
-              onClick={() => setSelectedInvoice(null)} 
-              className="w-full py-2 bg-gray-900 text-white hover:bg-gray-800 font-bold rounded-lg tracking-wide shadow-xs"
-            >
-              Close Invoice Sheet
-            </button>
+            <div className="flex gap-2 pt-2 border-t">
+              <button 
+                type="button" 
+                onClick={() => window.print()}
+                className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg tracking-wide shadow-xs flex items-center justify-center gap-1.5"
+              >
+                <Printer className="w-4 h-4" />
+                Reprint Receipt
+              </button>
+              <button 
+                type="button" 
+                onClick={() => setSelectedInvoice(null)} 
+                className="flex-1 py-2 bg-gray-900 text-white hover:bg-gray-800 font-bold rounded-lg tracking-wide shadow-xs"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
     </div>
   );
-}
+}

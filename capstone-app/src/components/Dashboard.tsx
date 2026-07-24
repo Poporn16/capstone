@@ -96,65 +96,73 @@ export function Dashboard({ inventory, sales, categoriesList = [] }: DashboardPr
   };
 
   return (
-    <div className="space-y-6 text-xs font-medium">
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white p-4 rounded-xl border flex justify-between items-center shadow-xs">
+    <div className="space-y-6 text-sm font-sans">
+      {/* Top 3 Summary Pill Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Today's Revenue */}
+        <div className="bg-white rounded-full px-8 py-4 border border-gray-200/80 shadow-2xs flex items-center justify-between">
           <div>
-            <p className="text-gray-500 font-bold tracking-wide uppercase text-[10px]">Today's Revenue</p>
-            <h3 className="text-gray-900 font-bold text-lg mt-1">₱{todayRevenue.toFixed(2)}</h3>
-            <p className="text-gray-400 text-[10px] mt-0.5">
-              {activeSales.filter(s => new Date(s.date).toDateString() === new Date().toDateString()).length} transactions
-            </p>
-          </div>
-          <div className="w-10 h-10 bg-green-50 rounded-lg flex items-center justify-center font-bold text-green-600 text-lg">
-            ₱
+            <p className="text-gray-900 font-bold text-sm tracking-tight">Today's Revenue</p>
+            <div className="flex items-baseline gap-3 mt-0.5">
+              <span className="text-2xl font-black text-black">₱ {todayRevenue.toFixed(2)}</span>
+              <span className="text-gray-400 text-xs font-medium">
+                {activeSales.filter(s => new Date(s.date).toDateString() === new Date().toDateString()).length} transactions
+              </span>
+            </div>
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border flex justify-between items-center shadow-xs">
+        {/* Total Revenue */}
+        <div className="bg-white rounded-full px-8 py-4 border border-gray-200/80 shadow-2xs flex items-center justify-between">
           <div>
-            <p className="text-gray-500 font-bold tracking-wide uppercase text-[10px]">Total Revenue</p>
-            <h3 className="text-gray-900 font-bold text-lg mt-1">₱{totalRevenue.toFixed(2)}</h3>
-            <p className="text-gray-400 text-[10px] mt-0.5">{totalTransactions} total sales</p>
+            <p className="text-gray-900 font-bold text-sm tracking-tight">Total Revenue</p>
+            <div className="flex items-baseline gap-3 mt-0.5">
+              <span className="text-2xl font-black text-black">₱ {totalRevenue.toFixed(2)}</span>
+              <span className="text-gray-400 text-xs font-medium">{totalTransactions} total sales</span>
+            </div>
           </div>
-          <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center text-blue-600"><TrendingUp className="w-5 h-5"/></div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border flex justify-between items-center shadow-xs">
+        {/* Inventory Value */}
+        <div className="bg-white rounded-full px-8 py-4 border border-gray-200/80 shadow-2xs flex items-center justify-between">
           <div>
-            <p className="text-gray-500 font-bold tracking-wide uppercase text-[10px]">Inventory Value</p>
-            <h3 className="text-gray-900 font-bold text-lg mt-1">₱{totalInventoryValue.toFixed(2)}</h3>
-            <p className="text-gray-400 text-[10px] mt-0.5">{totalUniqueItems} unique items</p>
+            <p className="text-gray-900 font-bold text-sm tracking-tight">Inventory Value</p>
+            <div className="flex items-baseline gap-3 mt-0.5">
+              <span className="text-2xl font-black text-black">₱ {totalInventoryValue.toFixed(2)}</span>
+              <span className="text-gray-400 text-xs font-medium">{totalUniqueItems} unique items</span>
+            </div>
           </div>
-          <div className="w-10 h-10 bg-indigo-50 rounded-lg flex items-center justify-center text-indigo-600"><Package className="w-5 h-5"/></div>
-        </div>
-
-        <div className="bg-white p-4 rounded-xl border flex justify-between items-center shadow-xs">
-          <div>
-            <p className="text-gray-500 font-bold tracking-wide uppercase text-[10px]">Low Stock Alerts</p>
-            <h3 className="text-gray-900 font-bold text-lg mt-1">{lowStockAlerts.length}</h3>
-            <p className="text-gray-400 text-[10px] mt-0.5">Items need restock</p>
-          </div>
-          <div className="w-10 h-10 bg-orange-50 rounded-lg flex items-center justify-center text-orange-600"><AlertTriangle className="w-5 h-5"/></div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-white p-4 rounded-xl border space-y-3 shadow-xs">
-          <h4 className="font-bold text-gray-800 text-sm flex items-center gap-1.5"><AlertTriangle className="w-4 h-4 text-orange-500"/> Low Stock Alerts</h4>
-          <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+      {/* Middle Row: Low Stock Alerts & Nearly Expired Medicines */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Low Stock Alerts */}
+        <div className="bg-white rounded-[28px] p-6 shadow-2xs border border-gray-100/60 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 flex items-center justify-center">
+              <svg className="w-7 h-7 text-black" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+            </div>
+            <h2 className="text-lg font-bold text-black tracking-tight">Low Stock Alerts</h2>
+          </div>
+
+          <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
             {lowStockAlerts.length === 0 ? (
-              <p className="text-gray-400 text-center py-8">All active stock listings restocked safely.</p>
+              <p className="text-gray-400 text-center py-6">All active stock listings restocked safely.</p>
             ) : (
               lowStockAlerts.map(item => (
-                <div key={item.id} className="p-3 bg-orange-50/40 rounded-lg border border-orange-100 flex justify-between items-center">
-                  <div>
-                    <p className="font-bold text-gray-900">{item.name}</p>
-                    <p className="text-gray-500 uppercase tracking-wider text-[9px] mt-0.5">{item.category}</p>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-orange-700 font-bold font-mono">{item.stock} left</span>
-                    <p className="text-gray-400 text-[9px] mt-0.5">Min: {item.minStock}</p>
+                <div 
+                  key={item.id} 
+                  className="bg-white rounded-full border-2 border-[#f97316]/70 px-6 py-2.5 flex items-center justify-between shadow-2xs hover:border-orange-500 transition-colors"
+                >
+                  <span className="font-bold text-gray-900 text-sm">{item.name}</span>
+                  <div className="flex items-center gap-6 text-xs">
+                    <span className="text-[#ea580c] font-bold text-sm">{item.stock} left</span>
+                    <span className="text-gray-400 font-medium">Min: {item.minStock}</span>
                   </div>
                 </div>
               ))
@@ -162,21 +170,32 @@ export function Dashboard({ inventory, sales, categoriesList = [] }: DashboardPr
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-xl border space-y-3 shadow-xs">
-          <h4 className="font-bold text-gray-800 text-sm">Nearly Expired Products</h4>
-          <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+        {/* Nearly Expired Medicines */}
+        <div className="bg-white rounded-[28px] p-6 shadow-2xs border border-gray-100/60 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 flex items-center justify-center">
+              <svg className="w-7 h-7 text-black" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <path d="m15 9-6 6" />
+                <path d="m9 9 6 6" />
+              </svg>
+            </div>
+            <h2 className="text-lg font-bold text-black tracking-tight">Nearly Expired Medicines</h2>
+          </div>
+
+          <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
             {nearlyExpiredProducts.length === 0 ? (
-              <p className="text-gray-400 text-center py-8">No incoming batches expiring within 90 days.</p>
+              <p className="text-gray-400 text-center py-6">No incoming batches expiring within 90 days.</p>
             ) : (
               nearlyExpiredProducts.map((b, index) => (
-                <div key={index} className="p-3 bg-red-50/30 rounded-lg border border-red-100 flex justify-between items-center">
-                  <div>
-                    <p className="font-bold text-gray-900">{b.name}</p>
-                    <p className="text-gray-500 uppercase tracking-wider text-[9px] mt-0.5">{b.category}</p>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-red-600 font-bold">{b.daysLeft} days</span>
-                    <p className="text-gray-400 font-mono text-[9px] mt-0.5">{b.expiryDate}</p>
+                <div 
+                  key={index} 
+                  className="bg-white rounded-full border-2 border-[#f97316]/70 px-6 py-2.5 flex items-center justify-between shadow-2xs hover:border-orange-500 transition-colors"
+                >
+                  <span className="font-bold text-gray-900 text-sm">{b.name}</span>
+                  <div className="flex items-center gap-6 text-xs">
+                    <span className="text-[#c2410c] font-bold text-sm">{b.daysLeft} days</span>
+                    <span className="text-gray-400 font-mono font-medium">{b.expiryDate}</span>
                   </div>
                 </div>
               ))
@@ -185,24 +204,35 @@ export function Dashboard({ inventory, sales, categoriesList = [] }: DashboardPr
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-white p-5 rounded-xl border shadow-xs space-y-4">
-          <h4 className="font-bold text-gray-800 text-sm tracking-wide flex items-center gap-1.5">
-            <Package className="w-4 h-4 text-blue-600" />
-            Inventory by Category
-          </h4>
-          <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+      {/* Bottom Row: Inventory by Category & Most Sold Items */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Inventory by Category */}
+        <div className="bg-white rounded-[28px] p-6 shadow-2xs border border-gray-100/60 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 flex items-center justify-center">
+              <svg className="w-7 h-7 text-black" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M3 9h18" />
+                <path d="M3 15h18" />
+                <path d="M9 9v6" />
+                <path d="M15 9v6" />
+              </svg>
+            </div>
+            <h2 className="text-lg font-bold text-black tracking-tight">Inventory by Category</h2>
+          </div>
+
+          <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
             {categoryData.length === 0 ? (
               <p className="text-gray-400 text-center py-6">No product categories detected in database.</p>
             ) : (
               categoryData.map(cat => (
-                <div key={cat.name} className="flex items-center justify-between p-3 rounded-xl border border-gray-100 bg-gray-50/30">
-                  <span className={`px-3 py-1 rounded-full border text-[10px] font-bold uppercase tracking-wider ${getCategoryStyle(cat.name)}`}>
+                <div key={cat.name} className="bg-white rounded-full border border-gray-300/80 px-6 py-2.5 flex items-center justify-between shadow-2xs">
+                  <span className={`px-3 py-0.5 rounded-full border text-[11px] font-bold uppercase tracking-wider ${getCategoryStyle(cat.name)}`}>
                     {cat.name}
                   </span>
-                  <div className="flex items-center gap-6 font-mono text-right">
-                    <span className="text-gray-900 font-bold text-xs">{cat.units} units</span>
-                    <span className="text-blue-600 font-bold text-xs w-20">₱{cat.value.toFixed(2)}</span>
+                  <div className="flex items-center gap-8 font-mono text-xs text-right">
+                    <span className="text-gray-800 font-bold">{cat.units} units</span>
+                    <span className="text-emerald-700 font-bold">₱{cat.value.toFixed(2)}</span>
                   </div>
                 </div>
               ))
@@ -210,21 +240,28 @@ export function Dashboard({ inventory, sales, categoriesList = [] }: DashboardPr
           </div>
         </div>
 
-        <div className="bg-white p-5 rounded-xl border shadow-xs space-y-4">
-          <h4 className="font-bold text-gray-800 text-sm tracking-wide flex items-center gap-1.5">
-            <Award className="w-4 h-4 text-amber-500" />
-            Most Sold Items
-          </h4>
-          <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+        {/* Most Sold Items */}
+        <div className="bg-white rounded-[28px] p-6 shadow-2xs border border-gray-100/60 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 flex items-center justify-center">
+              <svg className="w-8 h-8" viewBox="0 0 32 32" fill="none">
+                <path d="M16 2L19.5 6.5L25 5L24.5 10.5L29.5 13L27 18.5L30.5 22.5L25.5 24.5L25 30.5L19.5 28.5L16 32L12.5 28.5L7 30.5L6.5 24.5L1.5 22.5L5 18.5L2.5 13L7.5 10.5L7 5L12.5 6.5L16 2Z" fill="#f97316"/>
+                <text x="16" y="21" textAnchor="middle" fill="white" fontSize="16" fontWeight="900" fontFamily="sans-serif">!</text>
+              </svg>
+            </div>
+            <h2 className="text-lg font-bold text-black tracking-tight">Most Sold Items</h2>
+          </div>
+
+          <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
             {mostSoldItems.length === 0 ? (
               <p className="text-gray-400 text-center py-6">No product transactions processed yet.</p>
             ) : (
               mostSoldItems.map((item, idx) => (
-                <div key={idx} className="flex items-center justify-between p-3 rounded-xl border border-gray-100 bg-gray-50/30">
-                  <span className="text-gray-900 font-bold text-xs truncate pr-4 max-w-[200px]">{item.name}</span>
-                  <div className="flex items-center gap-6 font-mono text-right">
-                    <span className="text-gray-600 font-medium">{item.quantity} sold</span>
-                    <span className="text-green-600 font-bold text-xs w-20">₱{item.revenue.toFixed(2)}</span>
+                <div key={idx} className="bg-white rounded-full border border-gray-300/80 px-6 py-2.5 flex items-center justify-between shadow-2xs">
+                  <span className="font-bold text-gray-900 text-sm truncate max-w-[220px]">{item.name}</span>
+                  <div className="flex items-center gap-8 text-xs">
+                    <span className="text-gray-500 font-medium">{item.quantity} Sold</span>
+                    <span className="text-emerald-700 font-bold font-mono text-sm">₱ {item.revenue.toFixed(2)}</span>
                   </div>
                 </div>
               ))
@@ -234,4 +271,4 @@ export function Dashboard({ inventory, sales, categoriesList = [] }: DashboardPr
       </div>
     </div>
   );
-}
+}

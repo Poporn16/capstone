@@ -1,6 +1,6 @@
 import { useState, useRef } from "react"
 import type { InventoryItem } from "../App"
-import { supabase } from "./apiClient"
+import { supabase, triggerGlobalSync } from "./apiClient"
 import { Search, FolderPlus, Download, Upload, FileSpreadsheet, X, Trash2, Edit2 } from "lucide-react"
 
 interface InventoryManagerProps {
@@ -131,13 +131,11 @@ export function InventoryManager({
           const name = columns[1]?.trim()
           const categoryInput = columns[2]?.trim().toLowerCase()
           const manufacturer = columns[3]?.trim() || null
-          const minStock = Math.floor(parseFloat(columns[4]) || 10)
-          const batchLabelInput = columns[5]?.trim()
-          const initialStock = Math.floor(parseFloat(columns[6]) || 0)
-          const cost = parseFloat(columns[7]) || 0
-          const price = parseFloat(columns[8]) || 0
-          
-          const rawExpiry = columns[9]?.trim() || null
+          const cost = parseFloat(columns[4]) || 0
+          const price = parseFloat(columns[5]) || 0
+          const minStock = Math.floor(parseFloat(columns[6]) || 10)
+          const initialStock = Math.floor(parseFloat(columns[7]) || 0)
+          const rawExpiry = columns[8]?.trim() || null
           const expiryDate = parseDateToISO(rawExpiry)
 
           if (!name) continue
@@ -169,7 +167,7 @@ export function InventoryManager({
             await supabase
               .from("inventory")
               .update({
-                barcode: columns[0]?.trim() || existingItem?.barcode || barcode,
+                barcode: barcode || existingItem?.barcode,
                 category: targetCategory,
                 manufacturer,
                 min_stock: minStock
@@ -197,9 +195,7 @@ export function InventoryManager({
 
           if (initialStock > 0) {
             const cleanedName = name.replace(/\s+/g, "").substring(0, 5).toUpperCase()
-            const batchLabel = batchLabelInput && batchLabelInput !== "NO-BATCH" 
-              ? batchLabelInput 
-              : `BULK-${cleanedName}-${Date.now().toString().slice(-4)}`
+            const batchLabel = `BULK-${cleanedName}-${Date.now().toString().slice(-4)}`
 
             await supabase.from("inventory_batches").insert({
               item_id: targetItemId,
@@ -216,9 +212,10 @@ export function InventoryManager({
 
         await refreshCategories()
         await refreshInventory()
+        triggerGlobalSync()
 
         if (onLogAction) {
-          await onLogAction("BULK_CSV_IMPORT", "ITEM_SPECIFICATIONS", `Bulk imported/exported stock items from CSV file.`)
+          await onLogAction("BULK_CSV_IMPORT", "ITEM_SPECIFICATIONS", `Bulk imported ${successCount} stock items from CSV file.`)
         }
 
         alert(`Successfully synchronized ${successCount} item records with stock batches.`)
@@ -240,6 +237,7 @@ export function InventoryManager({
     await supabase.from("product_categories").insert({ name: cleaned })
     setNewCatInput("")
     await refreshCategories()
+    triggerGlobalSync()
   }
 
   const handleRemoveCategory = async (catToRemove: string) => {
@@ -252,6 +250,7 @@ export function InventoryManager({
     await refreshCategories()
     await refreshInventory()
     if (catFilter === catToRemove) setCatFilter("all")
+    triggerGlobalSync()
   }
 
   const openEditModal = (item: InventoryItem) => {
@@ -281,14 +280,14 @@ export function InventoryManager({
   }
 
   const addNewItem = () => {
-    if (!newItem.name || !newItem.barcode) return
+    if (!newItem.name || !newItem.name.trim()) return
     const item: any = {
       id: "",
-      name: newItem.name!,
+      name: newItem.name.trim(),
       category: newItem.category || "unmarked category",
       price: 0,
       cost: 0,
-      barcode: newItem.barcode!,
+      barcode: newItem.barcode ? newItem.barcode.trim() : "",
       manufacturer: newItem.manufacturer || "",
       stock: 0,
       minStock: Math.floor(Number(newItem.minStock)) || 10,
@@ -377,7 +376,9 @@ export function InventoryManager({
             <option value="unmarked category">UNMARKED CATEGORY</option>
             {dynamicCategories.map(cat => (<option key={cat} value={cat}>{cat.toUpperCase()}</option>))}
           </select>
-          <button onClick={() => { setEditingItem(null); setShowAdd(true); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold">Add Item Profile</button>
+          <button onClick={() => { setEditingItem(null); setShowAdd(true); }} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow-xs transition-colors flex items-center gap-1.5 whitespace-nowrap">
+            Add Item Profile
+          </button>
         </div>
       </div>
 
@@ -395,7 +396,7 @@ export function InventoryManager({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {[
                 { label: "Product Name *", key: "name", type: "text" },
-                { label: "Barcode Identity Check *", key: "barcode", type: "text" },
+                { label: "Barcode Identity (Optional)", key: "barcode", type: "text" },
                 { label: "Manufacturer Brand Name", key: "manufacturer", type: "text" },
                 { label: "Minimum Safety Stock Level", key: "minStock", type: "number" },
               ].map(({ label, key, type }) => (
@@ -438,7 +439,7 @@ export function InventoryManager({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {[
                 { label: "Product Name *", key: "name", type: "text" },
-                { label: "Barcode Identity *", key: "barcode", type: "text" },
+                { label: "Barcode Identity (Optional)", key: "barcode", type: "text" },
                 { label: "Manufacturer Brand Name", key: "manufacturer", type: "text" },
                 { label: "Minimum Safety Stock Threshold", key: "minStock", type: "number" },
               ].map(({ label, key, type }) => (
@@ -497,9 +498,11 @@ export function InventoryManager({
                 <td className="py-3 px-4 text-gray-700 font-mono font-bold text-center">{item.minStock}</td>
                 <td className="py-3 px-4 text-center">
                   <button 
+                    type="button"
                     onClick={() => openEditModal(item)} 
-                    className="px-3 py-1 bg-blue-50 text-blue-600 border border-blue-200 rounded font-bold hover:bg-blue-100 transition-colors"
+                    className="px-3 py-1 bg-blue-50 text-blue-600 border border-blue-200 rounded font-bold hover:bg-blue-100 transition-colors inline-flex items-center gap-1"
                   >
+                    <Edit2 className="w-3.5 h-3.5" />
                     Edit Specs
                   </button>
                 </td>
