@@ -133,53 +133,6 @@ capstone-app/
 └── eslint.config.js                # ESLint configuration
 ```
 
-## 🔧 Key Data Models
-
-### InventoryItem
-```typescript
-{
-  id: string
-  name: string
-  category: string
-  price: number
-  cost: number
-  stock: number
-  minStock: number
-  barcode: string
-  manufacturer: string
-  batches: Array<{
-    id: string
-    batchLabel: string
-    stock: number
-    expiryDate: string
-    cost: number
-    price: number
-  }>
-}
-```
-
-### Sale
-```typescript
-{
-  id: string
-  date: Date
-  items: Array<{ item: InventoryItem; quantity: number }>
-  grossTotal: number
-  subtotal: number
-  discount: number
-  taxableBase: number
-  vat: number
-  total: number
-  cashReceived: number
-  change: number
-  paymentMethod: "cash" | "other"
-  onlineChannel?: string
-  discountLabel: string
-  processedBy: string
-  isRefunded?: boolean
-}
-```
-
 ## 🔄 Real-time Features
 
 The application uses the BroadcastChannel API for real-time inventory synchronization across multiple browser tabs/windows:
