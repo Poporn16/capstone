@@ -207,21 +207,28 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     if (data) {
       setLogs(data)
 
-      const activeSet = new Set<string>()
-      const sortedLogs = [...data].reverse()
+      // Track active status: any activity in last 12h = active, unless last action was SESSION_LOGOUT
+      const twelveHoursAgo = Date.now() - 12 * 60 * 60 * 1000
+      const userLastAction = new Map<string, { time: number; isLogout: boolean }>()
 
-      // Track active accounts based on recent system activity
-      sortedLogs.forEach((log) => {
+      data.forEach((log) => {
         const u = String(log.operator_username || "").trim().toLowerCase()
         if (!u) return
-        if (log.action_type === "SESSION_LOGOUT") {
-          activeSet.delete(u)
-        } else {
-          // Any activity (LOGIN, CHECKOUT, INVENTORY, ADMIN) indicates active operator
-          activeSet.add(u)
+        const logTime = new Date(log.created_at).getTime()
+        const prev = userLastAction.get(u)
+        if (!prev || logTime > prev.time) {
+          userLastAction.set(u, { time: logTime, isLogout: log.action_type === "SESSION_LOGOUT" })
         }
       })
 
+      const activeSet = new Set<string>()
+      userLastAction.forEach(({ time, isLogout }, username) => {
+        if (!isLogout && time >= twelveHoursAgo) {
+          activeSet.add(username)
+        }
+      })
+
+      // Always mark current operator as active
       if (currentOperator?.username) {
         activeSet.add(String(currentOperator.username).trim().toLowerCase())
       }
@@ -309,12 +316,13 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
   }
 
   const groupSalesByTransaction = () => {
+    // Group ALL items per sale_id (not just first item)
     const map = new Map<number, {
       sale_id: number
       item_name: string
       total_qty: number
       total_price: number
-      batches: { label: string; qty: number; price: number }[]
+      batches: { label: string; qty: number; price: number; item: string }[]
       created_at: string
     }>()
 
@@ -328,8 +336,13 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
         existing.batches.push({
           label: row.batch_label,
           qty: row.quantity_deducted,
-          price: Number(row.unit_price)
+          price: Number(row.unit_price),
+          item: row.item_name
         })
+        // Build combined item name
+        if (!existing.item_name.includes(row.item_name)) {
+          existing.item_name = `${existing.item_name} + ${row.item_name}`
+        }
       } else {
         map.set(row.sale_id, {
           sale_id: row.sale_id,
@@ -339,14 +352,15 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
           batches: [{
             label: row.batch_label,
             qty: row.quantity_deducted,
-            price: Number(row.unit_price)
+            price: Number(row.unit_price),
+            item: row.item_name
           }],
           created_at: row.created_at
         })
       }
     })
 
-    return Array.from(map.values())
+    return Array.from(map.values()).sort((a, b) => b.sale_id - a.sale_id)
   }
 
   const groupedBatchSales = groupSalesByTransaction()
@@ -840,7 +854,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                           <div className="flex flex-wrap gap-1 mt-0.5">
                             {sale.batches.map((b, i) => (
                               <span key={i} className="text-[9px] text-gray-500 font-mono bg-gray-100 px-1.5 py-0.5 rounded border border-gray-200">
-                                Batch: {b.label} ({b.qty} pc @ ₱{b.price.toFixed(2)})
+                                {b.item !== sale.batches[0]?.item ? `[${b.item}] ` : ''}{b.label} ({b.qty}pc @ ₱{b.price.toFixed(2)})
                               </span>
                             ))}
                           </div>

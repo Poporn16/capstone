@@ -10,7 +10,9 @@ interface SalesHistoryProps {
 
 type DateFrame = "all" | "today" | "week" | "month";
 type StatusCondition = "all" | "completed" | "voided";
-type PaymentRoute = "all" | "cash" | "other";
+type PaymentRoute = "all" | "cash" | "other" | "gcash" | "paymaya" | "bdo" | "bpi" | "card" | "bank transfer";
+
+const ONLINE_CHANNELS = ["gcash", "paymaya", "bdo", "bpi", "card", "bank transfer"] as const
 
 export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
   const [searchQuery, setSearchQuery] = useState("");
@@ -18,6 +20,7 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
   const [statusCondition, setStatusCondition] = useState<StatusCondition>("all");
   const [paymentRoute, setPaymentRoute] = useState<PaymentRoute>("all");
   const [selectedInvoice, setSelectedInvoice] = useState<Sale | null>(null);
+  const [showOnlineFilter, setShowOnlineFilter] = useState(false);
 
   useEffect(() => {
     const salesChannel = supabase
@@ -72,6 +75,11 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
       result = result.filter(sale => sale.paymentMethod === "cash");
     } else if (paymentRoute === "other") {
       result = result.filter(sale => sale.paymentMethod !== "cash");
+    } else if (ONLINE_CHANNELS.includes(paymentRoute as any)) {
+      result = result.filter(sale =>
+        sale.paymentMethod !== "cash" &&
+        (sale.onlineChannel || "").toLowerCase() === paymentRoute.toLowerCase()
+      );
     }
 
     return result.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -154,11 +162,51 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
 
           <div className="space-y-1.5">
             <span className="block text-gray-400">Payment Route</span>
-            <div className="flex bg-gray-100 p-0.5 rounded-lg border">
+            <div className="flex flex-wrap gap-1">
               {(["all", "cash", "other"] as const).map(p => (
-                <button key={p} type="button" onClick={() => setPaymentRoute(p)} className={`px-3 py-1 rounded-md transition-all ${paymentRoute === p ? 'bg-white text-blue-600 shadow-xs font-black' : 'text-gray-600 hover:text-gray-900'}`}>{p}</button>
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => { setPaymentRoute(p); setShowOnlineFilter(false); }}
+                  className={`px-3 py-1 rounded-md border transition-all text-[10px] font-bold uppercase tracking-wider ${
+                    paymentRoute === p
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                      : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
+                  }`}
+                >
+                  {p === "other" ? "Online" : p}
+                </button>
               ))}
+              <button
+                type="button"
+                onClick={() => setShowOnlineFilter(v => !v)}
+                className={`px-3 py-1 rounded-md border transition-all text-[10px] font-bold uppercase tracking-wider ${
+                  ONLINE_CHANNELS.includes(paymentRoute as any)
+                    ? 'bg-purple-600 text-white border-purple-600'
+                    : 'bg-white text-gray-500 border-gray-200 hover:border-purple-300'
+                }`}
+              >
+                {ONLINE_CHANNELS.includes(paymentRoute as any) ? `▾ ${paymentRoute.toUpperCase()}` : '▾ Channel'}
+              </button>
             </div>
+            {showOnlineFilter && (
+              <div className="flex flex-wrap gap-1 pt-1">
+                {ONLINE_CHANNELS.map(ch => (
+                  <button
+                    key={ch}
+                    type="button"
+                    onClick={() => { setPaymentRoute(ch as PaymentRoute); setShowOnlineFilter(false); }}
+                    className={`px-3 py-1 rounded-md border transition-all text-[10px] font-bold uppercase tracking-wider ${
+                      paymentRoute === ch
+                        ? 'bg-purple-600 text-white border-purple-600'
+                        : 'bg-white text-purple-700 border-purple-200 hover:bg-purple-50'
+                    }`}
+                  >
+                    {ch.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -227,8 +275,16 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
                       </div>
                     </td>
                     <td className="p-4">
-                      <span className={`px-2 py-0.5 rounded font-bold text-[9px] border ${sale.paymentMethod === 'cash' ? 'bg-green-50 border-green-200 text-green-700' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>
-                        {sale.paymentMethod === 'cash' ? 'CASH' : 'OTHER (ONLINE)'}
+                      <span className={`px-2 py-0.5 rounded font-bold text-[9px] border ${
+                        sale.paymentMethod === 'cash'
+                          ? 'bg-green-50 border-green-200 text-green-700'
+                          : 'bg-blue-50 border-blue-200 text-blue-700'
+                      }`}>
+                        {sale.paymentMethod === 'cash'
+                          ? 'CASH'
+                          : sale.onlineChannel
+                            ? `ONLINE / ${sale.onlineChannel.toUpperCase()}`
+                            : 'ONLINE'}
                       </span>
                     </td>
                     <td className="p-4">
@@ -310,7 +366,13 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
 
             <div className="border-t border-dashed pt-2 space-y-1 bg-gray-50/50 p-2 rounded border">
               <div className="flex justify-between"><span>Operator Token:</span><span className="uppercase font-bold text-gray-700">{selectedInvoice.processedBy}</span></div>
-              <div className="flex justify-between"><span>Payment Mode Route:</span><span className="uppercase font-bold text-blue-700">{selectedInvoice.paymentMethod === "cash" ? "Cash" : "Other (Online / Card)"}</span></div>
+              <div className="flex justify-between"><span>Payment Mode Route:</span><span className="uppercase font-bold text-blue-700">
+                {selectedInvoice.paymentMethod === "cash"
+                  ? "CASH"
+                  : selectedInvoice.onlineChannel
+                    ? `ONLINE / ${selectedInvoice.onlineChannel.toUpperCase()}`
+                    : "ONLINE PAYMENT"}
+              </span></div>
               <div className="flex justify-between"><span>Cash Tendered Amount:</span><span>₱{(selectedInvoice.cashReceived || selectedInvoice.total).toFixed(2)}</span></div>
               <div className="flex justify-between font-bold text-blue-800"><span>Change Return Cash:</span><span>₱{selectedInvoice.change?.toFixed(2) || "0.00"}</span></div>
               <div className="flex justify-between pt-1 border-t mt-1 font-bold">

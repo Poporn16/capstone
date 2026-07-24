@@ -40,6 +40,7 @@ export interface Sale {
   cashReceived: number
   change: number
   paymentMethod: "cash" | "other"
+  onlineChannel?: string
   discountLabel: string
   processedBy: string
   isRefunded?: boolean
@@ -61,7 +62,8 @@ export default function App() {
 
   const [currentOperator, setCurrentOperator] = useState<{ username: string; displayName: string; systemRole: string } | null>(() => {
     try {
-      const stored = localStorage.getItem("pinv_session")
+      // sessionStorage keeps each browser tab's login independent
+      const stored = sessionStorage.getItem("pinv_session")
       if (stored) {
         const parsed = JSON.parse(stored)
         const twelveHours = 12 * 60 * 60 * 1000
@@ -87,7 +89,8 @@ export default function App() {
   const saveSession = (operator: any) => {
     setCurrentOperator(operator)
     try {
-      localStorage.setItem("pinv_session", JSON.stringify({
+      // sessionStorage: each tab has its own session
+      sessionStorage.setItem("pinv_session", JSON.stringify({
         operator,
         timestamp: Date.now()
       }))
@@ -95,7 +98,7 @@ export default function App() {
   }
 
   const handleLogout = () => {
-    localStorage.removeItem("pinv_session")
+    sessionStorage.removeItem("pinv_session")
     const op = currentOperator
     setCurrentOperator(null)
     setActiveTab("dashboard")
@@ -136,7 +139,6 @@ export default function App() {
 
   useEffect(() => {
     if (currentOperator) {
-      logSystemAction("SESSION_LOGIN", "AUTHENTICATION Portal", `Session active for @${currentOperator.username}`).catch(() => {})
       fetchCategories()
       fetchInventory()
       fetchSales()
@@ -241,6 +243,56 @@ export default function App() {
   }
 
   const fetchSales = async () => {
+    // 1. Try querying view_sales_history if available
+    const { data: viewData, error: viewErr } = await supabase.from('view_sales_history').select('*').order('id', { ascending: false })
+    
+    if (viewData && !viewErr && viewData.length > 0) {
+      const formattedFromView: Sale[] = viewData.map((s: any) => {
+        const rawItems = Array.isArray(s.sale_items) ? s.sale_items : []
+        const mappedItems = rawItems.map((si: any) => ({
+          quantity: Math.floor(Number(si.quantity)) || 1,
+          item: {
+            id: String(si.inventory?.id || 0),
+            name: si.inventory?.name || "Product Item",
+            category: si.inventory?.category || "Uncategorized",
+            price: Number(si.unit_price) || Number(si.inventory?.price) || 0,
+            cost: 0,
+            stock: 0,
+            minStock: Number(si.inventory?.min_stock) || 0,
+            barcode: si.inventory?.barcode || "",
+            manufacturer: "",
+            batches: []
+          }
+        }))
+
+        const rawPay = String(s.payment_method || "").trim()
+        const isCash = !rawPay || rawPay.toLowerCase() === "cash"
+        const onlineChan = !isCash ? (rawPay.includes(":") ? rawPay.split(":")[1] : (rawPay.toLowerCase() === "other" ? "" : rawPay)) : ""
+
+        return {
+          id: String(s.id),
+          date: new Date(s.date || Date.now()),
+          items: mappedItems,
+          grossTotal: Number(s.gross_total) || Number(s.total) || 0,
+          subtotal: Number(s.subtotal) || Number(s.total) || 0,
+          discount: Number(s.discount) || 0,
+          taxableBase: Number(s.taxable_base) || Number(s.total) || 0,
+          vat: Number(s.vat) || 0,
+          total: Number(s.total) || 0,
+          cashReceived: Number(s.cash_received) || Number(s.total) || 0,
+          change: Number(s.change) || 0,
+          paymentMethod: isCash ? "cash" : "other",
+          onlineChannel: onlineChan || s.online_channel || "",
+          discountLabel: s.discount_label || "NONE",
+          processedBy: s.processed_by || "admin",
+          isRefunded: Boolean(s.is_refunded)
+        }
+      })
+      setSales(formattedFromView)
+      return
+    }
+
+    // 2. Standard multi-table query fallback
     const { data: salesData } = await supabase.from('sales').select('*').order('id', { ascending: false })
     const { data: saleItemsData } = await supabase.from('sale_items').select('*')
     const { data: inventoryData } = await supabase.from('inventory').select('*')
@@ -271,6 +323,10 @@ export default function App() {
           }
         }
       }) || []
+      const rawPay = String(sale.payment_method || "").trim()
+      const isCash = !rawPay || rawPay.toLowerCase() === "cash"
+      const onlineChan = !isCash ? (rawPay.includes(":") ? rawPay.split(":")[1] : (rawPay.toLowerCase() === "other" ? "" : rawPay)) : ""
+
       return {
         id: String(sale.id),
         date: new Date(sale.date || sale.created_at || Date.now()),
@@ -283,7 +339,8 @@ export default function App() {
         total: Number(sale.total) || 0,
         cashReceived: Number(sale.cash_received) || 0,
         change: Number(sale.change) || 0,
-        paymentMethod: (sale.payment_method || "cash") === "cash" ? "cash" : "other",
+        paymentMethod: isCash ? "cash" : "other",
+        onlineChannel: onlineChan || sale.online_channel || "",
         discountLabel: sale.discount_label || "NONE",
         processedBy: sale.processed_by || "admin",
         isRefunded: Boolean(sale.is_refunded)
@@ -296,10 +353,14 @@ export default function App() {
     if (!currentOperator) return
     
     let saleId: any = null
-    const payload = {
+    // payment_method MUST be strictly 'cash' or 'other' (database check constraint)
+    const payMethodValue = sale.paymentMethod === "other" ? "other" : "cash"
+    const onlineChanValue = sale.paymentMethod === "other" ? (sale.onlineChannel || "GCash") : null
+
+    const payload: any = {
       date: sale.date.toISOString(),
       total: sale.total,
-      payment_method: sale.paymentMethod,
+      payment_method: payMethodValue,
       is_refunded: false,
       gross_total: sale.grossTotal,
       subtotal: sale.subtotal,
@@ -312,36 +373,77 @@ export default function App() {
       processed_by: currentOperator.username
     }
 
+    // Only include online_channel if column exists (won't break if column is missing)
+    if (onlineChanValue) {
+      payload.online_channel = onlineChanValue
+    }
+
     const { data: newSale, error: saleError } = await supabase.from('sales').insert(payload).select('id').single()
 
     if (newSale && !saleError) {
       saleId = newSale.id
     } else {
-      console.warn("Full sale payload insert failed, falling back to basic fields:", saleError?.message)
+      console.error("Full payload failed:", saleError?.message)
+      // Minimal fallback - only required fields
       const { data: fallbackSale, error: fbErr } = await supabase.from('sales').insert({
         date: sale.date.toISOString(),
         total: sale.total,
-        payment_method: sale.paymentMethod,
+        gross_total: sale.grossTotal,
+        subtotal: sale.subtotal,
+        discount: sale.discount,
+        taxable_base: sale.taxableBase,
+        vat: sale.vat,
+        cash_received: sale.cashReceived,
+        change: sale.change,
+        discount_label: sale.discountLabel,
+        payment_method: payMethodValue,
+        processed_by: currentOperator.username,
         is_refunded: false
       }).select('id').single()
-
+      
       if (fallbackSale && !fbErr) {
         saleId = fallbackSale.id
+        // Try to update online_channel separately
+        if (onlineChanValue && saleId) {
+          await supabase.from('sales').update({ online_channel: onlineChanValue }).eq('id', saleId)
+        }
+      } else {
+        console.error("All inserts failed:", fbErr?.message)
       }
     }
 
-    if (saleId) {
-      const saleItems = sale.items.map(si => ({ 
-        sale_id: saleId, 
-        item_id: si.item.id, 
-        quantity: si.quantity, 
-        unit_price: si.item.price 
-      }))
-      await supabase.from('sale_items').insert(saleItems)
-      await logSystemAction("CREATE_SALE", "POS_CHECKOUT", `Processed invoice #${saleId} (₱${sale.total.toFixed(2)})`)
-    } else {
-      await logSystemAction("CREATE_SALE", "POS_CHECKOUT", `Completed checkout sale for ₱${sale.total.toFixed(2)}`)
+    try {
+      if (saleId) {
+        const saleItems = sale.items.map(si => ({ 
+          sale_id: saleId, 
+          item_id: si.item.id, 
+          quantity: si.quantity, 
+          unit_price: si.item.price 
+        }))
+        const { error: itemsErr } = await supabase.from('sale_items').insert(saleItems)
+        if (itemsErr) {
+          const basicItems = sale.items.map(si => ({ sale_id: saleId, item_id: si.item.id, quantity: si.quantity }))
+          await supabase.from('sale_items').insert(basicItems)
+        }
+
+        // Write to sale_item_batches for Batch History log
+        const batchRows = sale.items.map(si => ({
+          sale_id: saleId,
+          item_name: si.item.name,
+          batch_label: si.item.batches && si.item.batches.length > 0
+            ? (si.item.batches.find(b => b.stock > 0)?.batchLabel || "DEFAULT")
+            : "DEFAULT",
+          quantity_deducted: si.quantity,
+          unit_price: si.item.price
+        }))
+        await supabase.from('sale_item_batches').insert(batchRows)
+      }
+    } catch (e) {
+      console.warn("Sale items insert exception:", e)
     }
+
+    const payLabel = sale.paymentMethod === "other" ? (sale.onlineChannel ? `ONLINE (${sale.onlineChannel})` : "ONLINE PAYMENT") : "CASH"
+    await logSystemAction("CREATE_SALE", "POS_CHECKOUT", `Processed sale #${saleId || Date.now()} via ${payLabel} (Total: ₱${sale.total.toFixed(2)})`)
 
     await fetchInventory()
     await fetchSales()
@@ -389,6 +491,7 @@ export default function App() {
       <LoginScreen
         onAuthSuccess={async (operator: any) => {
           saveSession(operator)
+          await logSystemAction("SESSION_LOGIN", "AUTHENTICATION Portal", `Authorized station session for @${operator.username}`).catch(() => {})
           if (operator.systemRole === "admin") {
             setActiveTab("admin_control")
           } else {

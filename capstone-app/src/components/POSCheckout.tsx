@@ -59,6 +59,19 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
     return "border-2 border-slate-300 bg-white"
   }
 
+  const getCategoryBorderHex = (catName: string): string => {
+    const n = (catName || "").toLowerCase().trim()
+    if (n.includes("prescription") || n.includes("rx") || n.includes("pain")) return "#3b82f6"
+    if (n.includes("antibiotic")) return "#22d3ee"
+    if (n.includes("supply") || n.includes("supplies")) return "#34d399"
+    if (n.includes("wellness") || n.includes("vitamin")) return "#c084fc"
+    if (n.includes("first aid")) return "#fbbf24"
+    if (n.includes("cardiovascular") || n.includes("cardio")) return "#38bdf8"
+    if (n.includes("respiratory") || n.includes("lung")) return "#14b8a6"
+    if (n.includes("gastrointestinal") || n.includes("gastro")) return "#818cf8"
+    return "#94a3b8"
+  }
+
   const getGenericGroupName = (name: string) => {
     const uppercaseName = name.toUpperCase().trim()
     if (uppercaseName.includes("AMLODIPINE") || uppercaseName.includes("AMLO")) return "AMLODIPINE"
@@ -336,30 +349,62 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
       <div className="space-y-4">
         <div className="bg-white rounded-xl shadow-sm border p-4">
           <h2 className="font-semibold mb-4 text-sm">Current Sale Cart</h2>
-          <div className="space-y-2 mb-4 max-h-64 overflow-y-auto">
+          <div className="space-y-1.5 mb-4 max-h-64 overflow-y-auto pr-1">
             {cart.length === 0 ? (
               <p className="text-xs text-gray-500 text-center py-8">Cart is empty</p>
-            ) : (
-              cart.map(ci => {
-                const itemTotal = getItemBatchAwarePrice(ci.item, ci.quantity)
-                const avgUnitPrice = itemTotal / ci.quantity
+            ) : (() => {
+                // Group cart items by generic name for display
+                const genericGroups: Record<string, CartItem[]> = {}
+                cart.forEach(ci => {
+                  const g = getGenericGroupName(ci.item.name)
+                  if (!genericGroups[g]) genericGroups[g] = []
+                  genericGroups[g].push(ci)
+                })
 
-                return (
-                  <div key={ci.item.id} className="p-3 bg-gray-50 rounded-lg border flex justify-between items-center">
-                    <div className="flex-1 min-w-0 pr-2">
-                      <p className="font-bold text-gray-900 truncate">{ci.item.name}</p>
-                      <p className="text-gray-500 font-mono text-[10px]">₱{avgUnitPrice.toFixed(2)} each</p>
+                return Object.entries(genericGroups).map(([groupName, groupItems]) => (
+                  <div key={groupName} className="rounded-xl overflow-hidden border border-gray-200 shadow-xs">
+                    {/* Group Header - always visible, prominent if multiple variants */}
+                    <div
+                      className="flex items-center gap-2 px-3 py-1.5"
+                      style={{ backgroundColor: getCategoryBorderHex(groupItems[0]?.item.category) + '22', borderBottom: `2px solid ${getCategoryBorderHex(groupItems[0]?.item.category)}` }}
+                    >
+                      <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: getCategoryBorderHex(groupItems[0]?.item.category) }} />
+                      <span className="font-black text-[9px] uppercase tracking-widest" style={{ color: getCategoryBorderHex(groupItems[0]?.item.category) }}>
+                        {groupName}
+                      </span>
+                      {groupItems.length > 1 && (
+                        <span className="ml-auto bg-white rounded-full px-1.5 py-0.5 text-[8px] font-bold text-gray-500 border">
+                          {groupItems.length} variants
+                        </span>
+                      )}
+                      <span className="ml-auto text-[9px] font-bold text-gray-500">
+                        {groupItems[0]?.item.category}
+                      </span>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <button type="button" onClick={()=>updateQtyDelta(ci.item.id, -1, ci.item.stock)} className="px-2 py-0.5 border bg-white rounded font-bold hover:bg-gray-50">-</button>
-                      <input type="text" value={ci.quantity} onChange={e=>handleManualQtyChange(ci.item.id, e.target.value, ci.item.stock)} className="w-10 text-center border rounded font-bold text-gray-900 bg-white" />
-                      <button type="button" onClick={()=>updateQtyDelta(ci.item.id, 1, ci.item.stock)} className="px-2 py-0.5 border bg-white rounded font-bold hover:bg-gray-50">+</button>
-                      <button type="button" onClick={()=>setCart(prev => prev.filter(i => i.item.id !== ci.item.id))} className="text-red-500 ml-1 font-bold text-base hover:text-red-700">×</button>
-                    </div>
+
+                    {/* Items in the group */}
+                    {groupItems.map((ci, itemIdx) => {
+                      const itemTotal = getItemBatchAwarePrice(ci.item, ci.quantity)
+                      const avgUnitPrice = itemTotal / ci.quantity
+                      return (
+                        <div key={ci.item.id} className={`flex justify-between items-center px-3 py-2 bg-white ${itemIdx < groupItems.length - 1 ? 'border-b border-dashed border-gray-100' : ''}`}>
+                          <div className="flex-1 min-w-0 pr-2">
+                            <p className="font-bold text-gray-900 truncate text-[11px]">{ci.item.name}</p>
+                            <p className="text-gray-400 font-mono text-[9px]">₱{avgUnitPrice.toFixed(2)} / pc</p>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button type="button" onClick={() => updateQtyDelta(ci.item.id, -1, ci.item.stock)} className="w-6 h-6 border bg-gray-50 rounded font-bold hover:bg-gray-100 flex items-center justify-center text-gray-700">-</button>
+                            <input type="text" value={ci.quantity} onChange={e => handleManualQtyChange(ci.item.id, e.target.value, ci.item.stock)} className="w-9 text-center border rounded font-bold text-gray-900 bg-white text-[11px]" />
+                            <button type="button" onClick={() => updateQtyDelta(ci.item.id, 1, ci.item.stock)} className="w-6 h-6 border bg-gray-50 rounded font-bold hover:bg-gray-100 flex items-center justify-center text-gray-700">+</button>
+                            <button type="button" onClick={() => setCart(prev => prev.filter(i => i.item.id !== ci.item.id))} className="text-red-400 ml-0.5 font-bold text-sm hover:text-red-600">×</button>
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
-                )
-              })
-            )}
+                ))
+              })()
+            }
           </div>
 
           <div className="border-t pt-3 space-y-1.5 mb-4 text-gray-600">
@@ -579,7 +624,11 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
               <div className="flex justify-between pt-1 border-t text-[10px]">
                 <span>Payment Method:</span>
                 <span className="font-bold uppercase text-blue-700">
-                  {lastSale.paymentMethod === "other" ? `Online (${lastSale.onlineChannel || "GCash / Card"})` : "Cash"}
+                  {lastSale.paymentMethod === "other"
+                    ? lastSale.onlineChannel
+                      ? `ONLINE / ${lastSale.onlineChannel.toUpperCase()}`
+                      : "ONLINE PAYMENT"
+                    : "CASH"}
                 </span>
               </div>
             </div>

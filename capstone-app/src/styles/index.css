@@ -147,3 +147,84 @@
   button { font-size: var(--text-base); font-weight: var(--font-weight-medium); line-height: 1.5; }
   input  { font-size: var(--text-base); font-weight: var(--font-weight-normal);  line-height: 1.5; }
 }
+
+/* ============================
+   DARK MODE GLOBAL OVERRIDES
+   Fix hardcoded bg-white / text-gray classes
+   ============================ */
+.dark .bg-white {
+  background-color: #1e2130 !important;
+}
+.dark .bg-gray-50 {
+  background-color: #181b27 !important;
+}
+.dark .bg-gray-100 {
+  background-color: #252a3a !important;
+}
+.dark .bg-gray-50\/80,
+.dark .bg-gray-50\/70 {
+  background-color: rgba(24,27,39,0.8) !important;
+}
+.dark .text-gray-900 {
+  color: #f0f2fa !important;
+}
+.dark .text-gray-800 {
+  color: #dde2f0 !important;
+}
+.dark .text-gray-700 {
+  color: #c5cde0 !important;
+}
+.dark .text-gray-600 {
+  color: #a0aec0 !important;
+}
+.dark .text-gray-500 {
+  color: #7a8ba8 !important;
+}
+.dark .text-gray-400 {
+  color: #5a6a82 !important;
+}
+.dark .border-gray-100,
+.dark .border-gray-200 {
+  border-color: #2d3452 !important;
+}
+.dark .border-gray-300 {
+  border-color: #3a4060 !important;
+}
+.dark input,
+.dark textarea,
+.dark select {
+  background-color: #252a3a !important;
+  color: #f0f2fa !important;
+  border-color: #3a4060 !important;
+}
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #5a6a82 !important;
+}
+.dark table thead {
+  background-color: #181b27 !important;
+  color: #7a8ba8 !important;
+}
+.dark table tbody tr {
+  background-color: #1e2130 !important;
+  border-color: #2d3452 !important;
+}
+.dark table tbody tr:hover {
+  background-color: #252a3a !important;
+}
+.dark .rounded-xl.border,
+.dark .rounded-xl.shadow-xs,
+.dark .rounded-xl.shadow-sm {
+  border-color: #2d3452 !important;
+}
+/* Category chips & badges */
+.dark .bg-gray-50.border {
+  background-color: #252a3a !important;
+}
+/* Manage Categories dark mode fix */
+.dark .bg-white.rounded-xl input {
+  background-color: #252a3a !important;
+  color: #f0f2fa !important;
+  border-color: #3a4060 !important;
+}
+
