@@ -2,7 +2,7 @@ import { useState, useRef } from "react"
 import type { InventoryItem } from "../App"
 import { supabase, triggerGlobalSync } from "../utils/apiClient"
 import { downloadExcelWithAutoFit } from "../utils/excelUtils"
-import { Search, FolderPlus, Download, Upload, FileSpreadsheet, X, Trash2, Edit2 } from "lucide-react"
+import { Search, FolderPlus, Download, Upload, FileSpreadsheet, X, Trash2, Edit2, Clock, CheckCircle2 } from "lucide-react"
 
 interface InventoryManagerProps {
   inventory: InventoryItem[]
@@ -30,6 +30,21 @@ export function InventoryManager({
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<InventoryItem | null>(null)
   const [newCatInput, setNewCatInput] = useState("")
   const [isBulkUploading, setIsBulkUploading] = useState(false)
+  const [importProgress, setImportProgress] = useState<{
+    active: boolean
+    totalRows: number
+    processedRows: number
+    successCount: number
+    currentItemName: string
+    startTime: number
+  }>({
+    active: false,
+    totalRows: 0,
+    processedRows: 0,
+    successCount: 0,
+    currentItemName: "",
+    startTime: 0
+  })
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -145,11 +160,26 @@ export function InventoryManager({
           return
         }
 
+        const totalDataRows = lines.length - 1
+        const startTime = Date.now()
+
+        setImportProgress({
+          active: true,
+          totalRows: totalDataRows,
+          processedRows: 0,
+          successCount: 0,
+          currentItemName: "Initializing CSV parser...",
+          startTime
+        })
+
         let successCount = 0
 
         for (let i = 1; i < lines.length; i++) {
           const columns = parseCSVLine(lines[i])
-          if (columns.length < 2) continue
+          if (columns.length < 2) {
+            setImportProgress(prev => ({ ...prev, processedRows: i }))
+            continue
+          }
 
           let barcode = columns[0]?.trim()
           const name = columns[1]?.trim()
@@ -162,7 +192,16 @@ export function InventoryManager({
           const rawExpiry = columns[8]?.trim() || null
           const expiryDate = parseDateToISO(rawExpiry)
 
-          if (!name) continue
+          if (!name) {
+            setImportProgress(prev => ({ ...prev, processedRows: i }))
+            continue
+          }
+
+          setImportProgress(prev => ({
+            ...prev,
+            processedRows: i,
+            currentItemName: name
+          }))
 
           if (!barcode) {
             barcode = `AUTO-${Math.floor(100000 + Math.random() * 900000)}`
@@ -232,7 +271,14 @@ export function InventoryManager({
           }
 
           successCount++
+          setImportProgress(prev => ({ ...prev, successCount }))
         }
+
+        setImportProgress(prev => ({
+          ...prev,
+          processedRows: totalDataRows,
+          currentItemName: "Finalizing inventory sync..."
+        }))
 
         await refreshCategories()
         await refreshInventory()
@@ -242,10 +288,16 @@ export function InventoryManager({
           await onLogAction("BULK_CSV_IMPORT", "ITEM_SPECIFICATIONS", `Bulk imported ${successCount} stock items from CSV file.`)
         }
 
-        alert(`Successfully synchronized ${successCount} item records with stock batches.`)
-      } catch (err) {
+        setTimeout(() => {
+          setImportProgress(prev => ({ ...prev, active: false }))
+          setIsBulkUploading(false)
+          if (fileInputRef.current) fileInputRef.current.value = ""
+        }, 1200)
+
+      } catch (err: any) {
+        console.error("CSV import error:", err)
         alert("Error reading file. Please save file as CSV (Comma delimited) inside Excel.")
-      } finally {
+        setImportProgress(prev => ({ ...prev, active: false }))
         setIsBulkUploading(false)
         if (fileInputRef.current) fileInputRef.current.value = ""
       }
@@ -321,6 +373,19 @@ export function InventoryManager({
     onUpdateInventory(item)
     setNewItem({ name: "", category: "unmarked category", barcode: "", manufacturer: "", minStock: 10 })
     setShowAdd(false)
+  }
+
+  const calculateImportEta = (processed: number, total: number, startTime: number) => {
+    if (processed <= 0 || !startTime) return "Calculating..."
+    const elapsedSec = (Date.now() - startTime) / 1000
+    const rate = processed / elapsedSec
+    const remaining = total - processed
+    const secLeft = rate > 0 ? Math.ceil(remaining / rate) : 0
+    if (secLeft <= 0) return "Finishing up..."
+    if (secLeft < 60) return `${secLeft}s remaining`
+    const m = Math.floor(secLeft / 60)
+    const s = secLeft % 60
+    return `${m}m ${s}s remaining`
   }
 
   return (
@@ -600,6 +665,56 @@ export function InventoryManager({
           </tbody>
         </table>
       </div>
+
+      {/* CSV Import Progress Modal with Time Left */}
+      {importProgress.active && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 font-sans">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border dark:border-slate-700">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5 text-blue-600 dark:text-blue-400">
+                <Upload className="w-5 h-5 animate-bounce" />
+                <h3 className="font-bold text-sm text-gray-900 dark:text-white">Importing Inventory CSV</h3>
+              </div>
+              <span className="text-xs font-mono font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-3 py-1 rounded-full border border-blue-200 dark:border-blue-800">
+                {Math.round((importProgress.processedRows / (importProgress.totalRows || 1)) * 100)}%
+              </span>
+            </div>
+
+            {/* Progress Bar Container */}
+            <div className="space-y-2">
+              <div className="w-full h-3 bg-gray-100 dark:bg-slate-700 rounded-full overflow-hidden p-0.5 border dark:border-slate-600">
+                <div 
+                  className="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-green-500 rounded-full transition-all duration-300 shadow-xs"
+                  style={{ width: `${Math.max(4, Math.round((importProgress.processedRows / (importProgress.totalRows || 1)) * 100))}%` }}
+                />
+              </div>
+
+              <div className="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400">
+                <span>{importProgress.processedRows} of {importProgress.totalRows} records</span>
+                <span className="font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-blue-500 animate-spin" />
+                  {calculateImportEta(importProgress.processedRows, importProgress.totalRows, importProgress.startTime)}
+                </span>
+              </div>
+            </div>
+
+            {/* Current Item status banner */}
+            <div className="p-3 bg-gray-50 dark:bg-slate-900 rounded-xl border dark:border-slate-700 text-xs space-y-1">
+              <div className="text-gray-400 dark:text-gray-400 text-[10px] uppercase tracking-wider font-bold">Current Record Processing</div>
+              <div className="font-semibold text-gray-800 dark:text-gray-200 truncate flex items-center gap-2">
+                {importProgress.processedRows >= importProgress.totalRows ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />
+                    <span className="text-green-600 dark:text-green-400 font-bold">Import Completed! Synchronized {importProgress.successCount} items.</span>
+                  </>
+                ) : (
+                  <span>{importProgress.currentItemName || "Processing CSV rows..."}</span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   )

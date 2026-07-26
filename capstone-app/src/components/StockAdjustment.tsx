@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react"
 import type { InventoryItem } from "../App"
 import { supabase } from "../utils/apiClient"
 import { downloadExcelWithAutoFit } from "../utils/excelUtils"
-import { Plus, Minus, Layers, AlertCircle, Trash2, Calendar, Download, Upload, FileSpreadsheet } from "lucide-react"
+import { Plus, Minus, Layers, AlertCircle, Trash2, Calendar, Download, Upload, FileSpreadsheet, Clock, CheckCircle2 } from "lucide-react"
 
 interface StockAdjustmentProps {
   inventory: InventoryItem[]
@@ -26,6 +26,21 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
   const [isBulkUploading, setIsBulkUploading] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [deleteConfirmBatch, setDeleteConfirmBatch] = useState<{ id: string; label: string } | null>(null)
+  const [importProgress, setImportProgress] = useState<{
+    active: boolean
+    totalRows: number
+    processedRows: number
+    successCount: number
+    currentItemName: string
+    startTime: number
+  }>({
+    active: false,
+    totalRows: 0,
+    processedRows: 0,
+    successCount: 0,
+    currentItemName: "",
+    startTime: 0
+  })
 
   const [localQuantities, setLocalQuantities] = useState<Record<string, string>>({})
   const [localCosts, setLocalCosts] = useState<Record<string, string>>({})
@@ -172,11 +187,26 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
           return
         }
 
+        const totalDataRows = lines.length - 1
+        const startTime = Date.now()
+
+        setImportProgress({
+          active: true,
+          totalRows: totalDataRows,
+          processedRows: 0,
+          successCount: 0,
+          currentItemName: "Initializing stock CSV parser...",
+          startTime
+        })
+
         let successCount = 0
 
         for (let i = 1; i < lines.length; i++) {
           const columns = parseCSVLine(lines[i])
-          if (columns.length < 1) continue
+          if (columns.length < 1) {
+            setImportProgress(prev => ({ ...prev, processedRows: i }))
+            continue
+          }
 
           const productName = columns[0]?.trim()
           const minStockInput = parseFloat(columns[1])
@@ -184,7 +214,16 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
           const rawExpiry = columns[3]?.trim() || null
           const expiryDate = parseDateToISO(rawExpiry)
 
-          if (!productName) continue
+          if (!productName) {
+            setImportProgress(prev => ({ ...prev, processedRows: i }))
+            continue
+          }
+
+          setImportProgress(prev => ({
+            ...prev,
+            processedRows: i,
+            currentItemName: productName
+          }))
 
           // Find matching item in local inventory array first for exact string lookup
           const localMatch = inventory.find(inv => inv.name.trim().toLowerCase() === productName.toLowerCase())
@@ -227,7 +266,14 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
           }
 
           successCount++
+          setImportProgress(prev => ({ ...prev, successCount }))
         }
+
+        setImportProgress(prev => ({
+          ...prev,
+          processedRows: totalDataRows,
+          currentItemName: "Finalizing stock batch updates..."
+        }))
 
         await fetchInventory()
 
@@ -235,10 +281,16 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
           await onLogAction("BULK_STOCK_IMPORT", "INVENTORY_MANAGEMENT", `Imported stock adjustments for ${successCount} items from CSV.`)
         }
 
-        alert(`Successfully applied stock adjustments to ${successCount} products.`)
-      } catch (err) {
+        setTimeout(() => {
+          setImportProgress(prev => ({ ...prev, active: false }))
+          setIsBulkUploading(false)
+          if (fileInputRef.current) fileInputRef.current.value = ""
+        }, 1200)
+
+      } catch (err: any) {
+        console.error("Stock CSV import error:", err)
         alert("Error reading file. Please save file as CSV (Comma delimited) inside Excel.")
-      } finally {
+        setImportProgress(prev => ({ ...prev, active: false }))
         setIsBulkUploading(false)
         if (fileInputRef.current) fileInputRef.current.value = ""
       }
@@ -406,6 +458,19 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
       console.error("Error deleting batch:", err)
       await fetchInventory()
     }
+  }
+
+  const calculateImportEta = (processed: number, total: number, startTime: number) => {
+    if (processed <= 0 || !startTime) return "Calculating..."
+    const elapsedSec = (Date.now() - startTime) / 1000
+    const rate = processed / elapsedSec
+    const remaining = total - processed
+    const secLeft = rate > 0 ? Math.ceil(remaining / rate) : 0
+    if (secLeft <= 0) return "Finishing up..."
+    if (secLeft < 60) return `${secLeft}s remaining`
+    const m = Math.floor(secLeft / 60)
+    const s = secLeft % 60
+    return `${m}m ${s}s remaining`
   }
 
   return (
@@ -806,12 +871,63 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
                     {isProcessing ? "Adding Lot Record..." : "Register Batch Inventory"}
                   </button>
                 </form>
-              </div>
+            </div>
 
             </div>
           )}
         </div>
       </div>
+
+      {/* Stock CSV Import Progress Modal with Time Left */}
+      {importProgress.active && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 font-sans">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border dark:border-slate-700">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5 text-blue-600 dark:text-blue-400">
+                <Upload className="w-5 h-5 animate-bounce" />
+                <h3 className="font-bold text-sm text-gray-900 dark:text-white">Importing Stock Adjustments CSV</h3>
+              </div>
+              <span className="text-xs font-mono font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-3 py-1 rounded-full border border-blue-200 dark:border-blue-800">
+                {Math.round((importProgress.processedRows / (importProgress.totalRows || 1)) * 100)}%
+              </span>
+            </div>
+
+            {/* Progress Bar Container */}
+            <div className="space-y-2">
+              <div className="w-full h-3 bg-gray-100 dark:bg-slate-700 rounded-full overflow-hidden p-0.5 border dark:border-slate-600">
+                <div 
+                  className="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-green-500 rounded-full transition-all duration-300 shadow-xs"
+                  style={{ width: `${Math.max(4, Math.round((importProgress.processedRows / (importProgress.totalRows || 1)) * 100))}%` }}
+                />
+              </div>
+
+              <div className="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400">
+                <span>{importProgress.processedRows} of {importProgress.totalRows} stock records</span>
+                <span className="font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-blue-500 animate-spin" />
+                  {calculateImportEta(importProgress.processedRows, importProgress.totalRows, importProgress.startTime)}
+                </span>
+              </div>
+            </div>
+
+            {/* Current Item status banner */}
+            <div className="p-3 bg-gray-50 dark:bg-slate-900 rounded-xl border dark:border-slate-700 text-xs space-y-1">
+              <div className="text-gray-400 dark:text-gray-400 text-[10px] uppercase tracking-wider font-bold">Current Product Updating</div>
+              <div className="font-semibold text-gray-800 dark:text-gray-200 truncate flex items-center gap-2">
+                {importProgress.processedRows >= importProgress.totalRows ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />
+                    <span className="text-green-600 dark:text-green-400 font-bold">Import Completed! Updated {importProgress.successCount} stock items.</span>
+                  </>
+                ) : (
+                  <span>{importProgress.currentItemName || "Processing CSV rows..."}</span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
