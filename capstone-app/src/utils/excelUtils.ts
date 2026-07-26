@@ -1,3 +1,5 @@
+import * as XLSX from "xlsx"
+
 export function downloadExcelWithAutoFit(
   filename: string,
   sheetName: string,
@@ -562,4 +564,41 @@ export function downloadMultiSheetSalesWorkbook(
   document.body.appendChild(link)
   link.click()
   document.body.removeChild(link)
+}
+
+/**
+ * Universal Excel & CSV file parser.
+ * Supports: .xlsx, .xls, .csv, .tsv, .ods, .xml, .xlsm, .xlsb, .txt
+ * Returns 2D array of trimmed string values: string[][]
+ */
+export async function parseSpreadsheetFile(file: File): Promise<string[][]> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      try {
+        const buffer = e.target?.result as ArrayBuffer
+        const workbook = XLSX.read(buffer, { type: "array", cellDates: true })
+        const firstSheetName = workbook.SheetNames[0]
+        if (!firstSheetName) {
+          resolve([])
+          return
+        }
+        const sheet = workbook.Sheets[firstSheetName]
+        const rawRows: any[][] = XLSX.utils.sheet_to_json(sheet, {
+          header: 1,
+          defval: "",
+          blankrows: false,
+          raw: false
+        })
+        const stringRows: string[][] = rawRows.map(row =>
+          (Array.isArray(row) ? row : []).map(cell => String(cell ?? "").trim())
+        )
+        resolve(stringRows)
+      } catch (err) {
+        reject(err)
+      }
+    }
+    reader.onerror = (err) => reject(err)
+    reader.readAsArrayBuffer(file)
+  })
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react"
-import { supabase, triggerForceLogout } from "../utils/apiClient"
+import { supabase, triggerForceLogout, triggerForceLogoutBelowSuperAdmin } from "../utils/apiClient"
 import { ShieldAlert, UserPlus, Trash2, History, RefreshCw, Eye, X, Flame, Database, AlertOctagon, RotateCcw, LogOut, Download, Edit, Plus, Calendar, HardDrive } from "lucide-react"
 
 interface SuperAdminPanelProps {
@@ -37,6 +37,13 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
   const [profiles, setProfiles] = useState<AccountProfile[]>([])
   const [activeUsernames, setActiveUsernames] = useState<string[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const isOperationRunning = useRef(false)
+  const [resetProgress, setResetProgress] = useState<{
+    active: boolean
+    step: string
+    stepIndex: number
+    totalSteps: number
+  }>({ active: false, step: "", stepIndex: 0, totalSteps: 0 })
   const [openActionProfileId, setOpenActionProfileId] = useState<number | null>(null)
   const [selectedLogSummary, setSelectedLogSummary] = useState<AuditLog | null>(null)
 
@@ -412,25 +419,67 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
   }
 
   const executeDataReset = async (type: "inventory" | "sales" | "audit" | "all") => {
-    if (isLoading) return
+    if (isLoading || isOperationRunning.current) return
     if (resetConfirmInput.trim() !== "RESET DATA") {
       alert('Confirmation string does not match. Please type "RESET DATA" to execute reset.')
       return
     }
 
+    // Build step list based on type
+    const steps: string[] = ["Creating pre-reset safety backup..."]
+    if (type === "inventory" || type === "all") {
+      steps.push("Clearing inventory batch records...")
+      steps.push("Removing inventory item profiles...")
+      steps.push("Purging product categories...")
+    }
+    if (type === "sales" || type === "all") {
+      steps.push("Clearing sale batch link records...")
+      steps.push("Removing sale line items...")
+      steps.push("Purging sales transaction records...")
+    }
+    if (type === "inventory" || type === "sales" || type === "all") {
+      steps.push("Resetting database ID sequences...")
+    }
+    if (type === "audit" || type === "all") {
+      steps.push("Clearing system audit log entries...")
+    }
+    steps.push("Logging reset action & syncing data...")
+
+    const totalSteps = steps.length
+    let stepIndex = 0
+
+    const advance = (label?: string) => {
+      stepIndex++
+      setResetProgress({
+        active: true,
+        step: label ?? steps[stepIndex] ?? "Finalizing...",
+        stepIndex,
+        totalSteps
+      })
+    }
+
     setIsLoading(true)
+    isOperationRunning.current = true
+    setResetProgress({ active: true, step: steps[0], stepIndex: 0, totalSteps })
+
     try {
-      // 0. Automatic Pre-Reset Safety Backup
+      // Step 0: Pre-Reset Safety Backup
       await handleDownloadDatabaseBackup(`pre_reset_${type}`)
+      advance()
 
       if (type === "inventory" || type === "all") {
+        // Step: Clear inventory batches
+        setResetProgress(prev => ({ ...prev, step: "Clearing inventory batch records..." }))
         const { data: batches } = await supabase.from("inventory_batches").select("id, item_id")
         if (batches && batches.length > 0) {
           for (const b of batches) {
             await supabase.from("inventory_batches").delete().eq("id", b.id)
           }
         }
+        advance()
 
+        // Step: Clear inventory items
+        setResetProgress(prev => ({ ...prev, step: "Removing inventory item profiles..." }))
         const { data: invItems } = await supabase.from("inventory").select("id, name")
         if (invItems && invItems.length > 0) {
           for (const item of invItems) {
@@ -441,7 +490,10 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
             await supabase.from("inventory").delete().eq("name", item.name)
           }
         }
+        advance()
 
+        // Step: Clear categories
+        setResetProgress(prev => ({ ...prev, step: "Purging product categories..." }))
         const { data: catList } = await supabase.from("product_categories").select("id, name")
         if (catList && catList.length > 0) {
           for (const c of catList) {
@@ -451,44 +503,61 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
             }
           }
         }
+        advance()
       }
 
       if (type === "sales" || type === "all") {
+        // Step: Clear sale batches
+        setResetProgress(prev => ({ ...prev, step: "Clearing sale batch link records..." }))
         const { data: saleBatches } = await supabase.from("sale_item_batches").select("id")
         if (saleBatches && saleBatches.length > 0) {
           for (const sb of saleBatches) {
             await supabase.from("sale_item_batches").delete().eq("id", sb.id)
           }
         }
+        advance()
 
+        // Step: Clear sale items
+        setResetProgress(prev => ({ ...prev, step: "Removing sale line items..." }))
         const { data: saleItems } = await supabase.from("sale_items").select("id")
         if (saleItems && saleItems.length > 0) {
           for (const si of saleItems) {
             await supabase.from("sale_items").delete().eq("id", si.id)
           }
         }
+        advance()
 
+        // Step: Clear sales
+        setResetProgress(prev => ({ ...prev, step: "Purging sales transaction records..." }))
         const { data: salesList } = await supabase.from("sales").select("id")
         if (salesList && salesList.length > 0) {
           for (const s of salesList) {
             await supabase.from("sales").delete().eq("id", s.id)
           }
         }
+        advance()
 
+        // Step: Reset sequences
+        setResetProgress(prev => ({ ...prev, step: "Resetting database ID sequences..." }))
         try {
           await supabase.rpc("reset_sales_sequence")
           await supabase.rpc("reset_all_database_sequences")
         } catch (e) {}
+        advance()
       }
 
       if (type === "inventory" || type === "all") {
+        setResetProgress(prev => ({ ...prev, step: "Resetting inventory ID sequences..." }))
         try {
           await supabase.rpc("reset_inventory_sequence")
           await supabase.rpc("reset_all_database_sequences")
         } catch (e) {}
+        advance()
       }
 
       if (type === "audit" || type === "all") {
+        // Step: Clear audit logs
+        setResetProgress(prev => ({ ...prev, step: "Clearing system audit log entries..." }))
         const { data: logList } = await supabase.from("system_audit_logs").select("id")
         if (logList && logList.length > 0) {
           for (const l of logList) {
@@ -498,25 +567,37 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
         try {
           await supabase.rpc("reset_all_database_sequences")
         } catch (e) {}
+        advance()
       }
 
+      // Final step: log & sync
+      setResetProgress(prev => ({ ...prev, step: "Logging reset action & syncing data...", stepIndex: totalSteps, totalSteps }))
       await onLogAction(
         type === "all" ? "FACTORY_RESET" : "DATA_RESET",
         "SUPER_ADMIN",
         `Executed master data reset for: ${type.toUpperCase()}. Tables preserved.`
       )
 
+      setResetProgress(prev => ({ ...prev, step: "✓ Reset complete!", stepIndex: totalSteps, totalSteps }))
+      await new Promise(r => setTimeout(r, 900))
+
       setShowResetModal(null)
       setResetConfirmInput("")
-      alert(`Master Data Reset Completed for [${type.toUpperCase()}]. All database tables remain intact and ready for new data!`)
+
+      // Force logout all accounts below super admin (staff, admin)
+      triggerForceLogoutBelowSuperAdmin(currentOperator.username)
 
       window.dispatchEvent(new Event("refresh_sales_data"))
       if (refreshAllData) await refreshAllData()
       await fetchAllSuperAdminData()
+
+      alert(`Master Data Reset Completed for [${type.toUpperCase()}]. All database tables remain intact and ready for new data!`)
     } catch (err: any) {
       alert(`Data reset error: ${err.message}`)
     } finally {
       setIsLoading(false)
+      isOperationRunning.current = false
+      setResetProgress({ active: false, step: "", stepIndex: 0, totalSteps: 0 })
     }
   }
 
@@ -552,7 +633,7 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
   }
 
   const fetchAllSuperAdminData = async () => {
-    setIsLoading(true)
+    if (isOperationRunning.current) return
     try {
       const { data: logsData } = await supabase
         .from("system_audit_logs")
@@ -674,8 +755,6 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
       }
     } catch (err) {
       console.error("Super Admin data fetch error:", err)
-    } finally {
-      setIsLoading(false)
     }
   }
 
@@ -734,7 +813,10 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
       if (currentOperator?.username) {
         localStorage.setItem(`pinv_active_heartbeat_${currentOperator.username.toLowerCase()}`, Date.now().toString())
       }
-      fetchAllSuperAdminData()
+      // Skip background refresh if a destructive operation is currently running
+      if (!isOperationRunning.current) {
+        fetchAllSuperAdminData()
+      }
     }, 5000)
 
     return () => {
@@ -1525,6 +1607,30 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
                 className="w-full p-2.5 border border-red-300 dark:border-red-900/50 rounded-xl text-xs font-mono font-bold text-gray-900 dark:text-white bg-white dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50"
               />
             </div>
+
+            {/* Reset Progress Indicator */}
+            {resetProgress.active && (
+              <div className="space-y-2.5 p-3 bg-slate-950 rounded-xl border border-red-900/40">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-red-400 font-mono font-bold flex items-center gap-1.5">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-red-500" />
+                    {resetProgress.step}
+                  </span>
+                  <span className="text-red-300 font-mono font-bold text-[10px] bg-red-950/60 px-2 py-0.5 rounded-full border border-red-800/40">
+                    {Math.round((resetProgress.stepIndex / (resetProgress.totalSteps || 1)) * 100)}%
+                  </span>
+                </div>
+                <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700/50">
+                  <div
+                    className="h-full bg-gradient-to-r from-red-700 via-orange-500 to-yellow-400 rounded-full transition-all duration-500"
+                    style={{ width: `${Math.max(4, Math.round((resetProgress.stepIndex / (resetProgress.totalSteps || 1)) * 100))}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500 font-mono">
+                  Step {resetProgress.stepIndex} of {resetProgress.totalSteps} — Do not close this window
+                </p>
+              </div>
+            )}
 
             <div className="flex gap-2 pt-2">
               <button

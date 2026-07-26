@@ -208,6 +208,13 @@ export default function App() {
             setActiveTab("dashboard")
             alert("Your session has been terminated by an administrator.")
           }
+        } else if (data.type === 'FORCE_LOGOUT_BELOW_SUPER_ADMIN') {
+          if (String(currentOperator.systemRole).toLowerCase() !== 'superadmin') {
+            sessionStorage.removeItem("pinv_session")
+            setCurrentOperator(null)
+            setActiveTab("dashboard")
+            alert("System master data was reset by Super Admin. Your session has been terminated.")
+          }
         }
       } catch (e) {}
     }
@@ -219,9 +226,21 @@ export default function App() {
         handleRealtimeRefresh()
       } else if (e.key === "pinv_logout_signal" && e.newValue) {
         checkForceLogoutPayload(e.newValue)
+      } else if (e.key === "pinv_logout_below_superadmin_signal" && e.newValue) {
+        checkForceLogoutPayload(e.newValue)
       }
     }
     window.addEventListener("storage", handleStorageChange)
+
+    const handleForceLogoutBelowSAEvent = () => {
+      if (currentOperator && String(currentOperator.systemRole).toLowerCase() !== 'superadmin') {
+        sessionStorage.removeItem("pinv_session")
+        setCurrentOperator(null)
+        setActiveTab("dashboard")
+        alert("System master data was reset by Super Admin. Your session has been terminated.")
+      }
+    }
+    window.addEventListener("force_logout_below_superadmin", handleForceLogoutBelowSAEvent)
 
     if (broadcastChannel) {
       broadcastChannel.onmessage = (msgEvent) => {
@@ -234,6 +253,7 @@ export default function App() {
       supabase.removeChannel(channel)
       window.removeEventListener("refresh_sales_data", handleRealtimeRefresh)
       window.removeEventListener("storage", handleStorageChange)
+      window.removeEventListener("force_logout_below_superadmin", handleForceLogoutBelowSAEvent)
       if (broadcastChannel) {
         broadcastChannel.onmessage = null
       }

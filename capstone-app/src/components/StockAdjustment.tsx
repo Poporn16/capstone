@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import type { InventoryItem } from "../App"
 import { supabase } from "../utils/apiClient"
-import { downloadExcelWithAutoFit } from "../utils/excelUtils"
+import { downloadExcelWithAutoFit, parseSpreadsheetFile } from "../utils/excelUtils"
 import { Plus, Minus, Layers, AlertCircle, Trash2, Calendar, Download, Upload, FileSpreadsheet, Clock, CheckCircle2 } from "lucide-react"
 
 interface StockAdjustmentProps {
@@ -169,134 +169,138 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
     return result
   }
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+    if (isBulkUploading || importProgress.active) return
 
     setIsBulkUploading(true)
-    const reader = new FileReader()
+    setImportProgress({
+      active: false,
+      totalRows: 0,
+      processedRows: 0,
+      successCount: 0,
+      currentItemName: "",
+      startTime: 0
+    })
 
-    reader.onload = async (evt) => {
-      try {
-        const text = evt.target?.result as string
-        const lines = text.split(/\r\n|\n/).map(l => l.trim()).filter(l => l.length > 0)
-        
-        if (lines.length <= 1) {
-          alert("The file contains no data rows to import.")
-          setIsBulkUploading(false)
-          return
+    try {
+      const rows = await parseSpreadsheetFile(file)
+      
+      if (rows.length <= 1) {
+        alert("The file contains no data rows to import.")
+        setIsBulkUploading(false)
+        if (fileInputRef.current) fileInputRef.current.value = ""
+        return
+      }
+
+      const totalDataRows = rows.length - 1
+      const startTime = Date.now()
+
+      setImportProgress({
+        active: true,
+        totalRows: totalDataRows,
+        processedRows: 0,
+        successCount: 0,
+        currentItemName: "Initializing stock spreadsheet parser...",
+        startTime
+      })
+
+      let successCount = 0
+
+      for (let i = 1; i < rows.length; i++) {
+        const columns = rows[i]
+        if (!columns || columns.length < 1) {
+          setImportProgress(prev => ({ ...prev, processedRows: i }))
+          continue
         }
 
-        const totalDataRows = lines.length - 1
-        const startTime = Date.now()
+        const productName = columns[0]?.trim()
+        const minStockInput = parseFloat(columns[1])
+        const stockQtyInput = Math.floor(parseFloat(columns[2]) || 0)
+        const rawExpiry = columns[3]?.trim() || null
+        const expiryDate = parseDateToISO(rawExpiry)
 
-        setImportProgress({
-          active: true,
-          totalRows: totalDataRows,
-          processedRows: 0,
-          successCount: 0,
-          currentItemName: "Initializing stock CSV parser...",
-          startTime
-        })
-
-        let successCount = 0
-
-        for (let i = 1; i < lines.length; i++) {
-          const columns = parseCSVLine(lines[i])
-          if (columns.length < 1) {
-            setImportProgress(prev => ({ ...prev, processedRows: i }))
-            continue
-          }
-
-          const productName = columns[0]?.trim()
-          const minStockInput = parseFloat(columns[1])
-          const stockQtyInput = Math.floor(parseFloat(columns[2]) || 0)
-          const rawExpiry = columns[3]?.trim() || null
-          const expiryDate = parseDateToISO(rawExpiry)
-
-          if (!productName) {
-            setImportProgress(prev => ({ ...prev, processedRows: i }))
-            continue
-          }
-
-          setImportProgress(prev => ({
-            ...prev,
-            processedRows: i,
-            currentItemName: productName
-          }))
-
-          // Find matching item in local inventory array first for exact string lookup
-          const localMatch = inventory.find(inv => inv.name.trim().toLowerCase() === productName.toLowerCase())
-          
-          let matchedItem = null
-
-          if (localMatch) {
-            matchedItem = { id: localMatch.id, price: localMatch.price, cost: localMatch.cost }
-          } else {
-            // Fallback DB search query
-            const { data: dbItem } = await supabase
-              .from("inventory")
-              .select("id, price, cost")
-              .eq("name", productName)
-              .maybeSingle()
-            matchedItem = dbItem
-          }
-
-          if (!matchedItem) continue
-
-          if (!isNaN(minStockInput) && minStockInput >= 0) {
-            await supabase
-              .from("inventory")
-              .update({ min_stock: Math.floor(minStockInput) })
-              .eq("id", Number(matchedItem.id))
-          }
-
-          if (stockQtyInput > 0) {
-            const cleanedName = productName.replace(/\s+/g, "").substring(0, 5).toUpperCase()
-            const generatedBatchLabel = `BATCH-${cleanedName}-${Date.now().toString().slice(-4)}`
-
-            await supabase.from("inventory_batches").insert({
-              item_id: Number(matchedItem.id),
-              batch_label: generatedBatchLabel,
-              stock: stockQtyInput,
-              cost: Number(matchedItem.cost) || 0,
-              price: Number(matchedItem.price) || 0,
-              expiry_date: expiryDate
-            })
-          }
-
-          successCount++
-          setImportProgress(prev => ({ ...prev, successCount }))
+        if (!productName) {
+          setImportProgress(prev => ({ ...prev, processedRows: i }))
+          continue
         }
 
         setImportProgress(prev => ({
           ...prev,
-          processedRows: totalDataRows,
-          currentItemName: "Finalizing stock batch updates..."
+          processedRows: i,
+          currentItemName: productName
         }))
 
-        await fetchInventory()
+        // Find matching item in local inventory array first for exact string lookup
+        const localMatch = inventory.find(inv => inv.name.trim().toLowerCase() === productName.toLowerCase())
+        
+        let matchedItem = null
 
-        if (onLogAction) {
-          await onLogAction("BULK_STOCK_IMPORT", "INVENTORY_MANAGEMENT", `Imported stock adjustments for ${successCount} items from CSV.`)
+        if (localMatch) {
+          matchedItem = { id: localMatch.id, price: localMatch.price, cost: localMatch.cost }
+        } else {
+          // Fallback DB search query
+          const { data: dbItem } = await supabase
+            .from("inventory")
+            .select("id, price, cost")
+            .eq("name", productName)
+            .maybeSingle()
+          matchedItem = dbItem
         }
 
-        setTimeout(() => {
-          setImportProgress(prev => ({ ...prev, active: false }))
-          setIsBulkUploading(false)
-          if (fileInputRef.current) fileInputRef.current.value = ""
-        }, 1200)
+        if (!matchedItem) continue
 
-      } catch (err: any) {
-        console.error("Stock CSV import error:", err)
-        alert("Error reading file. Please save file as CSV (Comma delimited) inside Excel.")
+        if (!isNaN(minStockInput) && minStockInput >= 0) {
+          await supabase
+            .from("inventory")
+            .update({ min_stock: Math.floor(minStockInput) })
+            .eq("id", Number(matchedItem.id))
+        }
+
+        if (stockQtyInput > 0) {
+          const cleanedName = productName.replace(/\s+/g, "").substring(0, 5).toUpperCase()
+          const generatedBatchLabel = `BATCH-${cleanedName}-${Date.now().toString().slice(-4)}`
+
+          await supabase.from("inventory_batches").insert({
+            item_id: Number(matchedItem.id),
+            batch_label: generatedBatchLabel,
+            stock: stockQtyInput,
+            cost: Number(matchedItem.cost) || 0,
+            price: Number(matchedItem.price) || 0,
+            expiry_date: expiryDate
+          })
+        }
+
+        successCount++
+        setImportProgress(prev => ({ ...prev, successCount }))
+      }
+
+      setImportProgress(prev => ({
+        ...prev,
+        processedRows: totalDataRows,
+        currentItemName: "Finalizing stock batch updates..."
+      }))
+
+      await fetchInventory()
+
+      if (onLogAction) {
+        await onLogAction("BULK_STOCK_IMPORT", "INVENTORY_MANAGEMENT", `Imported stock adjustments for ${successCount} items from Excel file.`)
+      }
+
+      setTimeout(() => {
         setImportProgress(prev => ({ ...prev, active: false }))
         setIsBulkUploading(false)
         if (fileInputRef.current) fileInputRef.current.value = ""
-      }
-    }
+      }, 1200)
 
-    reader.readAsText(file)
+    } catch (err: any) {
+      console.error("Stock Excel import error:", err)
+      alert(`Error reading file: ${err?.message || "Invalid Excel / CSV file format."}`)
+      setImportProgress(prev => ({ ...prev, active: false }))
+      setIsBulkUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ""
+    }
   }
 
   const handleCreateBatch = async (e: React.FormEvent) => {
@@ -482,7 +486,7 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
           <FileSpreadsheet className="w-5 h-5 text-green-600" />
           <div>
             <h3 className="font-bold text-gray-800 text-sm">Bulk Stock Management</h3>
-            <p className="text-[10px] text-gray-500">Download Excel template pre-filled with product names, or upload CSV to update stock quantities.</p>
+            <p className="text-[10px] text-gray-500">Download Excel template pre-filled with product names, or upload Excel (.xlsx, .xls, .csv) files to update stock quantities.</p>
           </div>
         </div>
 
@@ -500,18 +504,18 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
             type="file" 
             ref={fileInputRef} 
             onChange={handleFileUpload} 
-            accept=".csv" 
+            accept=".csv, .xlsx, .xls, .xlsm, .xlsb, .tsv, .ods, .xml" 
             className="hidden" 
           />
 
           <button
             type="button"
-            disabled={isBulkUploading}
+            disabled={isBulkUploading || importProgress.active}
             onClick={() => fileInputRef.current?.click()}
-            className="px-3.5 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors disabled:opacity-50"
+            className="px-3.5 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Upload className="w-4 h-4" />
-            {isBulkUploading ? "Processing Import..." : "Upload Stock CSV"}
+            {isBulkUploading || importProgress.active ? "Processing Import..." : "Upload Stock Excel / CSV"}
           </button>
         </div>
       </div>

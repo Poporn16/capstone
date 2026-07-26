@@ -42,3 +42,22 @@ export function triggerForceLogout(targetUsername: string, initiatedBy?: string)
     }
   }
 }
+
+export function triggerForceLogoutBelowSuperAdmin(initiatedBy?: string) {
+  if (typeof window !== 'undefined') {
+    const payload = JSON.stringify({
+      type: 'FORCE_LOGOUT_BELOW_SUPER_ADMIN',
+      initiatedBy: (initiatedBy || '').toLowerCase().trim(),
+      time: Date.now()
+    })
+    window.dispatchEvent(new CustomEvent('force_logout_below_superadmin', { detail: { initiatedBy } }))
+    try {
+      localStorage.setItem('pinv_logout_below_superadmin_signal', payload)
+    } catch (e) {}
+    if (broadcastChannel) {
+      try {
+        broadcastChannel.postMessage(payload)
+      } catch (e) {}
+    }
+  }
+}

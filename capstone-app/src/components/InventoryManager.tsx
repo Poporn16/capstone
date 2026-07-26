@@ -1,7 +1,7 @@
 import { useState, useRef } from "react"
 import type { InventoryItem } from "../App"
 import { supabase, triggerGlobalSync } from "../utils/apiClient"
-import { downloadExcelWithAutoFit } from "../utils/excelUtils"
+import { downloadExcelWithAutoFit, parseSpreadsheetFile } from "../utils/excelUtils"
 import { Search, FolderPlus, Download, Upload, FileSpreadsheet, X, Trash2, Edit2, Clock, CheckCircle2 } from "lucide-react"
 
 interface InventoryManagerProps {
@@ -142,168 +142,172 @@ export function InventoryManager({
     return result
   }
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+    if (isBulkUploading || importProgress.active) return
 
     setIsBulkUploading(true)
-    const reader = new FileReader()
+    setImportProgress({
+      active: false,
+      totalRows: 0,
+      processedRows: 0,
+      successCount: 0,
+      currentItemName: "",
+      startTime: 0
+    })
 
-    reader.onload = async (evt) => {
-      try {
-        const text = evt.target?.result as string
-        const lines = text.split(/\r\n|\n/).map(l => l.trim()).filter(l => l.length > 0)
-        
-        if (lines.length <= 1) {
-          alert("The file contains no data rows to import.")
-          setIsBulkUploading(false)
-          return
+    try {
+      const rows = await parseSpreadsheetFile(file)
+      
+      if (rows.length <= 1) {
+        alert("The file contains no data rows to import.")
+        setIsBulkUploading(false)
+        if (fileInputRef.current) fileInputRef.current.value = ""
+        return
+      }
+
+      const totalDataRows = rows.length - 1
+      const startTime = Date.now()
+
+      setImportProgress({
+        active: true,
+        totalRows: totalDataRows,
+        processedRows: 0,
+        successCount: 0,
+        currentItemName: "Initializing spreadsheet parser...",
+        startTime
+      })
+
+      let successCount = 0
+
+      for (let i = 1; i < rows.length; i++) {
+        const columns = rows[i]
+        if (!columns || columns.length < 2) {
+          setImportProgress(prev => ({ ...prev, processedRows: i }))
+          continue
         }
 
-        const totalDataRows = lines.length - 1
-        const startTime = Date.now()
+        let barcode = columns[0]?.trim()
+        const name = columns[1]?.trim()
+        const categoryInput = columns[2]?.trim().toLowerCase()
+        const manufacturer = columns[3]?.trim() || null
+        const cost = parseFloat(columns[4]) || 0
+        const price = parseFloat(columns[5]) || 0
+        const minStock = Math.floor(parseFloat(columns[6]) || 10)
+        const initialStock = Math.floor(parseFloat(columns[7]) || 0)
+        const rawExpiry = columns[8]?.trim() || null
+        const expiryDate = parseDateToISO(rawExpiry)
 
-        setImportProgress({
-          active: true,
-          totalRows: totalDataRows,
-          processedRows: 0,
-          successCount: 0,
-          currentItemName: "Initializing CSV parser...",
-          startTime
-        })
-
-        let successCount = 0
-
-        for (let i = 1; i < lines.length; i++) {
-          const columns = parseCSVLine(lines[i])
-          if (columns.length < 2) {
-            setImportProgress(prev => ({ ...prev, processedRows: i }))
-            continue
-          }
-
-          let barcode = columns[0]?.trim()
-          const name = columns[1]?.trim()
-          const categoryInput = columns[2]?.trim().toLowerCase()
-          const manufacturer = columns[3]?.trim() || null
-          const cost = parseFloat(columns[4]) || 0
-          const price = parseFloat(columns[5]) || 0
-          const minStock = Math.floor(parseFloat(columns[6]) || 10)
-          const initialStock = Math.floor(parseFloat(columns[7]) || 0)
-          const rawExpiry = columns[8]?.trim() || null
-          const expiryDate = parseDateToISO(rawExpiry)
-
-          if (!name) {
-            setImportProgress(prev => ({ ...prev, processedRows: i }))
-            continue
-          }
-
-          setImportProgress(prev => ({
-            ...prev,
-            processedRows: i,
-            currentItemName: name
-          }))
-
-          if (!barcode) {
-            barcode = `AUTO-${Math.floor(100000 + Math.random() * 900000)}`
-          }
-
-          let targetCategory = "unmarked category"
-          if (categoryInput && categoryInput !== "unmarked category") {
-            const isCategoryExisting = categoriesList.some(c => c.toLowerCase() === categoryInput)
-            if (isCategoryExisting) {
-              targetCategory = categoryInput
-            } else {
-              await supabase.from("product_categories").insert({ name: categoryInput })
-              targetCategory = categoryInput
-            }
-          }
-
-          const { data: existingItem } = await supabase
-            .from("inventory")
-            .select("id, barcode")
-            .ilike("name", name)
-            .maybeSingle()
-
-          let targetItemId: number | null = existingItem ? Number(existingItem.id) : null
-
-          if (targetItemId) {
-            await supabase
-              .from("inventory")
-              .update({
-                barcode: barcode || existingItem?.barcode,
-                category: targetCategory,
-                manufacturer,
-                min_stock: minStock
-              })
-              .eq("id", targetItemId)
-          } else {
-            const { data: insertedItem } = await supabase
-              .from("inventory")
-              .insert({
-                barcode,
-                name,
-                category: targetCategory,
-                manufacturer,
-                min_stock: minStock
-              })
-              .select("id")
-              .single()
-
-            if (insertedItem) {
-              targetItemId = Number(insertedItem.id)
-            }
-          }
-
-          if (!targetItemId) continue
-
-          if (initialStock > 0) {
-            const cleanedName = name.replace(/\s+/g, "").substring(0, 5).toUpperCase()
-            const batchLabel = `BULK-${cleanedName}-${Date.now().toString().slice(-4)}`
-
-            await supabase.from("inventory_batches").insert({
-              item_id: targetItemId,
-              batch_label: batchLabel,
-              stock: initialStock,
-              cost,
-              price,
-              expiry_date: expiryDate
-            })
-          }
-
-          successCount++
-          setImportProgress(prev => ({ ...prev, successCount }))
+        if (!name) {
+          setImportProgress(prev => ({ ...prev, processedRows: i }))
+          continue
         }
 
         setImportProgress(prev => ({
           ...prev,
-          processedRows: totalDataRows,
-          currentItemName: "Finalizing inventory sync..."
+          processedRows: i,
+          currentItemName: name
         }))
 
-        await refreshCategories()
-        await refreshInventory()
-        triggerGlobalSync()
-
-        if (onLogAction) {
-          await onLogAction("BULK_CSV_IMPORT", "ITEM_SPECIFICATIONS", `Bulk imported ${successCount} stock items from CSV file.`)
+        if (!barcode) {
+          barcode = `AUTO-${Math.floor(100000 + Math.random() * 900000)}`
         }
 
-        setTimeout(() => {
-          setImportProgress(prev => ({ ...prev, active: false }))
-          setIsBulkUploading(false)
-          if (fileInputRef.current) fileInputRef.current.value = ""
-        }, 1200)
+        let targetCategory = "unmarked category"
+        if (categoryInput && categoryInput !== "unmarked category") {
+          const isCategoryExisting = categoriesList.some(c => c.toLowerCase() === categoryInput)
+          if (isCategoryExisting) {
+            targetCategory = categoryInput
+          } else {
+            await supabase.from("product_categories").insert({ name: categoryInput })
+            targetCategory = categoryInput
+          }
+        }
 
-      } catch (err: any) {
-        console.error("CSV import error:", err)
-        alert("Error reading file. Please save file as CSV (Comma delimited) inside Excel.")
+        const { data: existingItem } = await supabase
+          .from("inventory")
+          .select("id, barcode")
+          .ilike("name", name)
+          .maybeSingle()
+
+        let targetItemId: number | null = existingItem ? Number(existingItem.id) : null
+
+        if (targetItemId) {
+          await supabase
+            .from("inventory")
+            .update({
+              barcode: barcode || existingItem?.barcode,
+              category: targetCategory,
+              manufacturer,
+              min_stock: minStock
+            })
+            .eq("id", targetItemId)
+        } else {
+          const { data: insertedItem } = await supabase
+            .from("inventory")
+            .insert({
+              barcode,
+              name,
+              category: targetCategory,
+              manufacturer,
+              min_stock: minStock
+            })
+            .select("id")
+            .single()
+
+          if (insertedItem) {
+            targetItemId = Number(insertedItem.id)
+          }
+        }
+
+        if (!targetItemId) continue
+
+        if (initialStock > 0) {
+          const cleanedName = name.replace(/\s+/g, "").substring(0, 5).toUpperCase()
+          const batchLabel = `BULK-${cleanedName}-${Date.now().toString().slice(-4)}`
+
+          await supabase.from("inventory_batches").insert({
+            item_id: targetItemId,
+            batch_label: batchLabel,
+            stock: initialStock,
+            cost,
+            price,
+            expiry_date: expiryDate
+          })
+        }
+
+        successCount++
+        setImportProgress(prev => ({ ...prev, successCount }))
+      }
+
+      setImportProgress(prev => ({
+        ...prev,
+        processedRows: totalDataRows,
+        currentItemName: "Finalizing inventory sync..."
+      }))
+
+      await refreshCategories()
+      await refreshInventory()
+      triggerGlobalSync()
+
+      if (onLogAction) {
+        await onLogAction("BULK_CSV_IMPORT", "ITEM_SPECIFICATIONS", `Bulk imported ${successCount} stock items from Excel file.`)
+      }
+
+      setTimeout(() => {
         setImportProgress(prev => ({ ...prev, active: false }))
         setIsBulkUploading(false)
         if (fileInputRef.current) fileInputRef.current.value = ""
-      }
-    }
+      }, 1200)
 
-    reader.readAsText(file)
+    } catch (err: any) {
+      console.error("Excel import error:", err)
+      alert(`Error reading file: ${err?.message || "Invalid Excel / CSV file format."}`)
+      setImportProgress(prev => ({ ...prev, active: false }))
+      setIsBulkUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ""
+    }
   }
 
   const handleAddCategory = async () => {
@@ -397,7 +401,7 @@ export function InventoryManager({
           <FileSpreadsheet className="w-5 h-5 text-green-600" />
           <div>
             <h3 className="font-bold text-gray-800 text-sm">Bulk Data Management</h3>
-            <p className="text-[10px] text-gray-500">Download blank template or upload CSV files.</p>
+            <p className="text-[10px] text-gray-500">Download blank template or upload Excel (.xlsx, .xls, .csv) files.</p>
           </div>
         </div>
 
@@ -415,18 +419,18 @@ export function InventoryManager({
             type="file" 
             ref={fileInputRef} 
             onChange={handleFileUpload} 
-            accept=".csv" 
+            accept=".csv, .xlsx, .xls, .xlsm, .xlsb, .tsv, .ods, .xml" 
             className="hidden" 
           />
 
           <button
             type="button"
-            disabled={isBulkUploading}
+            disabled={isBulkUploading || importProgress.active}
             onClick={() => fileInputRef.current?.click()}
-            className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors disabled:opacity-50"
+            className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Upload className="w-4 h-4" />
-            {isBulkUploading ? "Processing..." : "Upload CSV"}
+            {isBulkUploading || importProgress.active ? "Processing..." : "Upload Excel / CSV"}
           </button>
         </div>
       </div>
