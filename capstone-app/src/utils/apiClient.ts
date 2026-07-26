@@ -22,3 +22,23 @@ export function triggerGlobalSync() {
     }
   }
 }
+
+export function triggerForceLogout(targetUsername: string, initiatedBy?: string) {
+  if (typeof window !== 'undefined') {
+    const payload = JSON.stringify({
+      type: 'FORCE_LOGOUT',
+      username: targetUsername.toLowerCase().trim(),
+      initiatedBy: (initiatedBy || '').toLowerCase().trim(),
+      time: Date.now()
+    })
+    window.dispatchEvent(new CustomEvent('force_user_logout', { detail: { username: targetUsername, initiatedBy } }))
+    try {
+      localStorage.setItem('pinv_logout_signal', payload)
+    } catch (e) {}
+    if (broadcastChannel) {
+      try {
+        broadcastChannel.postMessage(payload)
+      } catch (e) {}
+    }
+  }
+}

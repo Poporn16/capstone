@@ -1,6 +1,6 @@
 import { useState } from "react"
 import type { InventoryItem, Sale } from "../App"
-import { ArrowLeft, Printer, CreditCard } from "lucide-react"
+import { ArrowLeft, Printer, CreditCard, X } from "lucide-react"
 
 interface POSCheckoutProps {
   inventory: InventoryItem[]
@@ -30,8 +30,29 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
   const [customDiscountPercent, setCustomDiscountPercent] = useState<number>(0)
   const [cashReceived, setCashReceived] = useState<string>("")
   const [selectedGenericGroup, setSelectedGenericGroup] = useState<string | null>(null)
+  const [displayLimit, setDisplayLimit] = useState<number>(20)
 
   const dynamicCategories = categoriesList.filter(c => c !== "unmarked category")
+
+  const handleCategoryTabChange = (cat: string) => {
+    setActiveCategoryTab(cat)
+    setSelectedGenericGroup(null)
+    setDisplayLimit(20)
+  }
+
+  const handleQueryChange = (val: string) => {
+    setQuery(val)
+    setDisplayLimit(20)
+  }
+
+  const handleCatalogueScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget
+    if (scrollHeight - scrollTop <= clientHeight + 60) {
+      if (displayLimit < uniqueGroups.length) {
+        setDisplayLimit(prev => prev + 20)
+      }
+    }
+  }
 
   const getCategoryBadgeStyle = (catName: string) => {
     const normalized = (catName || "").toLowerCase().trim()
@@ -88,6 +109,7 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
   })
 
   const uniqueGroups = Array.from(new Set(filteredItems.map(i => getGenericGroupName(i.name))))
+  const visibleGroups = uniqueGroups.slice(0, displayLimit)
 
   const getItemsInGroup = (groupName: string) => {
     return filteredItems.filter(i => getGenericGroupName(i.name) === groupName)
@@ -222,36 +244,53 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 text-xs font-medium">
-      <div className="lg:col-span-2 space-y-4">
-        <div className="bg-white rounded-xl shadow-sm border p-4 space-y-3">
-          <input type="text" placeholder="Search product name or code..." value={query} onChange={e=>setQuery(e.target.value)} className="w-full border p-2.5 rounded-lg text-xs" />
-          <div className="flex gap-1.5 bg-gray-100/80 p-1.5 rounded-xl overflow-x-auto">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 text-xs font-medium">
+      <div className="lg:col-span-2 space-y-3 flex flex-col">
+        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border dark:border-slate-700 p-3.5 space-y-2.5 shrink-0">
+          <input 
+            type="text" 
+            placeholder="Search product name or code..." 
+            value={query} 
+            onChange={e => handleQueryChange(e.target.value)} 
+            className="w-full border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-800 dark:text-white p-2.5 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" 
+          />
+          <div className="flex gap-1.5 bg-gray-100 dark:bg-slate-900 p-1.5 rounded-xl overflow-x-auto border dark:border-slate-700">
             <button 
               type="button" 
-              onClick={()=>{setActiveCategoryTab("all"); setSelectedGenericGroup(null);}} 
-              className={`px-4 py-1.5 rounded-lg font-bold transition-all border ${activeCategoryTab==="all"?'bg-white text-blue-700 border-blue-300 shadow-2xs': 'border-transparent text-gray-600 hover:bg-gray-200/60'}`}
+              onClick={() => handleCategoryTabChange("all")} 
+              className={`px-3.5 py-1.5 rounded-lg font-extrabold text-xs transition-all border whitespace-nowrap ${
+                activeCategoryTab === "all"
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                  : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700 dark:hover:text-white font-bold'
+              }`}
             >
               ALL
             </button>
             
             <button 
               type="button" 
-              onClick={()=>{setActiveCategoryTab("unmarked category"); setSelectedGenericGroup(null);}} 
-              className={`px-4 py-1.5 rounded-lg font-bold uppercase transition-all border ${activeCategoryTab==="unmarked category"? 'bg-white text-gray-900 border-gray-400 shadow-2xs' : 'border-transparent text-gray-600 hover:bg-gray-200/60'}`}
+              onClick={() => handleCategoryTabChange("unmarked category")} 
+              className={`px-3.5 py-1.5 rounded-lg font-extrabold text-xs uppercase transition-all border whitespace-nowrap ${
+                activeCategoryTab === "unmarked category"
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                  : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700 dark:hover:text-white font-bold'
+              }`}
             >
               UNMARKED CATEGORY
             </button>
 
             {dynamicCategories.map((cat) => {
-              const style = getCategoryBadgeStyle(cat)
               const isActive = activeCategoryTab === cat
               return (
                 <button 
                   key={cat} 
                   type="button" 
-                  onClick={() => { setActiveCategoryTab(cat); setSelectedGenericGroup(null); }} 
-                  className={`px-4 py-1.5 rounded-lg font-bold uppercase transition-all border ${isActive ? `${style} shadow-2xs font-extrabold` : 'border-transparent text-gray-600 hover:bg-gray-200/60'}`}
+                  onClick={() => handleCategoryTabChange(cat)} 
+                  className={`px-3.5 py-1.5 rounded-lg font-extrabold text-xs uppercase transition-all border whitespace-nowrap ${
+                    isActive 
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-sm' 
+                      : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700 dark:hover:text-white font-bold'
+                  }`}
                 >
                   {cat}
                 </button>
@@ -260,25 +299,27 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
           </div>
         </div>
 
-        <div className="bg-white rounded-xl shadow-sm border p-4 min-h-[450px]">
+        <div 
+          onScroll={handleCatalogueScroll}
+          className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border dark:border-slate-700 p-4 max-h-[calc(100vh-230px)] overflow-y-auto"
+        >
           {selectedGenericGroup ? (
             <div className="space-y-4">
-              <div className="flex items-center justify-between border-b pb-2">
+              <div className="flex items-center justify-between border-b pb-2 dark:border-slate-700">
                 <button 
                   type="button" 
                   onClick={() => setSelectedGenericGroup(null)} 
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-bold"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-bold text-xs"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
                   Back to Grid
                 </button>
-                <span className="font-bold text-sm text-blue-600 tracking-wide">{selectedGenericGroup} OPTIONS</span>
+                <span className="font-bold text-xs text-blue-600 tracking-wide">{selectedGenericGroup} OPTIONS</span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                 {getItemsInGroup(selectedGenericGroup).map(item => {
                   const displayUnitPrice = getItemBatchAwarePrice(item, 1)
-                  const catStyle = getCategoryBadgeStyle(item.category)
                   const cardBorder = getCategoryCardBorder(item.category)
 
                   return (
@@ -287,13 +328,13 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
                       type="button" 
                       onClick={() => addToCart(item)}
                       disabled={item.stock === 0}
-                      className={`relative text-left p-4 rounded-2xl ${cardBorder} transition-all flex flex-col justify-between min-h-[115px] ${item.stock === 0 ? 'opacity-40 border-gray-200 bg-gray-50 cursor-not-allowed':'hover:shadow-lg hover:scale-[1.01]'}`}
+                      className={`relative text-left p-3.5 rounded-2xl ${cardBorder} transition-all flex flex-col justify-between min-h-[110px] ${item.stock === 0 ? 'opacity-40 border-gray-200 bg-gray-50 cursor-not-allowed':'hover:shadow-lg hover:scale-[1.01]'}`}
                     >
                       <div className="flex justify-end items-start">
                         <span className="font-mono text-gray-500 font-bold text-[10px]">{item.stock} left</span>
                       </div>
-                      <div className="font-bold text-gray-900 text-xs leading-tight mt-2">{item.name}</div>
-                      <div className="flex justify-between items-center border-t border-gray-100 pt-2 mt-2 font-mono">
+                      <div className="font-bold text-gray-900 dark:text-white text-xs leading-tight mt-1">{item.name}</div>
+                      <div className="flex justify-between items-center pt-2 mt-2 font-mono border-t border-gray-100">
                         <span className="text-gray-400 text-[9px] font-normal">{item.barcode || "No Barcode"}</span>
                         <span className="text-blue-600 font-bold text-xs">₱{displayUnitPrice.toFixed(2)}</span>
                       </div>
@@ -303,10 +344,15 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
               </div>
             </div>
           ) : (
-            <div className="space-y-4">
-              <h2 className="font-semibold text-sm text-gray-800 tracking-wide">Available Products Catalogue</h2>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <h2 className="font-semibold text-xs text-gray-800 dark:text-slate-200 tracking-wide">Available Products Catalogue</h2>
+                <span className="text-[10px] text-gray-500 font-mono font-bold">
+                  Showing {visibleGroups.length} of {uniqueGroups.length} items
+                </span>
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
-                {uniqueGroups.map(groupName => {
+                {visibleGroups.map(groupName => {
                   const itemsInGroup = getItemsInGroup(groupName)
                   const totalStock = getGroupTotalStock(groupName)
                   const hasVariants = itemsInGroup.length > 1
@@ -326,14 +372,22 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
                         }
                       }}
                       disabled={totalStock === 0}
-                      className={`text-left p-4 rounded-2xl ${cardBorder} transition-all flex flex-col justify-between min-h-[115px] relative ${totalStock === 0 ? 'bg-gray-50 border-gray-200 opacity-40 cursor-not-allowed' : 'hover:shadow-lg hover:scale-[1.01]'}`}
+                      className={`text-left p-3.5 rounded-2xl ${cardBorder} transition-all flex flex-col justify-between min-h-[110px] relative ${totalStock === 0 ? 'bg-gray-50 border-gray-200 opacity-40 cursor-not-allowed' : 'hover:shadow-lg hover:scale-[1.01]'}`}
                     >
-                      <div className="flex justify-end items-center">
+                      <div className="flex justify-between items-center">
+                        {hasVariants ? (
+                          <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 text-[9px] font-bold uppercase tracking-wider">Group</span>
+                        ) : (
+                          <span />
+                        )}
                         <span className="font-mono text-gray-500 font-bold text-[10px]">{totalStock} left</span>
                       </div>
-                      <div className="font-bold text-gray-900 text-xs leading-tight mt-1 truncate-2-lines">{groupName}</div>
-                      <div className="mt-2 flex items-center justify-end border-t border-gray-100 pt-2 text-[10px]">
-                        <span className="text-blue-600 font-bold text-xs font-mono">
+                      <div className="font-bold text-gray-900 dark:text-white text-xs leading-tight mt-1 truncate-2-lines">{groupName}</div>
+                      <div className="mt-2 flex items-center justify-between text-[10px]">
+                        {hasVariants && (
+                          <span className="text-[9px] text-gray-500 font-medium">({itemsInGroup.length} items)</span>
+                        )}
+                        <span className="text-blue-600 font-bold text-xs font-mono ml-auto">
                           ₱{displayUnitPrice.toFixed(2)}
                         </span>
                       </div>
@@ -341,19 +395,40 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
                   )
                 })}
               </div>
+
+              {uniqueGroups.length > displayLimit && (
+                <div className="pt-3 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setDisplayLimit(prev => prev + 20)}
+                    className="px-4 py-2 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 text-blue-600 dark:text-blue-400 rounded-xl text-xs font-bold transition-all border border-blue-200 dark:border-blue-900"
+                  >
+                    Load More Items ({uniqueGroups.length - displayLimit} remaining) ↓
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
       </div>
 
-      <div className="space-y-4">
-        <div className="bg-white rounded-xl shadow-sm border p-4">
-          <h2 className="font-semibold mb-4 text-sm">Current Sale Cart</h2>
-          <div className="space-y-1.5 mb-4 max-h-64 overflow-y-auto pr-1">
+      {/* Right Column: Current Sale Cart */}
+      <div className="lg:col-span-1 space-y-3 flex flex-col min-w-0">
+        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border dark:border-slate-700 p-3.5 flex flex-col justify-between">
+          <div className="flex items-center justify-between pb-2 border-b dark:border-slate-700 shrink-0">
+            <h2 className="font-semibold text-xs text-gray-900 dark:text-white uppercase tracking-wider">Current Sale Cart</h2>
+            {cart.length > 0 && (
+              <span className="bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 font-bold px-2 py-0.5 rounded-full text-[10px]">
+                {cart.reduce((sum, item) => sum + item.quantity, 0)} items
+              </span>
+            )}
+          </div>
+
+          {/* Cart items list - constrained height to show 3 full items */}
+          <div className="space-y-1.5 my-2 max-h-[210px] overflow-y-auto pr-1 flex-1 min-h-[60px]">
             {cart.length === 0 ? (
-              <p className="text-xs text-gray-500 text-center py-8">Cart is empty</p>
+              <p className="text-xs text-gray-400 text-center py-6">Cart is empty</p>
             ) : (() => {
-                // Group cart items by generic name for display
                 const genericGroups: Record<string, CartItem[]> = {}
                 cart.forEach(ci => {
                   const g = getGenericGroupName(ci.item.name)
@@ -362,13 +437,12 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
                 })
 
                 return Object.entries(genericGroups).map(([groupName, groupItems]) => (
-                  <div key={groupName} className="rounded-xl overflow-hidden border border-gray-200 shadow-xs">
-                    {/* Group Header - always visible, prominent if multiple variants */}
+                  <div key={groupName} className="rounded-xl overflow-hidden border border-gray-200 dark:border-slate-700 shadow-xs">
                     <div
-                      className="flex items-center gap-2 px-3 py-1.5"
-                      style={{ backgroundColor: getCategoryBorderHex(groupItems[0]?.item.category) + '22', borderBottom: `2px solid ${getCategoryBorderHex(groupItems[0]?.item.category)}` }}
+                      className="flex items-center gap-2 px-2.5 py-1"
+                      style={{ backgroundColor: getCategoryBorderHex(groupItems[0]?.item.category) + '22' }}
                     >
-                      <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: getCategoryBorderHex(groupItems[0]?.item.category) }} />
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: getCategoryBorderHex(groupItems[0]?.item.category) }} />
                       <span className="font-black text-[9px] uppercase tracking-widest" style={{ color: getCategoryBorderHex(groupItems[0]?.item.category) }}>
                         {groupName}
                       </span>
@@ -377,26 +451,22 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
                           {groupItems.length} variants
                         </span>
                       )}
-                      <span className="ml-auto text-[9px] font-bold text-gray-500">
-                        {groupItems[0]?.item.category}
-                      </span>
                     </div>
 
-                    {/* Items in the group */}
                     {groupItems.map((ci, itemIdx) => {
                       const itemTotal = getItemBatchAwarePrice(ci.item, ci.quantity)
                       const avgUnitPrice = itemTotal / ci.quantity
                       return (
-                        <div key={ci.item.id} className={`flex justify-between items-center px-3 py-2 bg-white ${itemIdx < groupItems.length - 1 ? 'border-b border-dashed border-gray-100' : ''}`}>
+                        <div key={ci.item.id} className={`flex justify-between items-center px-2.5 py-1.5 bg-white dark:bg-slate-800 ${itemIdx < groupItems.length - 1 ? 'border-b border-dashed border-gray-100 dark:border-slate-700' : ''}`}>
                           <div className="flex-1 min-w-0 pr-2">
-                            <p className="font-bold text-gray-900 truncate text-[11px]">{ci.item.name}</p>
+                            <p className="font-bold text-gray-900 dark:text-white truncate text-[10px]">{ci.item.name}</p>
                             <p className="text-gray-400 font-mono text-[9px]">₱{avgUnitPrice.toFixed(2)} / pc</p>
                           </div>
-                          <div className="flex items-center gap-1.5">
-                            <button type="button" onClick={() => updateQtyDelta(ci.item.id, -1, ci.item.stock)} className="w-6 h-6 border bg-gray-50 rounded font-bold hover:bg-gray-100 flex items-center justify-center text-gray-700">-</button>
-                            <input type="text" value={ci.quantity} onChange={e => handleManualQtyChange(ci.item.id, e.target.value, ci.item.stock)} className="w-9 text-center border rounded font-bold text-gray-900 bg-white text-[11px]" />
-                            <button type="button" onClick={() => updateQtyDelta(ci.item.id, 1, ci.item.stock)} className="w-6 h-6 border bg-gray-50 rounded font-bold hover:bg-gray-100 flex items-center justify-center text-gray-700">+</button>
-                            <button type="button" onClick={() => setCart(prev => prev.filter(i => i.item.id !== ci.item.id))} className="text-red-400 ml-0.5 font-bold text-sm hover:text-red-600">×</button>
+                          <div className="flex items-center gap-1">
+                            <button type="button" onClick={() => updateQtyDelta(ci.item.id, -1, ci.item.stock)} className="w-5 h-5 border bg-gray-50 dark:bg-slate-700 rounded font-bold hover:bg-gray-100 flex items-center justify-center text-gray-700 dark:text-gray-200 text-xs">-</button>
+                            <input type="text" value={ci.quantity} onChange={e => handleManualQtyChange(ci.item.id, e.target.value, ci.item.stock)} className="w-8 text-center border rounded font-bold text-gray-900 dark:text-white bg-white dark:bg-slate-900 text-[10px] py-0.5" />
+                            <button type="button" onClick={() => updateQtyDelta(ci.item.id, 1, ci.item.stock)} className="w-5 h-5 border bg-gray-50 dark:bg-slate-700 rounded font-bold hover:bg-gray-100 flex items-center justify-center text-gray-700 dark:text-gray-200 text-xs">+</button>
+                            <button type="button" onClick={() => setCart(prev => prev.filter(i => i.item.id !== ci.item.id))} className="text-red-400 ml-0.5 font-bold text-xs hover:text-red-600">×</button>
                           </div>
                         </div>
                       )
@@ -407,145 +477,154 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
             }
           </div>
 
-          <div className="border-t pt-3 space-y-1.5 mb-4 text-gray-600">
-            <div className="flex justify-between">
-              <span>Gross Total Price:</span>
-              <span>₱{subtotal.toFixed(2)}</span>
+          {/* Fixed Bottom Section: Totals, Discounts, Payment, Complete Button */}
+          <div className="shrink-0 pt-2 border-t dark:border-slate-700 space-y-2">
+            <div className="space-y-1 text-gray-600 dark:text-slate-300 text-[11px]">
+              <div className="flex justify-between">
+                <span>Gross Total Price:</span>
+                <span>₱{subtotal.toFixed(2)}</span>
+              </div>
+              {computedDiscount > 0 && (
+                <div className="flex justify-between text-green-700 dark:text-green-400 font-bold">
+                  <span>Applied Markdown ({getDiscountLabel()}):</span>
+                  <span>-₱{computedDiscount.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span>Net Taxable Base (VAT Ex):</span>
+                <span>₱{(total / (isStatutoryDiscount ? 1 : 1.12)).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Value Added Tax (12%):</span>
+                <span>{isStatutoryDiscount ? "₱0.00 (Exempt)" : `₱${vat.toFixed(2)}`}</span>
+              </div>
+              <div className="flex justify-between border-t border-dashed dark:border-slate-700 pt-1.5 font-bold text-gray-900 dark:text-white text-xs">
+                <span>Total Bill Due:</span>
+                <span className="text-sm text-blue-600 dark:text-blue-400 font-bold font-mono">₱{total.toFixed(2)}</span>
+              </div>
             </div>
-            {computedDiscount > 0 && (
-              <div className="flex justify-between text-green-700 font-bold">
-                <span>Applied Markdown ({getDiscountLabel()}):</span>
-                <span>-₱{computedDiscount.toFixed(2)}</span>
+
+            {paymentMethod === "cash" && cart.length > 0 && (
+              <div className="space-y-1.5 p-2 bg-blue-50/50 dark:bg-blue-950/40 rounded-lg border border-blue-100 dark:border-blue-900/50 text-[11px]">
+                <div className="flex justify-between items-center gap-2">
+                  <label className="font-bold whitespace-nowrap text-gray-700 dark:text-slate-200">Cash Rendered:</label>
+                  <input 
+                    type="text" 
+                    inputMode="decimal"
+                    pattern="[0-9]*\.?[0-9]*"
+                    value={cashReceived} 
+                    onKeyDown={(e) => {
+                      if (e.key === "-" || e.key === "+" || e.key.toLowerCase() === "e") {
+                        e.preventDefault()
+                      }
+                    }}
+                    onChange={e => {
+                      const rawVal = e.target.value
+                      const sanitized = rawVal.replace(/[^0-9.]/g, "")
+                      setCashReceived(sanitized)
+                    }} 
+                    placeholder="0.00" 
+                    className="w-28 text-right p-1 border bg-white dark:bg-slate-900 rounded font-bold text-gray-900 dark:text-white text-xs focus:ring-1 focus:ring-blue-500" 
+                  />
+                </div>
+                {parseFloat(cashReceived) > 0 && (
+                  <div className="flex justify-between items-center text-[10px] pt-1 border-t border-blue-100 dark:border-blue-900">
+                    <span className="text-gray-600 dark:text-slate-300">Change Return Cash:</span>
+                    <span className={`font-bold font-mono text-xs ${parseFloat(cashReceived) - total < 0 ? "text-red-600 dark:text-red-400" : "text-blue-700 dark:text-blue-300"}`}>
+                      {parseFloat(cashReceived) - total < 0 ? `Short: ₱${Math.abs(parseFloat(cashReceived) - total).toFixed(2)}` : `₱${(parseFloat(cashReceived) - total).toFixed(2)}`}
+                    </span>
+                  </div>
+                )}
               </div>
             )}
-            <div className="flex justify-between">
-              <span>Net Taxable Base (VAT Ex):</span>
-              <span>₱{(total / (isStatutoryDiscount ? 1 : 1.12)).toFixed(2)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Value Added Tax (12%):</span>
-              <span>{isStatutoryDiscount ? "₱0.00 (Exempt)" : `₱${vat.toFixed(2)}`}</span>
-            </div>
-            <div className="flex justify-between border-t border-dashed pt-2 font-bold text-gray-900 text-sm">
-              <span>Total Bill Due:</span>
-              <span className="text-base text-blue-600 font-bold font-mono">₱{total.toFixed(2)}</span>
-            </div>
-          </div>
 
-          {paymentMethod === "cash" && cart.length > 0 && (
-            <div className="mb-4 space-y-2 p-3 bg-blue-50/50 rounded-lg border border-blue-100">
-              <div className="flex justify-between items-center gap-2">
-                <label className="font-bold whitespace-nowrap text-gray-700">Cash Rendered:</label>
-                <input 
-                  type="text" 
-                  inputMode="decimal"
-                  pattern="[0-9]*\.?[0-9]*"
-                  value={cashReceived} 
-                  onKeyDown={(e) => {
-                    if (e.key === "-" || e.key === "+" || e.key.toLowerCase() === "e") {
-                      e.preventDefault()
-                    }
-                  }}
-                  onChange={e => {
-                    const rawVal = e.target.value
-                    const sanitized = rawVal.replace(/[^0-9.]/g, "")
-                    setCashReceived(sanitized)
-                  }} 
-                  placeholder="0.00" 
-                  className="w-full text-right p-1.5 border bg-white rounded-lg font-bold text-gray-900 text-sm focus:ring-1 focus:ring-blue-500" 
-                />
+            <div className="bg-gray-50 dark:bg-slate-900 p-2 rounded-lg space-y-1.5 border dark:border-slate-700">
+              <label className="block text-[9px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Discount Matrix</label>
+              <div className="grid grid-cols-5 gap-1">
+                {["5","10","20","100"].map(p=>(
+                  <button 
+                    key={p} 
+                    type="button" 
+                    onClick={()=>setDiscountType(p as any)} 
+                    className={`p-1 border rounded text-[10px] font-bold transition-all ${discountType===p?'bg-blue-600 text-white border-blue-600':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
+                  >
+                    {p}%
+                  </button>
+                ))}
+                <button type="button" onClick={()=>setDiscountType("none")} className="p-1 border rounded bg-red-50 text-red-600 font-bold hover:bg-red-100">×</button>
               </div>
-              {parseFloat(cashReceived) > 0 && (
-                <div className="flex justify-between items-center text-[11px] pt-1 border-t border-blue-100">
-                  <span className="text-gray-600">Change Return Cash:</span>
-                  <span className={`font-bold font-mono text-sm ${parseFloat(cashReceived) - total < 0 ? "text-red-600" : "text-blue-700"}`}>
-                    {parseFloat(cashReceived) - total < 0 ? `Short: ₱${Math.abs(parseFloat(cashReceived) - total).toFixed(2)}` : `₱${(parseFloat(cashReceived) - total).toFixed(2)}`}
-                  </span>
+              <div className="grid grid-cols-3 gap-1">
+                <button 
+                  type="button" 
+                  onClick={()=>setDiscountType("senior")} 
+                  className={`p-1 border rounded text-[9px] font-bold uppercase transition-all ${discountType==='senior'?'bg-blue-600 text-white border-blue-600':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
+                >
+                  SENIOR
+                </button>
+                <button 
+                  type="button" 
+                  onClick={()=>setDiscountType("pwd")} 
+                  className={`p-1 border rounded text-[9px] font-bold uppercase transition-all ${discountType==='pwd'?'bg-blue-600 text-white border-blue-600':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
+                >
+                  PWD
+                </button>
+                <button 
+                  type="button" 
+                  onClick={()=>setShowOthersModal(true)} 
+                  className={`p-1 border rounded text-[9px] font-bold uppercase tracking-wide truncate transition-all ${isOthersActive?'bg-blue-600 text-white border-blue-600':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
+                >
+                  {discountType === "naac" ? "NAAC" : discountType === "soloparent" ? "SOLO" : discountType === "custom" ? `CUSTOM` : "OTHERS"}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="grid grid-cols-2 gap-1.5">
+                <button 
+                  type="button" 
+                  onClick={()=>setPaymentMethod("cash")} 
+                  className={`p-1.5 border rounded text-center uppercase font-bold tracking-wider text-[10px] transition-all ${paymentMethod==='cash'?'border-blue-600 bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 shadow-2xs':'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-50'}`}
+                >
+                  Cash
+                </button>
+                <button 
+                  type="button" 
+                  onClick={()=>setPaymentMethod("other")} 
+                  className={`p-1.5 border rounded text-center font-bold tracking-tight text-[10px] uppercase transition-all flex items-center justify-center gap-1 ${paymentMethod==='other'?'border-blue-600 bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 shadow-2xs':'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-50'}`}
+                >
+                  <CreditCard className="w-3 h-3" />
+                  Other (Online)
+                </button>
+              </div>
+
+              {paymentMethod === "other" && (
+                <div className="p-2 bg-blue-50/70 dark:bg-blue-950/40 rounded-xl border border-blue-200 dark:border-blue-900/50 space-y-1">
+                  <span className="block text-[9px] font-bold text-blue-800 dark:text-blue-300 uppercase tracking-wider">Select Online Payment Provider:</span>
+                  <div className="grid grid-cols-3 gap-1">
+                    {(["GCash", "PayMaya", "BDO", "BPI", "Bank Transfer", "Card"] as const).map(ch => (
+                      <button
+                        key={ch}
+                        type="button"
+                        onClick={() => setOnlineChannel(ch)}
+                        className={`p-1 rounded text-[9px] font-bold uppercase border transition-all ${onlineChannel === ch ? 'bg-blue-600 text-white border-blue-600 shadow-2xs' : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 border-gray-200 dark:border-slate-700 hover:bg-blue-50'}`}
+                      >
+                        {ch}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
-          )}
 
-          <div className="mb-4 bg-gray-50 p-2 rounded-lg space-y-2 border">
-            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wide">Discount Matrix</label>
-            <div className="grid grid-cols-5 gap-1">
-              {["5","10","20","100"].map(p=>(
-                <button 
-                  key={p} 
-                  type="button" 
-                  onClick={()=>setDiscountType(p as any)} 
-                  className={`p-1.5 border rounded text-xs font-bold transition-all ${discountType===p?'bg-blue-600 text-white border-blue-600':'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
-                >
-                  {p}%
-                </button>
-              ))}
-              <button type="button" onClick={()=>setDiscountType("none")} className="p-1.5 border rounded bg-red-50 text-red-600 font-bold hover:bg-red-100">×</button>
-            </div>
-            <div className="grid grid-cols-3 gap-1">
-              <button 
-                type="button" 
-                onClick={()=>setDiscountType("senior")} 
-                className={`p-1.5 border rounded text-[10px] font-bold uppercase transition-all ${discountType==='senior'?'bg-blue-600 text-white border-blue-600':'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
-              >
-                SENIOR
-              </button>
-              <button 
-                type="button" 
-                onClick={()=>setDiscountType("pwd")} 
-                className={`p-1.5 border rounded text-[10px] font-bold uppercase transition-all ${discountType==='pwd'?'bg-blue-600 text-white border-blue-600':'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
-              >
-                PWD
-              </button>
-              <button 
-                type="button" 
-                onClick={()=>setShowOthersModal(true)} 
-                className={`p-1.5 border rounded text-[10px] font-bold uppercase tracking-wide truncate transition-all ${isOthersActive?'bg-blue-600 text-white border-blue-600':'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
-              >
-                {discountType === "naac" ? "NAAC" : discountType === "soloparent" ? "SOLO PARENT" : discountType === "custom" ? `CUSTOM (${customDiscountPercent}%)` : "OTHERS"}
-              </button>
-            </div>
+            <button 
+              type="button" 
+              onClick={completeSale} 
+              disabled={cart.length === 0 || (paymentMethod === "cash" && (parseFloat(cashReceived) || 0) < total)} 
+              className="w-full py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl font-bold shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed text-xs tracking-wide uppercase shrink-0"
+            >
+              Complete Sale Transaction
+            </button>
           </div>
-
-          <div className="mb-4 space-y-2">
-            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wide">Payment Method</label>
-            <div className="grid grid-cols-2 gap-2">
-              <button 
-                type="button" 
-                onClick={()=>setPaymentMethod("cash")} 
-                className={`p-2 border rounded text-center uppercase font-bold tracking-wider transition-all ${paymentMethod==='cash'?'border-blue-600 bg-blue-50 text-blue-700 shadow-2xs':'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
-              >
-                Cash
-              </button>
-              <button 
-                type="button" 
-                onClick={()=>setPaymentMethod("other")} 
-                className={`p-2 border rounded text-center font-bold tracking-tight text-[10px] uppercase transition-all flex items-center justify-center gap-1 ${paymentMethod==='other'?'border-blue-600 bg-blue-50 text-blue-700 shadow-2xs':'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'}`}
-              >
-                <CreditCard className="w-3.5 h-3.5" />
-                Other (Online)
-              </button>
-            </div>
-
-            {paymentMethod === "other" && (
-              <div className="p-3 bg-blue-50/70 rounded-xl border border-blue-200 space-y-2">
-                <span className="block text-[9px] font-bold text-blue-800 uppercase tracking-wider">Select Online Payment Provider:</span>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {(["GCash", "PayMaya", "BDO", "BPI", "Bank Transfer", "Card"] as const).map(ch => (
-                    <button
-                      key={ch}
-                      type="button"
-                      onClick={() => setOnlineChannel(ch)}
-                      className={`p-1.5 rounded text-[10px] font-bold uppercase border transition-all ${onlineChannel === ch ? 'bg-blue-600 text-white border-blue-600 shadow-2xs' : 'bg-white text-gray-700 border-gray-200 hover:bg-blue-50'}`}
-                    >
-                      {ch}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <button type="button" onClick={completeSale} disabled={cart.length === 0 || (paymentMethod === "cash" && (parseFloat(cashReceived) || 0) < total)} className="w-full py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg font-bold shadow transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm tracking-wide">Complete Sale Transaction</button>
         </div>
       </div>
 
@@ -587,43 +666,60 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
       )}
 
       {showReceipt && lastSale && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-md w-full p-6 font-mono text-[11px] text-gray-800 space-y-4 shadow-xl border printable-receipt">
-            <div className="text-center">
-              <h3 className="font-bold text-sm text-gray-900">Malabon Pharmacy and Clinic</h3>
-              <p className="text-gray-500 text-[10px]">Invoice Record Voucher #{lastSale.id}</p>
-              <p className="text-gray-400 text-[9px] mt-0.5">{formatReceiptDate(lastSale.date)}</p>
+        <div 
+          onClick={() => setShowReceipt(false)}
+          className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto"
+        >
+          <div 
+            onClick={e => e.stopPropagation()}
+            className="bg-white dark:bg-slate-800 rounded-xl max-w-md w-full p-5 font-mono text-[11px] text-gray-800 dark:text-slate-100 space-y-3 shadow-2xl border dark:border-slate-700 printable-receipt max-h-[88vh] flex flex-col justify-between my-auto relative"
+          >
+            {/* Top Right Close Button */}
+            <button
+              type="button"
+              onClick={() => setShowReceipt(false)}
+              className="absolute top-3 right-3 p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-white bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 rounded-full transition-colors z-10"
+              title="Close Receipt"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="text-center pr-6">
+              <h3 className="font-bold text-sm text-gray-900 dark:text-white">Malabon Pharmacy and Clinic</h3>
+              <p className="text-gray-500 dark:text-gray-400 text-[10px]">Invoice Record Voucher #{lastSale.id}</p>
+              <p className="text-gray-400 dark:text-gray-400 text-[9px] mt-0.5">{formatReceiptDate(lastSale.date)}</p>
             </div>
             
-            <div className="border-t border-b border-dashed py-2.5 space-y-1">
+            {/* Scrollable Receipt Items List */}
+            <div className="border-t border-b border-dashed border-gray-200 dark:border-slate-700 py-2.5 space-y-1.5 max-h-[32vh] overflow-y-auto pr-1">
               {lastSale.items.map((ci: any, idx: number) => {
                 const itemLineTotal = getItemBatchAwarePrice(ci.item, ci.quantity)
                 return (
-                  <div key={idx} className="flex justify-between items-start">
-                    <span className="pr-4">{ci.quantity}x {ci.item.name}</span>
+                  <div key={idx} className="flex justify-between items-start text-xs border-b border-gray-100 dark:border-slate-800 pb-1 last:border-0">
+                    <span className="pr-4 leading-tight">{ci.quantity}x {ci.item.name}</span>
                     <span className="font-bold whitespace-nowrap">₱{itemLineTotal.toFixed(2)}</span>
                   </div>
                 )
               })}
             </div>
 
-            <div className="space-y-1 text-gray-600">
+            <div className="space-y-1 text-gray-600 dark:text-slate-300">
               <div className="flex justify-between"><span>Gross Total Base:</span><span>₱{lastSale.grossTotal?.toFixed(2) || lastSale.total.toFixed(2)}</span></div>
               {lastSale.discount > 0 && (
-                <div className="flex justify-between text-green-700 font-bold">
+                <div className="flex justify-between text-green-700 dark:text-green-400 font-bold">
                   <span>Applied Markdown ({lastSale.discountLabel}):</span>
                   <span>-₱{lastSale.discount.toFixed(2)}</span>
                 </div>
               )}
               <div className="flex justify-between"><span>Net Taxable Base (VAT Ex):</span><span>₱{lastSale.taxableBase?.toFixed(2) || lastSale.total.toFixed(2)}</span></div>
               <div className="flex justify-between"><span>Value Added Tax (12%):</span><span>₱{lastSale.vat?.toFixed(2) || "0.00"}</span></div>
-              <div className="flex justify-between border-t border-dashed pt-1 font-bold text-sm text-gray-900">
+              <div className="flex justify-between border-t border-dashed border-gray-200 dark:border-slate-700 pt-1 font-bold text-sm text-gray-900 dark:text-white">
                 <span>Grand Total Cost</span>
                 <span>₱{lastSale.total.toFixed(2)}</span>
               </div>
-              <div className="flex justify-between pt-1 border-t text-[10px]">
+              <div className="flex justify-between pt-1 border-t border-gray-200 dark:border-slate-700 text-[10px]">
                 <span>Payment Method:</span>
-                <span className="font-bold uppercase text-blue-700">
+                <span className="font-bold uppercase text-blue-700 dark:text-blue-400">
                   {lastSale.paymentMethod === "other"
                     ? lastSale.onlineChannel
                       ? `ONLINE / ${lastSale.onlineChannel.toUpperCase()}`
@@ -633,11 +729,11 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
               </div>
             </div>
 
-            <div className="flex gap-2 pt-2 border-t">
+            <div className="flex gap-2 pt-2 border-t border-gray-200 dark:border-slate-700">
               <button 
                 type="button" 
                 onClick={() => window.print()}
-                className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg tracking-wide shadow-xs flex items-center justify-center gap-2"
+                className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg tracking-wide shadow-xs flex items-center justify-center gap-1.5 text-xs transition-colors"
               >
                 <Printer className="w-4 h-4" />
                 Print Receipt
@@ -645,9 +741,9 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
               <button 
                 type="button" 
                 onClick={() => setShowReceipt(false)} 
-                className="flex-1 py-2 bg-gray-900 hover:bg-gray-800 text-white font-bold rounded-lg tracking-wide shadow-xs"
+                className="flex-1 py-2 bg-gray-900 dark:bg-slate-700 text-white hover:bg-gray-800 dark:hover:bg-slate-600 font-bold rounded-lg tracking-wide shadow-xs text-xs transition-colors"
               >
-                Close
+                Done / Reset
               </button>
             </div>
           </div>

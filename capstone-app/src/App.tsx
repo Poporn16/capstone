@@ -1,13 +1,14 @@
 import { useState, useEffect } from "react"
-import { Home, ShoppingCart, Package, Clock, ShieldAlert, LogOut, ClipboardList, Menu, X, Bell, AlertTriangle, Sun, Moon, ChevronLeft, ChevronRight } from "lucide-react"
+import { Home, ShoppingCart, Package, Clock, ShieldAlert, LogOut, ClipboardList, Menu, X, Bell, AlertTriangle, Sun, Moon, ChevronLeft, ChevronRight, Flame } from "lucide-react"
 import { Dashboard } from "./components/Dashboard"
 import { POSCheckout } from "./components/POSCheckout"
 import { InventoryManager } from "./components/InventoryManager"
 import { StockAdjustment } from "./components/StockAdjustment"
 import { SalesHistory } from "./components/SalesHistory"
 import { AdminPanel } from "./components/AdminPanel"
+import { SuperAdminPanel } from "./components/SuperAdminPanel"
 import { LoginScreen } from "./components/LoginScreen"
-import { supabase, broadcastChannel, triggerGlobalSync } from "./components/apiClient"
+import { supabase, broadcastChannel, triggerGlobalSync } from "./utils/apiClient"
 
 export interface InventoryItem {
   id: string
@@ -29,6 +30,7 @@ export interface SaleItem {
 
 export interface Sale {
   id: string
+  dbId?: string
   date: Date
   items: SaleItem[]
   grossTotal: number
@@ -108,33 +110,41 @@ export default function App() {
   }
 
   const deleteInventoryItem = async (idOrName: string) => {
+    if (!idOrName) return
     const item = inventory.find(i => String(i.id) === String(idOrName) || i.name === idOrName)
-    if (!item) return
+    const targetId = item ? item.id : idOrName
+    const targetName = item ? item.name : idOrName
 
-    // Instantly filter out from UI state
-    setInventory(prev => prev.filter(i => String(i.id) !== String(item.id) && i.name !== item.name))
+    // Optimistically update React state immediately so UI updates instantly
+    setInventory(prev => prev.filter(i => String(i.id) !== String(targetId) && i.name !== targetName))
 
     try {
-      const numId = Number(item.id)
+      const numId = Number(targetId)
+      const validNum = !isNaN(numId) ? numId : null
 
-      if (!isNaN(numId)) {
-        await supabase.from('inventory_batches').delete().eq('item_id', numId)
-        await supabase.from('sale_items').delete().eq('item_id', numId)
+      // Clean up foreign keys in sale_item_batches, sale_items, and inventory_batches
+      if (targetName) {
+        await supabase.from('sale_item_batches').delete().eq('item_name', targetName)
+        await supabase.from('inventory').delete().eq('name', targetName)
       }
-      await supabase.from('inventory_batches').delete().eq('item_id', String(item.id))
-      await supabase.from('sale_item_batches').delete().eq('item_name', item.name)
 
-      if (!isNaN(numId)) {
-        await supabase.from('inventory').delete().eq('id', numId)
+      if (validNum !== null) {
+        await supabase.from('sale_items').delete().eq('item_id', validNum)
+        await supabase.from('inventory_batches').delete().eq('item_id', validNum)
+        await supabase.from('inventory').delete().eq('id', validNum)
       }
-      await supabase.from('inventory').delete().eq('id', String(item.id))
-      await supabase.from('inventory').delete().eq('name', item.name)
 
-      await logSystemAction("DELETE_PRODUCT", "ITEM_SPECIFICATIONS", `Deleted product profile template for "${item.name}"`)
+      await supabase.from('sale_items').delete().eq('item_id', String(targetId))
+      await supabase.from('inventory_batches').delete().eq('item_id', String(targetId))
+      await supabase.from('inventory').delete().eq('id', String(targetId))
+
+      await logSystemAction("DELETE_PRODUCT", "ITEM_SPECIFICATIONS", `Deleted product profile template for "${targetName}"`)
       triggerGlobalSync()
     } catch (err: any) {
-      console.error("Error deleting item:", err)
+      console.error("Error deleting product item:", err)
     }
+
+    await fetchInventory()
   }
 
   useEffect(() => {
@@ -159,6 +169,23 @@ export default function App() {
       .on("postgres_changes", { event: "*", schema: "public", table: "product_categories" }, () => {
         fetchCategories()
       })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "system_audit_logs" }, (payload) => {
+        const logData = payload.new as any
+        if (logData && currentOperator) {
+          const act = String(logData.action_type || "")
+          const currentUser = String(currentOperator.username || "").trim().toLowerCase()
+          // Only process target session termination events where operator_username is explicitly targeted
+          if (act === "TARGET_SESSION_TERMINATED") {
+            const targetUser = String(logData.details_summary || "").trim().toLowerCase()
+            if (targetUser === currentUser) {
+              sessionStorage.removeItem("pinv_session")
+              setCurrentOperator(null)
+              setActiveTab("dashboard")
+              alert("Your session has been terminated by an administrator.")
+            }
+          }
+        }
+      })
       .subscribe()
 
     const handleRealtimeRefresh = () => {
@@ -167,18 +194,39 @@ export default function App() {
       fetchSales()
     }
 
+    const checkForceLogoutPayload = (rawPayload: any) => {
+      if (!currentOperator || !rawPayload) return
+      try {
+        const data = typeof rawPayload === 'string' ? JSON.parse(rawPayload) : rawPayload
+        if (data.type === 'FORCE_LOGOUT' && data.username) {
+          const target = String(data.username).trim().toLowerCase()
+          const curr = String(currentOperator.username).trim().toLowerCase()
+          const initiator = String(data.initiatedBy || "").trim().toLowerCase()
+          if (target === curr && (initiator === "" || initiator !== curr)) {
+            sessionStorage.removeItem("pinv_session")
+            setCurrentOperator(null)
+            setActiveTab("dashboard")
+            alert("Your session has been terminated by an administrator.")
+          }
+        }
+      } catch (e) {}
+    }
+
     window.addEventListener("refresh_sales_data", handleRealtimeRefresh)
 
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === "pinv_last_sync_signal") {
         handleRealtimeRefresh()
+      } else if (e.key === "pinv_logout_signal" && e.newValue) {
+        checkForceLogoutPayload(e.newValue)
       }
     }
     window.addEventListener("storage", handleStorageChange)
 
     if (broadcastChannel) {
-      broadcastChannel.onmessage = () => {
+      broadcastChannel.onmessage = (msgEvent) => {
         handleRealtimeRefresh()
+        checkForceLogoutPayload(msgEvent.data)
       }
     }
 
@@ -244,10 +292,17 @@ export default function App() {
 
   const fetchSales = async () => {
     // 1. Try querying view_sales_history if available
-    const { data: viewData, error: viewErr } = await supabase.from('view_sales_history').select('*').order('id', { ascending: false })
+    const { data: viewData, error: viewErr } = await supabase.from('view_sales_history').select('*')
     
     if (viewData && !viewErr && viewData.length > 0) {
-      const formattedFromView: Sale[] = viewData.map((s: any) => {
+      const sortedView = [...viewData].sort((a: any, b: any) => {
+        const timeA = new Date(a.date || a.created_at || 0).getTime()
+        const timeB = new Date(b.date || b.created_at || 0).getTime()
+        if (timeA !== timeB) return timeA - timeB
+        return Number(a.id) - Number(b.id)
+      })
+
+      const formattedFromView: Sale[] = sortedView.map((s: any, idx: number) => {
         const rawItems = Array.isArray(s.sale_items) ? s.sale_items : []
         const mappedItems = rawItems.map((si: any) => ({
           quantity: Math.floor(Number(si.quantity)) || 1,
@@ -270,7 +325,8 @@ export default function App() {
         const onlineChan = !isCash ? (rawPay.includes(":") ? rawPay.split(":")[1] : (rawPay.toLowerCase() === "other" ? "" : rawPay)) : ""
 
         return {
-          id: String(s.id),
+          id: String(idx + 1),
+          dbId: String(s.id),
           date: new Date(s.date || Date.now()),
           items: mappedItems,
           grossTotal: Number(s.gross_total) || Number(s.total) || 0,
@@ -293,13 +349,20 @@ export default function App() {
     }
 
     // 2. Standard multi-table query fallback
-    const { data: salesData } = await supabase.from('sales').select('*').order('id', { ascending: false })
+    const { data: salesData } = await supabase.from('sales').select('*')
     const { data: saleItemsData } = await supabase.from('sale_items').select('*')
     const { data: inventoryData } = await supabase.from('inventory').select('*')
     const { data: batchesData } = await supabase.from('inventory_batches').select('*')
     const { data: saleBatchesData } = await supabase.from('sale_item_batches').select('*')
 
-    const formattedSales: Sale[] = salesData?.map((sale: any) => {
+    const sortedSalesData = [...(salesData || [])].sort((a: any, b: any) => {
+      const timeA = new Date(a.date || a.created_at || 0).getTime()
+      const timeB = new Date(b.date || b.created_at || 0).getTime()
+      if (timeA !== timeB) return timeA - timeB
+      return Number(a.id) - Number(b.id)
+    })
+
+    const formattedSales: Sale[] = sortedSalesData.map((sale: any, idx: number) => {
       const items = saleItemsData?.filter(si => String(si.sale_id) === String(sale.id)).map(si => {
         const inv = inventoryData?.find(inv => String(inv.id) === String(si.item_id))
         const batch = batchesData?.find(b => String(b.item_id) === String(si.item_id) && Number(b.price) > 0)
@@ -328,7 +391,8 @@ export default function App() {
       const onlineChan = !isCash ? (rawPay.includes(":") ? rawPay.split(":")[1] : (rawPay.toLowerCase() === "other" ? "" : rawPay)) : ""
 
       return {
-        id: String(sale.id),
+        id: String(idx + 1),
+        dbId: String(sale.id),
         date: new Date(sale.date || sale.created_at || Date.now()),
         items,
         grossTotal: Number(sale.gross_total) || 0,
@@ -373,12 +437,23 @@ export default function App() {
       processed_by: currentOperator.username
     }
 
-    // Only include online_channel if column exists (won't break if column is missing)
-    if (onlineChanValue) {
-      payload.online_channel = onlineChanValue
+    const isResetState = sales.length === 0
+    if (isResetState) {
+      try {
+        await supabase.rpc("reset_sales_sequence")
+      } catch (e) {}
+      payload.id = 1
     }
 
-    const { data: newSale, error: saleError } = await supabase.from('sales').insert(payload).select('id').single()
+    let { data: newSale, error: saleError } = await supabase.from('sales').insert(payload).select('id').single()
+
+    if (saleError && isResetState) {
+      // If explicit ID 1 failed (e.g. strict identity generated always), retry without explicit ID
+      delete payload.id
+      const retryResult = await supabase.from('sales').insert(payload).select('id').single()
+      newSale = retryResult.data
+      saleError = retryResult.error
+    }
 
     if (newSale && !saleError) {
       saleId = newSale.id
@@ -463,18 +538,23 @@ export default function App() {
     triggerGlobalSync()
   }
 
+
+
   const handleToggleRefund = async (id: string, status: boolean) => {
     const newStatus = !status
-    const numId = Number(id)
+    const targetSale = sales.find(s => String(s.id) === String(id) || String(s.dbId) === String(id))
 
     // Optimistically update UI state immediately
-    setSales(prev => prev.map(s => String(s.id) === String(id) ? { ...s, isRefunded: newStatus } : s))
+    setSales(prev => prev.map(s => (String(s.id) === String(id) || String(s.dbId) === String(id)) ? { ...s, isRefunded: newStatus } : s))
 
     try {
+      const realDbId = targetSale?.dbId || id
+      const numId = Number(realDbId)
+
       if (!isNaN(numId)) {
         await supabase.from('sales').update({ is_refunded: newStatus }).eq('id', numId)
       }
-      await supabase.from('sales').update({ is_refunded: newStatus }).eq('id', String(id))
+      await supabase.from('sales').update({ is_refunded: newStatus }).eq('id', String(realDbId))
 
       await logSystemAction("VOID_TRANSACTION", "SALES_HISTORY", `Changed status for invoice #${id} to ${newStatus ? 'VOIDED' : 'COMPLETED'}`)
     } catch (err: any) {
@@ -489,10 +569,13 @@ export default function App() {
   if (!currentOperator) {
     return (
       <LoginScreen
+        theme={theme}
         onAuthSuccess={async (operator: any) => {
           saveSession(operator)
           await logSystemAction("SESSION_LOGIN", "AUTHENTICATION Portal", `Authorized station session for @${operator.username}`).catch(() => {})
-          if (operator.systemRole === "admin") {
+          if (operator.systemRole === "superadmin") {
+            setActiveTab("super_admin")
+          } else if (operator.systemRole === "admin") {
             setActiveTab("admin_control")
           } else {
             setActiveTab("dashboard")
@@ -509,37 +592,46 @@ export default function App() {
     { id: "stock_adjust", label: "Inventory", icon: ClipboardList }, 
     { id: "history", label: "Sales History", icon: Clock },
   ]
-  if (currentOperator.systemRole === "admin") {
+  if (currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin") {
     navigationTabs.push({ id: "admin_control", label: "Admin Panel", icon: ShieldAlert })
   }
+  if (currentOperator.systemRole === "superadmin") {
+    navigationTabs.push({ id: "super_admin", label: "Super Admin", icon: Flame })
+  }  const lowStockItems = inventory.filter(i => (i.stock || 0) <= (i.minStock || 10))
+  const expiringItems = inventory
+    .flatMap(item => (item.batches || []).map(b => ({ name: item.name, expiryDate: b.expiryDate, stock: b.stock })))
+    .filter(b => {
+      if (!b.expiryDate || b.stock <= 0) return false
+      const diffDays = Math.ceil((new Date(b.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+      return diffDays <= 90
+    })
+    .map(b => {
+      const diffDays = Math.ceil((new Date(b.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+      return { ...b, daysLeft: diffDays }
+    })
+    .sort((a, b) => a.daysLeft - b.daysLeft)
 
-  const lowStockItems = inventory.filter(i => (i.stock || 0) <= (i.minStock || 10))
-  const expiringItems = inventory.flatMap(item => (item.batches || []).map(b => ({ name: item.name, expiryDate: b.expiryDate, stock: b.stock }))).filter(b => {
-    if (!b.expiryDate || b.stock <= 0) return false
-    const diffDays = Math.ceil((new Date(b.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-    return diffDays > 0 && diffDays <= 90
-  })
   const totalNotificationCount = lowStockItems.length + expiringItems.length
 
   return (
-    <div className={`min-h-screen flex flex-col md:flex-row font-sans antialiased transition-colors duration-200 ${
+    <div className={`h-screen max-h-screen overflow-hidden flex flex-col md:flex-row font-sans antialiased transition-colors duration-200 ${
       theme === "dark" ? "bg-slate-900 text-slate-100" : "bg-[#ECE6DD] text-[#1f2937]"
     }`}>
       {isSidebarOpen && <div onClick={() => setIsSidebarOpen(false)} className="fixed inset-0 bg-black/40 z-40 md:hidden" />}
-      <aside className={`fixed md:static inset-y-0 left-0 z-50 ${isSidebarCollapsed ? "w-20 px-3" : "w-64 p-6"} bg-[#89A1A0] dark:bg-slate-800 min-h-screen flex flex-col justify-between shrink-0 border-r border-[#799190] dark:border-slate-700 transition-all duration-200 ease-in-out ${
+      <aside className={`fixed md:sticky md:top-0 inset-y-0 left-0 z-50 ${isSidebarCollapsed ? "w-20 px-3 py-4" : "w-64 p-6"} bg-[#89A1A0] dark:bg-slate-800 h-screen max-h-screen flex flex-col justify-between shrink-0 border-r border-[#799190] dark:border-slate-700 transition-all duration-200 ease-in-out overflow-y-auto ${
         isSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
       }`}>
-        <div className="space-y-8">
-          <div className="flex items-center justify-between">
+        <div className="space-y-6 flex-1 flex flex-col min-h-0">
+          <div className="flex items-center justify-between shrink-0">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-white dark:bg-slate-700 rounded-xl shadow-xs border border-white/40 flex items-center justify-center p-2 shrink-0">
-                <svg className="w-full h-full text-[#89A1A0] dark:text-teal-400" viewBox="0 0 40 40" fill="none">
-                  <rect width="40" height="40" rx="8" fill="none" />
-                  <path d="M20 6V34M6 20H34" stroke="currentColor" strokeWidth="4" strokeLinecap="round"/>
-                  <path d="M12 12L28 28" stroke="#374151" strokeWidth="3" strokeLinecap="round"/>
-                </svg>
+              <div className="w-10 h-10 bg-white dark:bg-slate-700 rounded-xl shadow-xs border border-white/40 flex items-center justify-center p-0.5 shrink-0 overflow-hidden">
+                <img 
+                  src="https://scontent.fmnl33-4.fna.fbcdn.net/v/t39.30808-6/401504104_122095038878121591_4438502913040853748_n.jpg?stp=dst-jpg_tt6&cstp=mx411x390&ctp=s411x390&_nc_cat=106&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=Ft95k5nEUhgQ7kNvwEdA8VD&_nc_oc=AdqjX8JO54H9u5fUgSwQABVjJrejNbGOQXYz6IeG81-a88_I02lrMRRwNEFxJTxpHQG4mOYKT7nZvrBkQ8vzMfdQ&_nc_zt=23&_nc_ht=scontent.fmnl33-4.fna&_nc_gid=upjDGk5QBMqMv2fhQRvKFA&_nc_ss=7b289&oh=00_AQCfN0WpxXHhMh2frLHZKz7eRSuVSEaGu9-fKhjBG1tzkw&oe=6A6B53F5" 
+                  alt="Malabon Pharmacy Logo" 
+                  className="w-full h-full rounded-lg object-cover"
+                />
               </div>
-              {!isSidebarCollapsed && <span className="text-[#1c2d2c] dark:text-white font-semibold text-2xl tracking-tight">Pharmacy Inventory</span>}
+              {!isSidebarCollapsed && <span className="text-[#1c2d2c] dark:text-white font-semibold text-xl tracking-tight leading-tight">Pharmacy Inventory</span>}
             </div>
             <div className="flex items-center">
               <button type="button" onClick={() => setIsSidebarCollapsed(c => !c)} className="hidden md:flex p-1.5 text-[#1c2d2c] dark:text-gray-300 rounded-lg hover:bg-white/20 dark:hover:bg-slate-700 transition-colors">
@@ -548,22 +640,22 @@ export default function App() {
               <button type="button" onClick={() => setIsSidebarOpen(false)} className="md:hidden text-[#1c2d2c] dark:text-white p-1.5 rounded-lg hover:bg-white/20"><X className="w-6 h-6" /></button>
             </div>
           </div>
-          <nav className="space-y-2.5">
+          <nav className="space-y-1.5 flex-1 overflow-y-auto pr-1">
             {navigationTabs.map(tab => {
               const Icon = tab.icon
               const isActive = activeTab === tab.id
               return (
-                <button key={tab.id} onClick={() => { setActiveTab(tab.id); setIsSidebarOpen(false) }} title={isSidebarCollapsed ? tab.label : undefined} className={`w-full flex items-center ${isSidebarCollapsed ? "justify-center px-0" : "gap-3.5 px-5"} py-3 rounded-full text-sm font-semibold transition-all duration-150 ${
+                <button key={tab.id} onClick={() => { setActiveTab(tab.id); setIsSidebarOpen(false) }} title={isSidebarCollapsed ? tab.label : undefined} className={`w-full flex items-center ${isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-4"} py-2.5 rounded-full text-xs font-semibold transition-all duration-150 ${
                     isActive ? "bg-white dark:bg-slate-100 text-[#111827] shadow-sm" : "text-[#1c2d2c] dark:text-slate-200 hover:bg-white/20 dark:hover:bg-slate-700 hover:text-black dark:hover:text-white"
                   }`}>
-                  <Icon className={`w-5 h-5 shrink-0 ${isActive ? "text-[#111827]" : "text-[#1c2d2c] dark:text-slate-200"}`} />
+                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? "text-[#111827]" : "text-[#1c2d2c] dark:text-slate-200"}`} />
                   {!isSidebarCollapsed && <span>{tab.label}</span>}
                 </button>
               )
             })}
           </nav>
         </div>
-        <div className="pt-4 border-t border-black/10 dark:border-slate-700 flex flex-col gap-3">
+        <div className="pt-3 border-t border-black/10 dark:border-slate-700 flex flex-col gap-2 shrink-0">
           {!isSidebarCollapsed && (
             <div className="text-xs text-[#1c2d2c] dark:text-slate-200">
               <p className="font-bold truncate max-w-[180px]">{currentOperator.displayName}</p>
@@ -581,7 +673,7 @@ export default function App() {
           </button>
         </div>
       </aside>
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
         <header className="px-4 sm:px-8 pt-6 sm:pt-8 pb-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button type="button" onClick={() => setIsSidebarOpen(true)} className="md:hidden p-2 text-[#1c2d2c] dark:text-white bg-white dark:bg-slate-800 rounded-xl border border-gray-300 dark:border-slate-700 shadow-2xs"><Menu className="w-6 h-6" /></button>
@@ -592,6 +684,7 @@ export default function App() {
               {activeTab === "stock_adjust" && "Inventory"}
               {activeTab === "history" && "Sales History"}
               {activeTab === "admin_control" && "Admin Panel"}
+              {activeTab === "super_admin" && "Super Admin"}
             </h1>
           </div>
           <div className="flex items-center gap-3">
@@ -616,7 +709,25 @@ export default function App() {
                     </div>
                     <div>
                       <p className="font-bold text-red-600 dark:text-red-400 uppercase text-[10px] tracking-wider mb-1">Expiring Batch Alerts ({expiringItems.length})</p>
-                      {expiringItems.length === 0 ? <p className="text-gray-400 py-1">No expiring batches.</p> : expiringItems.map((item, idx) => <div key={idx} onClick={() => { setActiveTab("dashboard"); setShowNotifications(false); }} className="p-2 bg-red-50/60 dark:bg-red-950/40 rounded-lg border border-red-100 dark:border-red-900/50 mb-1 flex justify-between cursor-pointer hover:bg-red-100/60 dark:hover:bg-red-900/60 transition-colors"><span className="font-medium text-gray-900 dark:text-gray-100">{item.name}</span><span className="font-bold text-red-600 dark:text-red-300 font-mono">{item.expiryDate}</span></div>)}
+                      {expiringItems.length === 0 ? (
+                        <p className="text-gray-400 py-1">No expiring batches.</p>
+                      ) : (
+                        expiringItems.map((item, idx) => (
+                          <div 
+                            key={idx} 
+                            onClick={() => { setActiveTab("dashboard"); setShowNotifications(false); }} 
+                            className="p-2 bg-red-50/60 dark:bg-red-950/40 rounded-lg border border-red-100 dark:border-red-900/50 mb-1 flex justify-between items-center cursor-pointer hover:bg-red-100/60 dark:hover:bg-red-900/60 transition-colors"
+                          >
+                            <span className="font-medium text-gray-900 dark:text-gray-100">{item.name}</span>
+                            <div className="flex items-center gap-2">
+                              <span className={`font-bold font-mono text-[10px] px-1.5 py-0.5 rounded ${item.daysLeft <= 0 ? 'bg-red-200 text-red-800' : 'bg-orange-100 text-orange-800'}`}>
+                                {item.daysLeft <= 0 ? "EXPIRED" : `${item.daysLeft}d left`}
+                              </span>
+                              <span className="font-bold text-red-600 dark:text-red-300 font-mono">{item.expiryDate}</span>
+                            </div>
+                          </div>
+                        ))
+                      )}
                     </div>
                   </div>
                 </div>
@@ -630,8 +741,18 @@ export default function App() {
           {activeTab === "inventory" && <InventoryManager inventory={inventory} categoriesList={categoriesList} refreshCategories={fetchCategories} refreshInventory={fetchInventory} onUpdateInventory={updateInventoryItem} onDeleteProduct={deleteInventoryItem} onLogAction={logSystemAction} />}
           {activeTab === "stock_adjust" && <StockAdjustment inventory={inventory} categoriesList={categoriesList} fetchInventory={fetchInventory} onLogAction={logSystemAction} />}
           {activeTab === "history" && <SalesHistory sales={sales} onToggleRefund={handleToggleRefund} />}
-          {activeTab === "admin_control" && currentOperator.systemRole === "admin" && (
+          {activeTab === "admin_control" && (currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin") && (
             <AdminPanel
+              currentOperator={currentOperator}
+              onLogAction={logSystemAction}
+              refreshAllData={async () => {
+                await fetchInventory()
+                await fetchSales()
+              }}
+            />
+          )}
+          {activeTab === "super_admin" && currentOperator.systemRole === "superadmin" && (
+            <SuperAdminPanel
               currentOperator={currentOperator}
               onLogAction={logSystemAction}
               refreshAllData={async () => {

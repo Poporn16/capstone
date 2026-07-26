@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import type { InventoryItem } from "../App"
-import { supabase } from "./apiClient"
+import { supabase } from "../utils/apiClient"
+import { downloadExcelWithAutoFit } from "../utils/excelUtils"
 import { Plus, Minus, Layers, AlertCircle, Trash2, Calendar, Download, Upload, FileSpreadsheet } from "lucide-react"
 
 interface StockAdjustmentProps {
@@ -24,6 +25,7 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
   const [isProcessing, setIsProcessing] = useState(false)
   const [isBulkUploading, setIsBulkUploading] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [deleteConfirmBatch, setDeleteConfirmBatch] = useState<{ id: string; label: string } | null>(null)
 
   const [localQuantities, setLocalQuantities] = useState<Record<string, string>>({})
   const [localCosts, setLocalCosts] = useState<Record<string, string>>({})
@@ -69,39 +71,62 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
   })
 
   const handleDownloadStockTemplate = () => {
-    let csvContent = "Product Name,Minimum Stock,Stock Quantity,Expiration Date (YYYY-MM-DD)\n"
+    const headers = ["Product Name", "Minimum Stock", "Stock Quantity", "Expiration Date (MM/DD/YYYY or YYYY/DD/MM)"];
+    const rows: (string | number)[][] = [];
 
     inventory.forEach(item => {
-      const minStockVal = item.minStock && item.minStock > 0 ? item.minStock : ""
-      csvContent += `"${item.name.replace(/"/g, '""')}",${minStockVal},,\n`
-    })
+      const minStockVal = item.minStock && item.minStock > 0 ? item.minStock : "";
+      rows.push([item.name, minStockVal, "", ""]);
+    });
 
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.setAttribute("href", url)
-    link.setAttribute("download", `stock_entry_template_${Date.now()}.csv`)
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-  }
+    downloadExcelWithAutoFit("stock_entry_template", "Stock Entry Template", headers, rows);
+  };
 
   const parseDateToISO = (rawDate: string | null): string | null => {
     if (!rawDate) return null
     const cleaned = rawDate.trim()
     if (!cleaned) return null
 
-    if (cleaned.includes("/")) {
-      const parts = cleaned.split("/")
-      if (parts.length === 3) {
-        const month = parts[0].padStart(2, "0")
-        const day = parts[1].padStart(2, "0")
-        const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2]
+    const parts = cleaned.split(/[/.-]/)
+    if (parts.length === 3) {
+      let year = ""
+      let month = ""
+      let day = ""
+
+      if (parts[0].length === 4) {
+        // Year first: YYYY/DD/MM or YYYY/MM/DD
+        year = parts[0]
+        const p1 = parseInt(parts[1], 10) || 1
+        const p2 = parseInt(parts[2], 10) || 1
+
+        if (p1 > 12 && p2 <= 12) {
+          day = parts[1].padStart(2, "0")
+          month = parts[2].padStart(2, "0")
+        } else {
+          month = parts[1].padStart(2, "0")
+          day = parts[2].padStart(2, "0")
+        }
+      } else if (parts[2].length === 4 || parts[2].length === 2) {
+        // Year last: MM/DD/YYYY or DD/MM/YYYY
+        year = parts[2].length === 2 ? `20${parts[2]}` : parts[2]
+        const p0 = parseInt(parts[0], 10) || 1
+        const p1 = parseInt(parts[1], 10) || 1
+
+        if (p0 > 12 && p1 <= 12) {
+          day = parts[0].padStart(2, "0")
+          month = parts[1].padStart(2, "0")
+        } else {
+          month = parts[0].padStart(2, "0")
+          day = parts[1].padStart(2, "0")
+        }
+      }
+
+      if (year && month && day) {
         return `${year}-${month}-${day}`
       }
     }
 
-    if (cleaned.includes("-")) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) {
       return cleaned
     }
 
@@ -347,17 +372,40 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
 
   const handleDeleteBatch = async (batchId: string, batchName: string) => {
     if (!selectedItem) return
-    if (!window.confirm(`Are you sure you want to remove batch record "${batchName}" from the tracking system parameters completely?`)) {
-      await fetchInventory()
-      return
-    }
 
-    await supabase.from("inventory_batches").delete().eq("id", Number(batchId))
-    
-    if (onLogAction) {
-      await onLogAction("DELETE_BATCH", "INVENTORY_MANAGEMENT", `Removed batch "${batchName}" for item "${selectedItem.name}"`)
+    try {
+      // 1. Optimistically update selectedItem batches in UI immediately
+      const remainingBatches = (selectedItem.batches || []).filter(b => String(b.id) !== String(batchId))
+      const newTotalStock = remainingBatches.reduce((sum, b) => sum + (Number(b.stock) || 0), 0)
+      
+      setSelectedItem(prev => prev ? { ...prev, stock: newTotalStock, batches: remainingBatches } : null)
+
+      // 2. Clear linked sale_item_batches records if any
+      await supabase.from("sale_item_batches").delete().eq("batch_label", batchName)
+
+      const numId = Number(batchId)
+      const targetId = !isNaN(numId) ? numId : batchId
+      const { error: delErr } = await supabase.from("inventory_batches").delete().eq("id", targetId as any)
+      
+      if (delErr) {
+        console.warn("Delete by targetId failed, trying string format:", delErr)
+        await supabase.from("inventory_batches").delete().eq("id", String(batchId))
+      }
+      await supabase.from("inventory_batches").delete().eq("batch_label", batchName)
+
+      // 3. Sync remaining total stock on parent inventory table
+      const numItemId = Number(selectedItem.id)
+      const targetItemId = !isNaN(numItemId) ? numItemId : selectedItem.id
+      await supabase.from("inventory").update({ stock: newTotalStock }).eq("id", targetItemId as any)
+
+      if (onLogAction) {
+        await onLogAction("DELETE_BATCH", "INVENTORY_MANAGEMENT", `Removed batch "${batchName}" for item "${selectedItem.name}"`)
+      }
+      await fetchInventory()
+    } catch (err) {
+      console.error("Error deleting batch:", err)
+      await fetchInventory()
     }
-    await fetchInventory()
   }
 
   return (
@@ -607,11 +655,11 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
 
                             <button 
                               type="button" 
-                              onClick={() => handleDeleteBatch(batch.id, batch.batchLabel)}
-                              className="w-6 h-6 border border-red-100 bg-red-50 text-red-500 rounded-lg flex items-center justify-center hover:bg-red-100 hover:text-red-700 transition-colors shadow-xs ml-1"
+                              onClick={() => setDeleteConfirmBatch({ id: batch.id, label: batch.batchLabel })}
+                              className="w-8 h-8 min-w-[32px] min-h-[32px] border border-red-200 bg-red-50 text-red-600 rounded-lg flex items-center justify-center hover:bg-red-100 hover:text-red-700 active:scale-95 transition-all shadow-2xs ml-1 cursor-pointer"
                               title="Remove Batch completely"
                             >
-                              <Trash2 className="w-3 h-3" />
+                              <Trash2 className="w-4 h-4" />
                             </button>
                           </div>
                         </div>
@@ -620,6 +668,54 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
                   )}
                 </div>
               </div>
+
+              {/* Custom Batch Delete Confirmation Modal */}
+              {deleteConfirmBatch && selectedItem && (
+                <div 
+                  onClick={() => setDeleteConfirmBatch(null)}
+                  className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 font-sans"
+                >
+                  <div 
+                    onClick={e => e.stopPropagation()}
+                    className="bg-white dark:bg-slate-800 rounded-2xl max-w-sm w-full p-5 space-y-4 shadow-2xl border dark:border-slate-700 font-sans"
+                  >
+                    <div className="flex items-center gap-3 text-red-600 dark:text-red-400">
+                      <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-950/60 flex items-center justify-center flex-shrink-0">
+                        <Trash2 className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-sm text-gray-900 dark:text-white">Delete Batch Record</h3>
+                        <p className="text-[11px] text-gray-500 dark:text-gray-400">This action cannot be undone.</p>
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-gray-700 dark:text-slate-300 leading-relaxed bg-gray-50 dark:bg-slate-900 p-3 rounded-lg border dark:border-slate-700">
+                      Are you sure you want to remove batch <strong>"{deleteConfirmBatch.label}"</strong> for item <strong>"{selectedItem.name}"</strong>?
+                    </p>
+
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setDeleteConfirmBatch(null)}
+                        className="flex-1 py-2 bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-gray-200 font-bold rounded-xl text-xs hover:bg-gray-200 dark:hover:bg-slate-600 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const b = deleteConfirmBatch
+                          setDeleteConfirmBatch(null)
+                          handleDeleteBatch(b.id, b.label)
+                        }}
+                        className="flex-1 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-xs transition-colors shadow-xs"
+                      >
+                        Delete Batch
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="bg-white p-4 rounded-xl border shadow-sm space-y-4 h-fit">
                 <h4 className="font-bold text-gray-800 text-xs tracking-wide flex items-center gap-1.5 border-b pb-2">

@@ -1,6 +1,7 @@
 import { useState, useRef } from "react"
 import type { InventoryItem } from "../App"
-import { supabase, triggerGlobalSync } from "./apiClient"
+import { supabase, triggerGlobalSync } from "../utils/apiClient"
+import { downloadExcelWithAutoFit } from "../utils/excelUtils"
 import { Search, FolderPlus, Download, Upload, FileSpreadsheet, X, Trash2, Edit2 } from "lucide-react"
 
 interface InventoryManagerProps {
@@ -26,6 +27,7 @@ export function InventoryManager({
   const [catFilter, setCatFilter] = useState("all")
   const [showAdd, setShowAdd] = useState(false)
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null)
+  const [deleteConfirmItem, setDeleteConfirmItem] = useState<InventoryItem | null>(null)
   const [newCatInput, setNewCatInput] = useState("")
   const [isBulkUploading, setIsBulkUploading] = useState(false)
 
@@ -49,33 +51,55 @@ export function InventoryManager({
   })
 
   const handleDownloadTemplate = () => {
-    const csvHeader = "Barcode,Product Name,Category,Manufacturer,Procurement Cost,Retail Price,Min Safety Stock,Initial Stock Quantity,Batch Expiry Date (MM/DD/YYYY or YYYY-MM-DD)\n"
-    const blob = new Blob([csvHeader], { type: "text/csv;charset=utf-8;" })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.setAttribute("href", url)
-    link.setAttribute("download", "pharmacy_inventory_import_template.csv")
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-  }
+    const headers = ["Barcode", "Product Name", "Category", "Manufacturer", "Procurement Cost", "Retail Price", "Min Safety Stock", "Initial Stock Quantity", "Batch Expiry Date (MM/DD/YYYY or YYYY/DD/MM)"];
+    downloadExcelWithAutoFit("pharmacy_inventory_import_template", "Inventory Import Template", headers, [], false);
+  };
 
   const parseDateToISO = (rawDate: string | null): string | null => {
     if (!rawDate) return null
     const cleaned = rawDate.trim()
     if (!cleaned) return null
 
-    if (cleaned.includes("/")) {
-      const parts = cleaned.split("/")
-      if (parts.length === 3) {
-        const month = parts[0].padStart(2, "0")
-        const day = parts[1].padStart(2, "0")
-        const year = parts[2].length === 2 ? `20${parts[2]}` : parts[2]
+    const parts = cleaned.split(/[/.-]/)
+    if (parts.length === 3) {
+      let year = ""
+      let month = ""
+      let day = ""
+
+      if (parts[0].length === 4) {
+        // Year first: YYYY/DD/MM or YYYY/MM/DD
+        year = parts[0]
+        const p1 = parseInt(parts[1], 10) || 1
+        const p2 = parseInt(parts[2], 10) || 1
+
+        if (p1 > 12 && p2 <= 12) {
+          day = parts[1].padStart(2, "0")
+          month = parts[2].padStart(2, "0")
+        } else {
+          month = parts[1].padStart(2, "0")
+          day = parts[2].padStart(2, "0")
+        }
+      } else if (parts[2].length === 4 || parts[2].length === 2) {
+        // Year last: MM/DD/YYYY or DD/MM/YYYY
+        year = parts[2].length === 2 ? `20${parts[2]}` : parts[2]
+        const p0 = parseInt(parts[0], 10) || 1
+        const p1 = parseInt(parts[1], 10) || 1
+
+        if (p0 > 12 && p1 <= 12) {
+          day = parts[0].padStart(2, "0")
+          month = parts[1].padStart(2, "0")
+        } else {
+          month = parts[0].padStart(2, "0")
+          day = parts[1].padStart(2, "0")
+        }
+      }
+
+      if (year && month && day) {
         return `${year}-${month}-${day}`
       }
     }
 
-    if (cleaned.includes("-")) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) {
       return cleaned
     }
 
@@ -458,7 +482,11 @@ export function InventoryManager({
             </div>
 
             <div className="flex justify-between pt-2">
-              <button onClick={()=>{onDeleteProduct(String(editingItem.id)); setEditingItem(null);}} className="px-4 py-2 bg-red-50 text-red-600 rounded-lg font-bold flex items-center gap-1">
+              <button 
+                type="button"
+                onClick={() => setDeleteConfirmItem(editingItem)} 
+                className="px-4 py-2 bg-red-50 dark:bg-red-950/60 text-red-600 dark:text-red-300 border border-red-200 dark:border-red-800 rounded-lg font-bold flex items-center gap-1.5 hover:bg-red-100 dark:hover:bg-red-900 transition-colors text-xs cursor-pointer"
+              >
                 <Trash2 className="w-4 h-4" /> Delete Item
               </button>
               <div className="flex gap-2">
@@ -470,41 +498,102 @@ export function InventoryManager({
         </div>
       )}
 
+      {/* Custom Delete Confirmation Modal */}
+      {deleteConfirmItem && (
+        <div 
+          onClick={() => setDeleteConfirmItem(null)}
+          className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50"
+        >
+          <div 
+            onClick={e => e.stopPropagation()}
+            className="bg-white dark:bg-slate-800 rounded-2xl max-w-sm w-full p-5 space-y-4 shadow-2xl border dark:border-slate-700"
+          >
+            <div className="flex items-center gap-3 text-red-600 dark:text-red-400">
+              <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-950/60 flex items-center justify-center flex-shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-sm text-gray-900 dark:text-white">Delete Product Profile</h3>
+                <p className="text-[11px] text-gray-500 dark:text-gray-400">This action cannot be undone.</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-700 dark:text-slate-300 leading-relaxed bg-gray-50 dark:bg-slate-900 p-3 rounded-lg border dark:border-slate-700">
+              Are you sure you want to permanently delete <strong>"{deleteConfirmItem.name}"</strong> from inventory specification templates?
+            </p>
+
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmItem(null)}
+                className="flex-1 py-2 bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-gray-200 font-bold rounded-xl text-xs hover:bg-gray-200 dark:hover:bg-slate-600 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const idToDelete = String(deleteConfirmItem.id)
+                  setDeleteConfirmItem(null)
+                  if (editingItem && String(editingItem.id) === idToDelete) {
+                    setEditingItem(null)
+                  }
+                  onDeleteProduct(idToDelete)
+                }}
+                className="flex-1 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-xs transition-colors shadow-xs"
+              >
+                Delete Product
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Directory Table */}
-      <div className="bg-white rounded-xl border overflow-hidden">
+      <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 overflow-hidden max-h-[580px] overflow-y-auto">
         <table className="w-full text-left border-collapse">
-          <thead className="bg-gray-50 border-b">
+          <thead className="bg-gray-50 dark:bg-slate-900 border-b dark:border-slate-700 sticky top-0 z-10 backdrop-blur-xs">
             <tr>
-              <th className="py-3 px-4 text-xs text-gray-600 font-bold">Product Profile Name</th>
-              <th className="py-3 px-4 text-xs text-gray-600 font-bold">Category</th>
-              <th className="py-3 px-4 text-xs text-gray-600 font-bold">Manufacturer Vendor</th>
-              <th className="py-3 px-4 text-xs text-gray-600 font-bold text-center">Min Stock</th>
-              <th className="py-3 px-4 text-xs text-gray-600 font-bold text-center">Actions</th>
+              <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold">Product Profile Name</th>
+              <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold">Category</th>
+              <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold">Manufacturer Vendor</th>
+              <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold text-center">Min Stock</th>
+              <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold text-center">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-gray-100 dark:divide-slate-700">
             {filtered.map(item => (
-              <tr key={item.id} className="hover:bg-gray-50">
+              <tr key={item.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors">
                 <td className="py-3 px-4">
-                  <p className="text-sm font-medium text-gray-900">{item.name}</p>
-                  <p className="text-[10px] text-gray-500 font-mono mt-0.5">{item.barcode}</p>
+                  <p className="text-sm font-medium text-gray-900 dark:text-white">{item.name}</p>
+                  <p className="text-[10px] text-gray-500 dark:text-gray-400 font-mono mt-0.5">{item.barcode}</p>
                 </td>
                 <td className="py-3 px-4">
-                  <span className="text-[9px] px-2 py-0.5 rounded-full font-bold uppercase bg-gray-100 text-gray-700 border">
+                  <span className="text-[9px] px-2 py-0.5 rounded-full font-bold uppercase bg-gray-100 dark:bg-slate-900 text-gray-700 dark:text-slate-300 border dark:border-slate-700">
                     {item.category}
                   </span>
                 </td>
-                <td className="py-3 px-4 text-gray-700">{item.manufacturer || "Unspecified"}</td>
-                <td className="py-3 px-4 text-gray-700 font-mono font-bold text-center">{item.minStock}</td>
+                <td className="py-3 px-4 text-gray-700 dark:text-slate-300">{item.manufacturer || "Unspecified"}</td>
+                <td className="py-3 px-4 text-gray-700 dark:text-slate-300 font-mono font-bold text-center">{item.minStock}</td>
                 <td className="py-3 px-4 text-center">
-                  <button 
-                    type="button"
-                    onClick={() => openEditModal(item)} 
-                    className="px-3 py-1 bg-blue-50 text-blue-600 border border-blue-200 rounded font-bold hover:bg-blue-100 transition-colors inline-flex items-center gap-1"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                    Edit Specs
-                  </button>
+                  <div className="flex items-center justify-center gap-1.5">
+                    <button 
+                      type="button"
+                      onClick={() => openEditModal(item)} 
+                      className="px-3 py-1.5 bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-lg font-bold hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors inline-flex items-center gap-1 text-xs"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                      Edit Specs
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => setDeleteConfirmItem(item)} 
+                      className="p-1.5 bg-red-50 dark:bg-red-950/60 text-red-600 dark:text-red-300 border border-red-200 dark:border-red-800 rounded-lg font-bold hover:bg-red-100 dark:hover:bg-red-900 transition-colors inline-flex items-center justify-center min-w-[34px] min-h-[34px] cursor-pointer"
+                      title="Delete Product Profile"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
