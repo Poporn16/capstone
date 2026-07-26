@@ -1,6 +1,6 @@
 import { useState, useRef } from "react"
 import type { InventoryItem } from "../App"
-import { supabase, triggerGlobalSync } from "../utils/apiClient"
+import { supabase, triggerGlobalSync, fetchAllSupabaseRows } from "../utils/apiClient"
 import { downloadExcelWithAutoFit, parseSpreadsheetFile } from "../utils/excelUtils"
 import { Search, FolderPlus, Download, Upload, FileSpreadsheet, X, Trash2, Edit2, Clock, CheckCircle2 } from "lucide-react"
 
@@ -142,55 +142,95 @@ export function InventoryManager({
     return result
   }
 
+  const isCancelledRef = useRef(false)
+
+  const handleCancelImport = () => {
+    isCancelledRef.current = true
+    setImportProgress(prev => ({
+      ...prev,
+      currentItemName: "Cancelling import..."
+    }))
+  }
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     if (isBulkUploading || importProgress.active) return
 
+    isCancelledRef.current = false
     setIsBulkUploading(true)
+    const startTime = Date.now()
+
     setImportProgress({
-      active: false,
+      active: true,
       totalRows: 0,
       processedRows: 0,
       successCount: 0,
-      currentItemName: "",
-      startTime: 0
+      currentItemName: "Reading spreadsheet rows...",
+      startTime
     })
 
     try {
       const rows = await parseSpreadsheetFile(file)
-      
       if (rows.length <= 1) {
         alert("The file contains no data rows to import.")
         setIsBulkUploading(false)
+        setImportProgress(prev => ({ ...prev, active: false }))
         if (fileInputRef.current) fileInputRef.current.value = ""
         return
       }
 
       const totalDataRows = rows.length - 1
-      const startTime = Date.now()
-
-      setImportProgress({
-        active: true,
+      setImportProgress(prev => ({
+        ...prev,
         totalRows: totalDataRows,
-        processedRows: 0,
-        successCount: 0,
-        currentItemName: "Initializing spreadsheet parser...",
-        startTime
-      })
+        currentItemName: "Pre-fetching database indexes..."
+      }))
 
-      let successCount = 0
+      // Step 1: Pre-fetch existing inventory & categories in single queries
+      const existingDbItems = await fetchAllSupabaseRows("inventory", "id, name, barcode")
+      const existingDbCategories = await fetchAllSupabaseRows("product_categories", "name")
+
+      const itemLookup = new Map<string, { id: number; barcode: string }>()
+      if (existingDbItems) {
+        existingDbItems.forEach(item => {
+          const normName = String(item.name || "").trim().toLowerCase()
+          if (normName) {
+            itemLookup.set(normName, { id: Number(item.id), barcode: item.barcode })
+          }
+        })
+      }
+
+      const categorySet = new Set<string>()
+      if (existingDbCategories) {
+        existingDbCategories.forEach(c => {
+          if (c.name) categorySet.add(c.name.trim().toLowerCase())
+        })
+      }
+
+      // Step 2: Parse and validate all rows in memory
+      const parsedRows: Array<{
+        rowIndex: number
+        barcode: string
+        name: string
+        categoryInput: string
+        manufacturer: string | null
+        cost: number
+        price: number
+        minStock: number
+        initialStock: number
+        expiryDate: string | null
+      }> = []
+
+      const newCategoriesToInsertSet = new Set<string>()
 
       for (let i = 1; i < rows.length; i++) {
         const columns = rows[i]
-        if (!columns || columns.length < 2) {
-          setImportProgress(prev => ({ ...prev, processedRows: i }))
-          continue
-        }
+        if (!columns || columns.length < 2) continue
 
         let barcode = columns[0]?.trim()
         const name = columns[1]?.trim()
-        const categoryInput = columns[2]?.trim().toLowerCase()
+        const categoryInput = columns[2]?.trim().toLowerCase() || ""
         const manufacturer = columns[3]?.trim() || null
         const cost = parseFloat(columns[4]) || 0
         const price = parseFloat(columns[5]) || 0
@@ -199,107 +239,260 @@ export function InventoryManager({
         const rawExpiry = columns[8]?.trim() || null
         const expiryDate = parseDateToISO(rawExpiry)
 
-        if (!name) {
-          setImportProgress(prev => ({ ...prev, processedRows: i }))
-          continue
-        }
-
-        setImportProgress(prev => ({
-          ...prev,
-          processedRows: i,
-          currentItemName: name
-        }))
+        if (!name) continue
 
         if (!barcode) {
           barcode = `AUTO-${Math.floor(100000 + Math.random() * 900000)}`
         }
 
+        if (categoryInput && categoryInput !== "unmarked category" && !categorySet.has(categoryInput)) {
+          newCategoriesToInsertSet.add(categoryInput)
+        }
+
+        parsedRows.push({
+          rowIndex: i,
+          barcode,
+          name,
+          categoryInput,
+          manufacturer,
+          cost,
+          price,
+          minStock,
+          initialStock,
+          expiryDate
+        })
+      }
+
+      // Step 3: Insert new categories in 1 bulk query if needed
+      if (newCategoriesToInsertSet.size > 0 && !isCancelledRef.current) {
+        const newCatsArr = Array.from(newCategoriesToInsertSet).map(c => ({ name: c }))
+        await supabase.from("product_categories").insert(newCatsArr)
+        newCategoriesToInsertSet.forEach(c => categorySet.add(c))
+        await refreshCategories()
+      }
+
+      // Step 4: Batch process inventory items
+      const CHUNK_SIZE = 100
+      let successCount = 0
+      const batchesToInsert: any[] = []
+
+      // Separate into items that already exist vs new items to insert
+      const itemsToUpdatePayload: any[] = []
+      const itemsToInsertRows: typeof parsedRows = []
+
+      for (const r of parsedRows) {
+        const normName = r.name.trim().toLowerCase()
+        const existing = itemLookup.get(normName)
         let targetCategory = "unmarked category"
-        if (categoryInput && categoryInput !== "unmarked category") {
-          const isCategoryExisting = categoriesList.some(c => c.toLowerCase() === categoryInput)
-          if (isCategoryExisting) {
-            targetCategory = categoryInput
-          } else {
-            await supabase.from("product_categories").insert({ name: categoryInput })
-            targetCategory = categoryInput
-          }
+        if (r.categoryInput && categorySet.has(r.categoryInput)) {
+          targetCategory = r.categoryInput
         }
 
-        const { data: existingItem } = await supabase
-          .from("inventory")
-          .select("id, barcode")
-          .ilike("name", name)
-          .maybeSingle()
-
-        let targetItemId: number | null = existingItem ? Number(existingItem.id) : null
-
-        if (targetItemId) {
-          await supabase
-            .from("inventory")
-            .update({
-              barcode: barcode || existingItem?.barcode,
-              category: targetCategory,
-              manufacturer,
-              min_stock: minStock
-            })
-            .eq("id", targetItemId)
+        if (existing) {
+          itemsToUpdatePayload.push({
+            id: existing.id,
+            barcode: r.barcode || existing.barcode,
+            name: r.name,
+            category: targetCategory,
+            manufacturer: r.manufacturer,
+            min_stock: r.minStock,
+            _rowData: r
+          })
         } else {
-          const { data: insertedItem } = await supabase
-            .from("inventory")
-            .insert({
-              barcode,
-              name,
-              category: targetCategory,
-              manufacturer,
-              min_stock: minStock
-            })
-            .select("id")
-            .single()
+          itemsToInsertRows.push(r)
+        }
+      }
 
-          if (insertedItem) {
-            targetItemId = Number(insertedItem.id)
-          }
+      // 4a. Update existing items in bulk chunks using primary key id
+      for (let i = 0; i < itemsToUpdatePayload.length; i += CHUNK_SIZE) {
+        if (isCancelledRef.current) break
+        await new Promise(r => setTimeout(r, 50))
+        if (isCancelledRef.current) break
+
+        const chunk = itemsToUpdatePayload.slice(i, i + CHUNK_SIZE)
+        const cleanPayload = chunk.map(({ _rowData, ...item }) => item)
+
+        let upErr: any = null
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const res = await supabase.from("inventory").upsert(cleanPayload)
+          upErr = res.error
+          if (!upErr) break
+          await new Promise(r => setTimeout(r, 200 * (attempt + 1)))
         }
 
-        if (!targetItemId) continue
-
-        if (initialStock > 0) {
-          const cleanedName = name.replace(/\s+/g, "").substring(0, 5).toUpperCase()
-          const batchLabel = `BULK-${cleanedName}-${Date.now().toString().slice(-4)}`
-
-          await supabase.from("inventory_batches").insert({
-            item_id: targetItemId,
-            batch_label: batchLabel,
-            stock: initialStock,
-            cost,
-            price,
-            expiry_date: expiryDate
+        if (upErr) {
+          console.error("Bulk inventory update error after retries:", upErr)
+        } else {
+          chunk.forEach(itemData => {
+            const r = itemData._rowData
+            if (r.initialStock > 0) {
+              const cleanedName = r.name.replace(/\s+/g, "").substring(0, 5).toUpperCase()
+              const batchLabel = `BULK-${cleanedName}-${Date.now().toString().slice(-4)}`
+              batchesToInsert.push({
+                item_id: itemData.id,
+                batch_label: batchLabel,
+                stock: r.initialStock,
+                cost: r.cost,
+                price: r.price,
+                expiry_date: r.expiryDate
+              })
+            }
+            successCount++
           })
         }
 
-        successCount++
-        setImportProgress(prev => ({ ...prev, successCount }))
+        const processedSoFar = Math.min(totalDataRows, i + chunk.length)
+        setImportProgress(prev => ({
+          ...prev,
+          processedRows: processedSoFar,
+          successCount,
+          currentItemName: `Updating records ${processedSoFar} of ${totalDataRows}...`
+        }))
       }
+
+      // Deduplicate new items to insert by product name to avoid database conflict errors
+      const uniqueNewItemsMap = new Map<string, typeof parsedRows[0]>()
+      const duplicateNewRows: typeof parsedRows = []
+
+      for (const r of itemsToInsertRows) {
+        const norm = r.name.trim().toLowerCase()
+        if (!uniqueNewItemsMap.has(norm)) {
+          uniqueNewItemsMap.set(norm, r)
+        } else {
+          duplicateNewRows.push(r)
+        }
+      }
+
+      const uniqueNewRows = Array.from(uniqueNewItemsMap.values())
+
+      // 4b. Insert distinct new items in bulk chunks
+      for (let i = 0; i < uniqueNewRows.length; i += CHUNK_SIZE) {
+        if (isCancelledRef.current) break
+        await new Promise(r => setTimeout(r, 50))
+        if (isCancelledRef.current) break
+
+        const chunk = uniqueNewRows.slice(i, i + CHUNK_SIZE)
+        const insertPayload = chunk.map(r => {
+          let targetCategory = "unmarked category"
+          if (r.categoryInput && categorySet.has(r.categoryInput)) {
+            targetCategory = r.categoryInput
+          }
+          return {
+            barcode: r.barcode,
+            name: r.name,
+            category: targetCategory,
+            manufacturer: r.manufacturer,
+            min_stock: r.minStock
+          }
+        })
+
+        let insErr: any = null
+        let insertedItems: any = null
+
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const res = await supabase.from("inventory").insert(insertPayload).select("id, name")
+          insErr = res.error
+          insertedItems = res.data
+          if (!insErr && insertedItems) break
+          await new Promise(r => setTimeout(r, 200 * (attempt + 1)))
+        }
+
+        if (insErr) {
+          console.error("Bulk inventory insert error after retries:", insErr)
+        } else if (insertedItems) {
+          insertedItems.forEach((insItem: any, idx: number) => {
+            const r = chunk[idx]
+            const targetItemId = Number(insItem.id)
+            const normName = String(insItem.name || r?.name || "").trim().toLowerCase()
+            itemLookup.set(normName, { id: targetItemId, barcode: r?.barcode || "" })
+
+            if (r && r.initialStock > 0) {
+              const cleanedName = r.name.replace(/\s+/g, "").substring(0, 5).toUpperCase()
+              const batchLabel = `BULK-${cleanedName}-${Date.now().toString().slice(-4)}`
+              batchesToInsert.push({
+                item_id: targetItemId,
+                batch_label: batchLabel,
+                stock: r.initialStock,
+                cost: r.cost,
+                price: r.price,
+                expiry_date: r.expiryDate
+              })
+            }
+            successCount++
+          })
+        }
+
+        const processedSoFar = Math.min(totalDataRows, itemsToUpdatePayload.length + i + chunk.length)
+        setImportProgress(prev => ({
+          ...prev,
+          processedRows: processedSoFar,
+          successCount,
+          currentItemName: `Inserting records ${processedSoFar} of ${totalDataRows}...`
+        }))
+      }
+
+      // 4c. Process duplicate row entries (linking stock batches to parent product)
+      for (const r of duplicateNewRows) {
+        const normName = r.name.trim().toLowerCase()
+        const targetItem = itemLookup.get(normName)
+        if (targetItem) {
+          if (r.initialStock > 0) {
+            const cleanedName = r.name.replace(/\s+/g, "").substring(0, 5).toUpperCase()
+            const batchLabel = `BULK-${cleanedName}-${Date.now().toString().slice(-4)}`
+            batchesToInsert.push({
+              item_id: targetItem.id,
+              batch_label: batchLabel,
+              stock: r.initialStock,
+              cost: r.cost,
+              price: r.price,
+              expiry_date: r.expiryDate
+            })
+          }
+          successCount++
+        }
+      }
+
+      // Step 5: Bulk insert initial stock batches
+      if (batchesToInsert.length > 0 && !isCancelledRef.current) {
+        setImportProgress(prev => ({
+          ...prev,
+          currentItemName: "Synchronizing initial stock batches..."
+        }))
+        for (let i = 0; i < batchesToInsert.length; i += 100) {
+          if (isCancelledRef.current) break
+          await new Promise(r => setTimeout(r, 50))
+          const batchChunk = batchesToInsert.slice(i, i + 100)
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const res = await supabase.from("inventory_batches").insert(batchChunk)
+            if (!res.error) break
+            await new Promise(r => setTimeout(r, 200 * (attempt + 1)))
+          }
+        }
+      }
+
+      const wasCancelled = isCancelledRef.current
 
       setImportProgress(prev => ({
         ...prev,
         processedRows: totalDataRows,
-        currentItemName: "Finalizing inventory sync..."
+        successCount,
+        currentItemName: wasCancelled ? "Import cancelled by user." : "Import Completed! Synchronized items."
       }))
 
-      await refreshCategories()
-      await refreshInventory()
+      // Non-blocking background synchronization
+      Promise.all([
+        refreshCategories(),
+        refreshInventory(),
+        onLogAction ? onLogAction("BULK_CSV_IMPORT", "ITEM_SPECIFICATIONS", wasCancelled ? `Partial import cancelled by user (${successCount} items created).` : `Bulk imported ${successCount} stock items from Excel file.`) : Promise.resolve()
+      ]).catch(() => {})
       triggerGlobalSync()
 
-      if (onLogAction) {
-        await onLogAction("BULK_CSV_IMPORT", "ITEM_SPECIFICATIONS", `Bulk imported ${successCount} stock items from Excel file.`)
-      }
-
+      // Quick 300ms feedback before modal auto-dismiss
       setTimeout(() => {
         setImportProgress(prev => ({ ...prev, active: false }))
         setIsBulkUploading(false)
         if (fileInputRef.current) fileInputRef.current.value = ""
-      }, 1200)
+      }, 300)
 
     } catch (err: any) {
       console.error("Excel import error:", err)
@@ -716,6 +909,20 @@ export function InventoryManager({
                 )}
               </div>
             </div>
+
+            {/* Cancel Button */}
+            {importProgress.processedRows < importProgress.totalRows && (
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={handleCancelImport}
+                  className="px-4 py-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-xs cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                  Cancel Import
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

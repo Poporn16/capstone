@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react"
 import type { InventoryItem } from "../App"
 import { supabase } from "../utils/apiClient"
 import { downloadExcelWithAutoFit, parseSpreadsheetFile } from "../utils/excelUtils"
-import { Plus, Minus, Layers, AlertCircle, Trash2, Calendar, Download, Upload, FileSpreadsheet, Clock, CheckCircle2 } from "lucide-react"
+import { Plus, Minus, Layers, AlertCircle, Trash2, Calendar, Download, Upload, FileSpreadsheet, Clock, CheckCircle2, X } from "lucide-react"
 
 interface StockAdjustmentProps {
   inventory: InventoryItem[]
@@ -169,51 +169,100 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
     return result
   }
 
+  const isCancelledRef = useRef(false)
+
+  const handleCancelImport = () => {
+    isCancelledRef.current = true
+    setImportProgress(prev => ({
+      ...prev,
+      currentItemName: "Cancelling stock import..."
+    }))
+  }
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     if (isBulkUploading || importProgress.active) return
 
+    isCancelledRef.current = false
     setIsBulkUploading(true)
+    const startTime = Date.now()
+
     setImportProgress({
-      active: false,
+      active: true,
       totalRows: 0,
       processedRows: 0,
       successCount: 0,
-      currentItemName: "",
-      startTime: 0
+      currentItemName: "Reading stock spreadsheet...",
+      startTime
     })
 
     try {
       const rows = await parseSpreadsheetFile(file)
-      
       if (rows.length <= 1) {
         alert("The file contains no data rows to import.")
         setIsBulkUploading(false)
+        setImportProgress(prev => ({ ...prev, active: false }))
         if (fileInputRef.current) fileInputRef.current.value = ""
         return
       }
 
       const totalDataRows = rows.length - 1
-      const startTime = Date.now()
-
-      setImportProgress({
-        active: true,
+      setImportProgress(prev => ({
+        ...prev,
         totalRows: totalDataRows,
-        processedRows: 0,
-        successCount: 0,
-        currentItemName: "Initializing stock spreadsheet parser...",
-        startTime
+        currentItemName: "Indexing inventory items..."
+      }))
+
+      // Step 1: Build in-memory lookup map from inventory prop
+      const itemLookup = new Map<string, { id: number; price: number; cost: number }>()
+      inventory.forEach(inv => {
+        const norm = inv.name.trim().toLowerCase()
+        if (norm) {
+          itemLookup.set(norm, { id: Number(inv.id), price: inv.price, cost: inv.cost })
+        }
       })
 
+      // Query DB for any items missing from prop
+      const missingNamesSet = new Set<string>()
+      for (let i = 1; i < rows.length; i++) {
+        const pName = rows[i]?.[0]?.trim()
+        if (pName && !itemLookup.has(pName.toLowerCase())) {
+          missingNamesSet.add(pName)
+        }
+      }
+
+      if (missingNamesSet.size > 0) {
+        const missingArr = Array.from(missingNamesSet)
+        const { data: dbItems } = await supabase
+          .from("inventory")
+          .select("id, name, price, cost")
+          .in("name", missingArr)
+
+        if (dbItems) {
+          dbItems.forEach(item => {
+            const norm = String(item.name || "").trim().toLowerCase()
+            if (norm) {
+              itemLookup.set(norm, { id: Number(item.id), price: Number(item.price) || 0, cost: Number(item.cost) || 0 })
+            }
+          })
+        }
+      }
+
+      // Step 2: Process stock rows in memory
       let successCount = 0
+      const batchesToInsert: any[] = []
+      const minStockUpdates: Array<{ id: number; minStock: number }> = []
 
       for (let i = 1; i < rows.length; i++) {
-        const columns = rows[i]
-        if (!columns || columns.length < 1) {
-          setImportProgress(prev => ({ ...prev, processedRows: i }))
-          continue
+        if (isCancelledRef.current) break
+        if (i % 10 === 0) {
+          await new Promise(r => setTimeout(r, 10))
         }
+        if (isCancelledRef.current) break
+
+        const columns = rows[i]
+        if (!columns || columns.length < 1) continue
 
         const productName = columns[0]?.trim()
         const minStockInput = parseFloat(columns[1])
@@ -221,78 +270,83 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
         const rawExpiry = columns[3]?.trim() || null
         const expiryDate = parseDateToISO(rawExpiry)
 
-        if (!productName) {
-          setImportProgress(prev => ({ ...prev, processedRows: i }))
-          continue
-        }
+        if (!productName) continue
 
-        setImportProgress(prev => ({
-          ...prev,
-          processedRows: i,
-          currentItemName: productName
-        }))
-
-        // Find matching item in local inventory array first for exact string lookup
-        const localMatch = inventory.find(inv => inv.name.trim().toLowerCase() === productName.toLowerCase())
-        
-        let matchedItem = null
-
-        if (localMatch) {
-          matchedItem = { id: localMatch.id, price: localMatch.price, cost: localMatch.cost }
-        } else {
-          // Fallback DB search query
-          const { data: dbItem } = await supabase
-            .from("inventory")
-            .select("id, price, cost")
-            .eq("name", productName)
-            .maybeSingle()
-          matchedItem = dbItem
-        }
-
+        const matchedItem = itemLookup.get(productName.toLowerCase())
         if (!matchedItem) continue
 
         if (!isNaN(minStockInput) && minStockInput >= 0) {
-          await supabase
-            .from("inventory")
-            .update({ min_stock: Math.floor(minStockInput) })
-            .eq("id", Number(matchedItem.id))
+          minStockUpdates.push({ id: matchedItem.id, minStock: Math.floor(minStockInput) })
         }
 
         if (stockQtyInput > 0) {
           const cleanedName = productName.replace(/\s+/g, "").substring(0, 5).toUpperCase()
           const generatedBatchLabel = `BATCH-${cleanedName}-${Date.now().toString().slice(-4)}`
-
-          await supabase.from("inventory_batches").insert({
-            item_id: Number(matchedItem.id),
+          batchesToInsert.push({
+            item_id: matchedItem.id,
             batch_label: generatedBatchLabel,
             stock: stockQtyInput,
-            cost: Number(matchedItem.cost) || 0,
-            price: Number(matchedItem.price) || 0,
+            cost: matchedItem.cost,
+            price: matchedItem.price,
             expiry_date: expiryDate
           })
         }
 
         successCount++
-        setImportProgress(prev => ({ ...prev, successCount }))
+
+        if (i % 25 === 0 || i === rows.length - 1) {
+          setImportProgress(prev => ({
+            ...prev,
+            processedRows: i,
+            successCount,
+            currentItemName: `Processed ${i} of ${totalDataRows} stock records...`
+          }))
+        }
+      }
+
+      const wasCancelled = isCancelledRef.current
+
+      // Step 3: Execute bulk updates and inserts
+      if (!wasCancelled) {
+        if (minStockUpdates.length > 0) {
+          for (let i = 0; i < minStockUpdates.length; i += 10) {
+            if (isCancelledRef.current) break
+            const chunk = minStockUpdates.slice(i, i + 10)
+            await Promise.all(
+              chunk.map(up => supabase.from("inventory").update({ min_stock: up.minStock }).eq("id", up.id))
+            )
+          }
+        }
+
+        if (batchesToInsert.length > 0 && !isCancelledRef.current) {
+          setImportProgress(prev => ({
+            ...prev,
+            currentItemName: "Synchronizing stock batch records..."
+          }))
+          for (let i = 0; i < batchesToInsert.length; i += 100) {
+            if (isCancelledRef.current) break
+            await supabase.from("inventory_batches").insert(batchesToInsert.slice(i, i + 100))
+          }
+        }
       }
 
       setImportProgress(prev => ({
         ...prev,
         processedRows: totalDataRows,
-        currentItemName: "Finalizing stock batch updates..."
+        successCount,
+        currentItemName: wasCancelled ? "Stock import cancelled by user." : "Import Completed! Updated stock items."
       }))
 
-      await fetchInventory()
-
-      if (onLogAction) {
-        await onLogAction("BULK_STOCK_IMPORT", "INVENTORY_MANAGEMENT", `Imported stock adjustments for ${successCount} items from Excel file.`)
-      }
+      Promise.all([
+        fetchInventory(),
+        onLogAction ? onLogAction("BULK_STOCK_IMPORT", "INVENTORY_MANAGEMENT", wasCancelled ? `Stock import cancelled by user (${successCount} records processed).` : `Imported stock adjustments for ${successCount} items from Excel file.`) : Promise.resolve()
+      ]).catch(() => {})
 
       setTimeout(() => {
         setImportProgress(prev => ({ ...prev, active: false }))
         setIsBulkUploading(false)
         if (fileInputRef.current) fileInputRef.current.value = ""
-      }, 1200)
+      }, 300)
 
     } catch (err: any) {
       console.error("Stock Excel import error:", err)
@@ -928,6 +982,20 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
                 )}
               </div>
             </div>
+
+            {/* Cancel Button */}
+            {importProgress.processedRows < importProgress.totalRows && (
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={handleCancelImport}
+                  className="px-4 py-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-xs cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                  Cancel Import
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

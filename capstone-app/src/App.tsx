@@ -8,7 +8,7 @@ import { SalesHistory } from "./components/SalesHistory"
 import { AdminPanel } from "./components/AdminPanel"
 import { SuperAdminPanel } from "./components/SuperAdminPanel"
 import { LoginScreen } from "./components/LoginScreen"
-import { supabase, broadcastChannel, triggerGlobalSync } from "./utils/apiClient"
+import { supabase, broadcastChannel, triggerGlobalSync, fetchAllSupabaseRows } from "./utils/apiClient"
 
 export interface InventoryItem {
   id: string
@@ -99,14 +99,44 @@ export default function App() {
     } catch (e) {}
   }
 
+  useEffect(() => {
+    if (!currentOperator?.username) return
+    const uName = String(currentOperator.username).trim().toLowerCase()
+
+    const updateHeartbeat = () => {
+      try {
+        localStorage.setItem(`pinv_active_heartbeat_${uName}`, Date.now().toString())
+      } catch (e) {}
+    }
+
+    updateHeartbeat()
+    const timer = setInterval(updateHeartbeat, 5000)
+
+    const handleUnload = () => {
+      try {
+        localStorage.removeItem(`pinv_active_heartbeat_${uName}`)
+      } catch (e) {}
+    }
+    window.addEventListener("beforeunload", handleUnload)
+
+    return () => {
+      clearInterval(timer)
+      window.removeEventListener("beforeunload", handleUnload)
+    }
+  }, [currentOperator])
+
   const handleLogout = () => {
     sessionStorage.removeItem("pinv_session")
     const op = currentOperator
-    setCurrentOperator(null)
-    setActiveTab("dashboard")
-    if (op) {
+    if (op?.username) {
+      const uName = String(op.username).trim().toLowerCase()
+      try {
+        localStorage.removeItem(`pinv_active_heartbeat_${uName}`)
+      } catch (e) {}
       logSystemAction("SESSION_LOGOUT", "AUTHENTICATION Portal", `Terminated station session for @${op.username}`).catch(() => {})
     }
+    setCurrentOperator(null)
+    setActiveTab("dashboard")
   }
 
   const deleteInventoryItem = async (idOrName: string) => {
@@ -154,21 +184,32 @@ export default function App() {
       fetchSales()
     }
 
-    // Realtime postgres subscriptions for instant multi-client syncing
+    // Realtime postgres subscriptions for instant multi-client syncing (debounced to avoid rate limit spam during bulk imports)
+    let invTimer: any = null
+    let salesTimer: any = null
+    let catTimer: any = null
+
+    const debouncedFetchInventory = () => {
+      if (invTimer) clearTimeout(invTimer)
+      invTimer = setTimeout(() => fetchInventory(), 800)
+    }
+
+    const debouncedFetchSales = () => {
+      if (salesTimer) clearTimeout(salesTimer)
+      salesTimer = setTimeout(() => fetchSales(), 800)
+    }
+
+    const debouncedFetchCategories = () => {
+      if (catTimer) clearTimeout(catTimer)
+      catTimer = setTimeout(() => fetchCategories(), 800)
+    }
+
     const channel = supabase
       .channel("global-app-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "inventory" }, () => {
-        fetchInventory()
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "inventory_batches" }, () => {
-        fetchInventory()
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "sales" }, () => {
-        fetchSales()
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "product_categories" }, () => {
-        fetchCategories()
-      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "inventory" }, debouncedFetchInventory)
+      .on("postgres_changes", { event: "*", schema: "public", table: "inventory_batches" }, debouncedFetchInventory)
+      .on("postgres_changes", { event: "*", schema: "public", table: "sales" }, debouncedFetchSales)
+      .on("postgres_changes", { event: "*", schema: "public", table: "product_categories" }, debouncedFetchCategories)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "system_audit_logs" }, (payload) => {
         const logData = payload.new as any
         if (logData && currentOperator) {
@@ -203,6 +244,9 @@ export default function App() {
           const curr = String(currentOperator.username).trim().toLowerCase()
           const initiator = String(data.initiatedBy || "").trim().toLowerCase()
           if (target === curr && (initiator === "" || initiator !== curr)) {
+            try {
+              localStorage.removeItem(`pinv_active_heartbeat_${curr}`)
+            } catch (e) {}
             sessionStorage.removeItem("pinv_session")
             setCurrentOperator(null)
             setActiveTab("dashboard")
@@ -210,6 +254,10 @@ export default function App() {
           }
         } else if (data.type === 'FORCE_LOGOUT_BELOW_SUPER_ADMIN') {
           if (String(currentOperator.systemRole).toLowerCase() !== 'superadmin') {
+            const curr = String(currentOperator.username).trim().toLowerCase()
+            try {
+              localStorage.removeItem(`pinv_active_heartbeat_${curr}`)
+            } catch (e) {}
             sessionStorage.removeItem("pinv_session")
             setCurrentOperator(null)
             setActiveTab("dashboard")
@@ -260,8 +308,8 @@ export default function App() {
     }
   }, [currentOperator, activeTab])
 
-  const logSystemAction = async (actionType: string, moduleTarget: string, details: string) => {
-    const operatorName = currentOperator ? currentOperator.username : "admin"
+  const logSystemAction = async (actionType: string, moduleTarget: string, details: string, overrideOperator?: string) => {
+    const operatorName = overrideOperator || (currentOperator ? currentOperator.username : "system")
     const { error } = await supabase.from("system_audit_logs").insert({
       operator_username: operatorName,
       action_type: actionType,
@@ -272,17 +320,17 @@ export default function App() {
   }
 
   const fetchCategories = async () => {
-    const { data } = await supabase.from("product_categories").select("name")
+    const data = await fetchAllSupabaseRows("product_categories", "name")
     if (data) {
-      const rawNames = data.map(c => c.name)
+      const rawNames = data.map((c: any) => c.name)
       const remainingCategories = rawNames.filter(c => c !== "unmarked category").sort()
       setCategoriesList(["unmarked category", ...remainingCategories])
     }
   }
 
   const fetchInventory = async () => {
-    const { data: items } = await supabase.from('inventory').select()
-    const { data: batches } = await supabase.from('inventory_batches').select().order('expiry_date', { ascending: true })
+    const items = await fetchAllSupabaseRows('inventory', '*')
+    const batches = await fetchAllSupabaseRows('inventory_batches', '*', { column: 'id', ascending: true })
     const formattedData = items?.map(item => {
       const itemBatches = batches?.filter(b => String(b.item_id) === String(item.id)).map(b => ({
         id: String(b.id),
@@ -312,7 +360,7 @@ export default function App() {
 
   const fetchSales = async () => {
     // 1. Try querying view_sales_history if available
-    const { data: viewData, error: viewErr } = await supabase.from('view_sales_history').select('*')
+    const { data: viewData, error: viewErr } = await supabase.from('view_sales_history').select('*').range(0, 99999)
     
     if (viewData && !viewErr && viewData.length > 0) {
       const sortedView = [...viewData].sort((a: any, b: any) => {
@@ -369,11 +417,11 @@ export default function App() {
     }
 
     // 2. Standard multi-table query fallback
-    const { data: salesData } = await supabase.from('sales').select('*')
-    const { data: saleItemsData } = await supabase.from('sale_items').select('*')
-    const { data: inventoryData } = await supabase.from('inventory').select('*')
-    const { data: batchesData } = await supabase.from('inventory_batches').select('*')
-    const { data: saleBatchesData } = await supabase.from('sale_item_batches').select('*')
+    const { data: salesData } = await supabase.from('sales').select('*').range(0, 99999)
+    const { data: saleItemsData } = await supabase.from('sale_items').select('*').range(0, 99999)
+    const { data: inventoryData } = await supabase.from('inventory').select('*').range(0, 99999)
+    const { data: batchesData } = await supabase.from('inventory_batches').select('*').range(0, 99999)
+    const { data: saleBatchesData } = await supabase.from('sale_item_batches').select('*').range(0, 99999)
 
     const sortedSalesData = [...(salesData || [])].sort((a: any, b: any) => {
       const timeA = new Date(a.date || a.created_at || 0).getTime()
@@ -592,7 +640,7 @@ export default function App() {
         theme={theme}
         onAuthSuccess={async (operator: any) => {
           saveSession(operator)
-          await logSystemAction("SESSION_LOGIN", "AUTHENTICATION Portal", `Authorized station session for @${operator.username}`).catch(() => {})
+          await logSystemAction("SESSION_LOGIN", "AUTHENTICATION Portal", `Authorized station session for @${operator.username}`, operator.username).catch(() => {})
           if (operator.systemRole === "superadmin") {
             setActiveTab("super_admin")
           } else if (operator.systemRole === "admin") {

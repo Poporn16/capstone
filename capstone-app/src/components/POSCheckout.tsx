@@ -238,8 +238,10 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
     onCompleteSale(saleRecord as any)
     setLastSale(saleRecord)
     setCart([])
-    setDiscountType("none")
     setCashReceived("")
+    setDiscountType("none")
+    setCustomDiscountPercent(0)
+    setSelectedGenericGroup(null)
     setShowReceipt(true)
   }
 
@@ -301,20 +303,20 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
 
         <div 
           onScroll={handleCatalogueScroll}
-          className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border dark:border-slate-700 p-4 max-h-[calc(100vh-230px)] overflow-y-auto"
+          className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border dark:border-slate-700 p-4 max-h-[calc(100vh-230px)] overflow-y-auto relative"
         >
           {selectedGenericGroup ? (
             <div className="space-y-4">
-              <div className="flex items-center justify-between border-b pb-2 dark:border-slate-700">
+              <div className="sticky -top-4 z-20 -mx-4 -mt-4 px-4 py-3 bg-white dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 shadow-sm rounded-t-xl flex items-center justify-between">
                 <button 
                   type="button" 
                   onClick={() => setSelectedGenericGroup(null)} 
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-bold text-xs"
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-50 dark:bg-blue-950/80 hover:bg-blue-100 dark:hover:bg-blue-900 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded-lg font-bold text-xs shadow-2xs transition-all cursor-pointer"
                 >
-                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <ArrowLeft className="w-4 h-4" />
                   Back to Grid
                 </button>
-                <span className="font-bold text-xs text-blue-600 tracking-wide">{selectedGenericGroup} OPTIONS</span>
+                <span className="font-extrabold text-xs text-blue-600 dark:text-blue-400 tracking-wider uppercase">{selectedGenericGroup} OPTIONS</span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">

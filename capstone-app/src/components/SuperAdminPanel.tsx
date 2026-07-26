@@ -158,14 +158,14 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
         { data: saleItemBatchesData },
         { data: auditLogsData }
       ] = await Promise.all([
-        supabase.from("operator_profiles").select("*"),
-        supabase.from("product_categories").select("*"),
-        supabase.from("inventory").select("*"),
-        supabase.from("inventory_batches").select("*"),
-        supabase.from("sales").select("*"),
-        supabase.from("sale_items").select("*"),
-        supabase.from("sale_item_batches").select("*"),
-        supabase.from("system_audit_logs").select("*")
+        supabase.from("operator_profiles").select("*").range(0, 99999),
+        supabase.from("product_categories").select("*").range(0, 99999),
+        supabase.from("inventory").select("*").range(0, 99999),
+        supabase.from("inventory_batches").select("*").range(0, 99999),
+        supabase.from("sales").select("*").range(0, 99999),
+        supabase.from("sale_items").select("*").range(0, 99999),
+        supabase.from("sale_item_batches").select("*").range(0, 99999),
+        supabase.from("system_audit_logs").select("*").range(0, 99999)
       ])
 
       const backupData = {
@@ -468,76 +468,34 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
       advance()
 
       if (type === "inventory" || type === "all") {
-        // Step: Clear inventory batches
         setResetProgress(prev => ({ ...prev, step: "Clearing inventory batch records..." }))
-        const { data: batches } = await supabase.from("inventory_batches").select("id, item_id")
-        if (batches && batches.length > 0) {
-          for (const b of batches) {
-            await supabase.from("inventory_batches").delete().eq("id", b.id)
-          }
-        }
+        await supabase.from("inventory_batches").delete().neq("id", 0)
         advance()
 
-        // Step: Clear inventory items
         setResetProgress(prev => ({ ...prev, step: "Removing inventory item profiles..." }))
-        const { data: invItems } = await supabase.from("inventory").select("id, name")
-        if (invItems && invItems.length > 0) {
-          for (const item of invItems) {
-            await supabase.from("inventory_batches").delete().eq("item_id", item.id)
-            await supabase.from("sale_item_batches").delete().eq("item_name", item.name)
-            await supabase.from("sale_items").delete().eq("item_id", item.id)
-            await supabase.from("inventory").delete().eq("id", item.id)
-            await supabase.from("inventory").delete().eq("name", item.name)
-          }
-        }
+        await supabase.from("sale_item_batches").delete().neq("id", 0)
+        await supabase.from("sale_items").delete().neq("id", 0)
+        await supabase.from("inventory").delete().neq("id", 0)
         advance()
 
-        // Step: Clear categories
         setResetProgress(prev => ({ ...prev, step: "Purging product categories..." }))
-        const { data: catList } = await supabase.from("product_categories").select("id, name")
-        if (catList && catList.length > 0) {
-          for (const c of catList) {
-            if (String(c.name).toLowerCase() !== "unmarked category") {
-              await supabase.from("product_categories").delete().eq("id", c.id)
-              await supabase.from("product_categories").delete().eq("name", c.name)
-            }
-          }
-        }
+        await supabase.from("product_categories").delete().neq("name", "unmarked category")
         advance()
       }
 
       if (type === "sales" || type === "all") {
-        // Step: Clear sale batches
         setResetProgress(prev => ({ ...prev, step: "Clearing sale batch link records..." }))
-        const { data: saleBatches } = await supabase.from("sale_item_batches").select("id")
-        if (saleBatches && saleBatches.length > 0) {
-          for (const sb of saleBatches) {
-            await supabase.from("sale_item_batches").delete().eq("id", sb.id)
-          }
-        }
+        await supabase.from("sale_item_batches").delete().neq("id", 0)
         advance()
 
-        // Step: Clear sale items
         setResetProgress(prev => ({ ...prev, step: "Removing sale line items..." }))
-        const { data: saleItems } = await supabase.from("sale_items").select("id")
-        if (saleItems && saleItems.length > 0) {
-          for (const si of saleItems) {
-            await supabase.from("sale_items").delete().eq("id", si.id)
-          }
-        }
+        await supabase.from("sale_items").delete().neq("id", 0)
         advance()
 
-        // Step: Clear sales
         setResetProgress(prev => ({ ...prev, step: "Purging sales transaction records..." }))
-        const { data: salesList } = await supabase.from("sales").select("id")
-        if (salesList && salesList.length > 0) {
-          for (const s of salesList) {
-            await supabase.from("sales").delete().eq("id", s.id)
-          }
-        }
+        await supabase.from("sales").delete().neq("id", 0)
         advance()
 
-        // Step: Reset sequences
         setResetProgress(prev => ({ ...prev, step: "Resetting database ID sequences..." }))
         try {
           await supabase.rpc("reset_sales_sequence")
@@ -556,14 +514,8 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
       }
 
       if (type === "audit" || type === "all") {
-        // Step: Clear audit logs
         setResetProgress(prev => ({ ...prev, step: "Clearing system audit log entries..." }))
-        const { data: logList } = await supabase.from("system_audit_logs").select("id")
-        if (logList && logList.length > 0) {
-          for (const l of logList) {
-            await supabase.from("system_audit_logs").delete().eq("id", l.id)
-          }
-        }
+        await supabase.from("system_audit_logs").delete().neq("id", 0)
         try {
           await supabase.rpc("reset_all_database_sequences")
         } catch (e) {}
@@ -719,10 +671,36 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
         setManualBackups(derivedManual)
       }
 
-      // Active user detection: same audit-log-based approach as AdminPanel
+      // Active user detection: heartbeat-validated
+      const HEARTBEAT_TIMEOUT = 30 * 1000 // 30s
+      const activeSet = new Set<string>()
+
+      // 1. Current logged-in operator is always active
+      if (currentOperator?.username) {
+        activeSet.add(String(currentOperator.username).trim().toLowerCase())
+      }
+
+      // 2. Check localStorage active heartbeats
+      try {
+        const now = Date.now()
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i)
+          if (key && key.startsWith("pinv_active_heartbeat_")) {
+            const u = key.replace("pinv_active_heartbeat_", "").trim().toLowerCase()
+            const val = Number(localStorage.getItem(key))
+            if (val && (now - val < HEARTBEAT_TIMEOUT)) {
+              activeSet.add(u)
+            } else {
+              localStorage.removeItem(key)
+            }
+          }
+        }
+      } catch (e) {}
+
+      // 3. Process system_audit_logs to exclude any user whose latest action was logout/termination
       if (logsData && logsData.length > 0) {
-        const twelveHoursAgo = Date.now() - (12 * 60 * 60 * 1000)
-        const userLastAction = new Map<string, { time: number; isLogout: boolean }>()
+        const logoutTypes = ["SESSION_LOGOUT", "FORCE_LOGOUT", "TARGET_SESSION_TERMINATED"]
+        const userLastAction = new Map<string, { time: number; actionType: string }>()
 
         logsData.forEach((log) => {
           const u = String(log.operator_username || "").trim().toLowerCase()
@@ -730,29 +708,24 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
           const logTime = new Date(log.created_at).getTime()
           const prev = userLastAction.get(u)
           if (!prev || logTime > prev.time) {
-            userLastAction.set(u, { time: logTime, isLogout: log.action_type === "SESSION_LOGOUT" })
+            userLastAction.set(u, { time: logTime, actionType: String(log.action_type || "") })
           }
         })
 
-        const activeSet = new Set<string>()
-        userLastAction.forEach(({ time, isLogout }, username) => {
-          if (!isLogout && time >= twelveHoursAgo) {
-            activeSet.add(username)
+        userLastAction.forEach(({ actionType }, username) => {
+          if (logoutTypes.includes(actionType)) {
+            if (username !== currentOperator?.username?.toLowerCase()) {
+              activeSet.delete(username)
+            }
           }
         })
-
-        // Always mark current operator as active
-        if (currentOperator?.username) {
-          activeSet.add(String(currentOperator.username).trim().toLowerCase())
-        }
-
-        setActiveUsernames(Array.from(activeSet))
-      } else {
-        // No logs — just mark current operator
-        if (currentOperator?.username) {
-          setActiveUsernames([currentOperator.username.toLowerCase()])
-        }
       }
+
+      if (currentOperator?.username) {
+        activeSet.add(String(currentOperator.username).trim().toLowerCase())
+      }
+
+      setActiveUsernames(Array.from(activeSet))
     } catch (err) {
       console.error("Super Admin data fetch error:", err)
     }
@@ -942,7 +915,8 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
   }
 
   const handleForceLogoutProfile = async (username: string) => {
-    if (username.toLowerCase() === currentOperator.username.toLowerCase()) {
+    const targetUser = username.trim().toLowerCase()
+    if (targetUser === currentOperator.username.toLowerCase()) {
       alert("Notice: To logout your current session, use the 'Log Out Session' button on the sidebar.")
       return
     }
@@ -951,11 +925,24 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
       return
     }
 
+    try {
+      localStorage.removeItem(`pinv_active_heartbeat_${targetUser}`)
+    } catch (e) {}
+
+    await supabase.from("system_audit_logs").insert({
+      operator_username: targetUser,
+      action_type: "SESSION_LOGOUT",
+      module_target: "SUPER_ADMIN",
+      details_summary: `Session forcibly terminated by @${currentOperator.username}`
+    })
+
     await triggerForceLogout(username, currentOperator.username)
     await onLogAction("FORCE_LOGOUT", "SUPER_ADMIN", `Terminated session for operator @${username}`)
+
+    setActiveUsernames(prev => prev.filter(u => u.toLowerCase() !== targetUser))
     setOpenActionProfileId(null)
     alert(`Disconnect signal sent for user @${username}. Session terminated.`)
-    fetchAllSuperAdminData()
+    await fetchAllSuperAdminData()
   }
 
   const formatDateString = (rawDate: string) => {

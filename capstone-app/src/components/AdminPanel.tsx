@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react"
-import { supabase, triggerForceLogout } from "../utils/apiClient"
-import { downloadExcelWithAutoFit } from "../utils/excelUtils"
+import { supabase, triggerForceLogout, fetchAllSupabaseRows } from "../utils/apiClient"
+import { downloadExcelWithAutoFit, downloadMultiSheetStockAdditionsWorkbook } from "../utils/excelUtils"
 import { ShieldAlert, UserPlus, Trash2, History, RefreshCw, ShoppingBag, Eye, X, Flame, Database, AlertOctagon, RotateCcw, LogOut, Download, Edit } from "lucide-react"
 
 interface AdminPanelProps {
@@ -156,14 +156,14 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
         { data: saleItemBatches },
         { data: auditLogs }
       ] = await Promise.all([
-        supabase.from("operator_profiles").select("*"),
-        supabase.from("product_categories").select("*"),
-        supabase.from("inventory").select("*"),
-        supabase.from("inventory_batches").select("*"),
-        supabase.from("sales").select("*"),
-        supabase.from("sale_items").select("*"),
-        supabase.from("sale_item_batches").select("*"),
-        supabase.from("system_audit_logs").select("*")
+        supabase.from("operator_profiles").select("*").range(0, 99999),
+        supabase.from("product_categories").select("*").range(0, 99999),
+        supabase.from("inventory").select("*").range(0, 99999),
+        supabase.from("inventory_batches").select("*").range(0, 99999),
+        supabase.from("sales").select("*").range(0, 99999),
+        supabase.from("sale_items").select("*").range(0, 99999),
+        supabase.from("sale_item_batches").select("*").range(0, 99999),
+        supabase.from("system_audit_logs").select("*").range(0, 99999)
       ])
 
       const backupData = {
@@ -312,67 +312,22 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
       await handleDownloadDatabaseBackup(`pre_reset_${type}`)
 
       if (type === "inventory" || type === "all") {
-        // 1. Delete all inventory batches
-        const { data: batches } = await supabase.from("inventory_batches").select("id, item_id")
-        if (batches && batches.length > 0) {
-          for (const b of batches) {
-            await supabase.from("inventory_batches").delete().eq("id", b.id)
-          }
-        }
-
-        // 2. Delete all items from inventory & related records
-        const { data: invItems } = await supabase.from("inventory").select("id, name")
-        if (invItems && invItems.length > 0) {
-          for (const item of invItems) {
-            await supabase.from("inventory_batches").delete().eq("item_id", item.id)
-            await supabase.from("sale_item_batches").delete().eq("item_name", item.name)
-            await supabase.from("sale_items").delete().eq("item_id", item.id)
-            await supabase.from("inventory").delete().eq("id", item.id)
-            await supabase.from("inventory").delete().eq("name", item.name)
-          }
-        }
-
-        // 3. Delete custom categories
-        const { data: catList } = await supabase.from("product_categories").select("id, name")
-        if (catList && catList.length > 0) {
-          for (const c of catList) {
-            if (String(c.name).toLowerCase() !== "unmarked category") {
-              await supabase.from("product_categories").delete().eq("id", c.id)
-              await supabase.from("product_categories").delete().eq("name", c.name)
-            }
-          }
-        }
+        await supabase.from("inventory_batches").delete().neq("id", 0)
+        await supabase.from("sale_item_batches").delete().neq("id", 0)
+        await supabase.from("sale_items").delete().neq("id", 0)
+        await supabase.from("inventory").delete().neq("id", 0)
+        await supabase.from("product_categories").delete().neq("name", "unmarked category")
       }
 
       if (type === "sales" || type === "all") {
-        const { data: saleBatches } = await supabase.from("sale_item_batches").select("id")
-        if (saleBatches && saleBatches.length > 0) {
-          for (const sb of saleBatches) {
-            await supabase.from("sale_item_batches").delete().eq("id", sb.id)
-          }
-        }
+        await supabase.from("sale_item_batches").delete().neq("id", 0)
+        await supabase.from("sale_items").delete().neq("id", 0)
+        await supabase.from("sales").delete().neq("id", 0)
 
-        const { data: saleItems } = await supabase.from("sale_items").select("id")
-        if (saleItems && saleItems.length > 0) {
-          for (const si of saleItems) {
-            await supabase.from("sale_items").delete().eq("id", si.id)
-          }
-        }
-
-        const { data: salesList } = await supabase.from("sales").select("id")
-        if (salesList && salesList.length > 0) {
-          for (const s of salesList) {
-            await supabase.from("sales").delete().eq("id", s.id)
-          }
-        }
-
-        // Attempt sequence reset in Postgres
         try {
           await supabase.rpc("reset_sales_sequence")
           await supabase.rpc("reset_all_database_sequences")
-        } catch (e) {
-          // ignore if RPC function is not defined in DB
-        }
+        } catch (e) {}
       }
 
       if (type === "inventory" || type === "all") {
@@ -383,12 +338,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
       }
 
       if (type === "audit" || type === "all") {
-        const { data: logList } = await supabase.from("system_audit_logs").select("id")
-        if (logList && logList.length > 0) {
-          for (const l of logList) {
-            await supabase.from("system_audit_logs").delete().eq("id", l.id)
-          }
-        }
+        await supabase.from("system_audit_logs").delete().neq("id", 0)
         try {
           await supabase.rpc("reset_all_database_sequences")
         } catch (e) {}
@@ -471,28 +421,53 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     if (data) {
       setLogs(data)
 
-      // Track active status: any activity in last 12h = active, unless last action was SESSION_LOGOUT
-      const twelveHoursAgo = Date.now() - 12 * 60 * 60 * 1000
-      const userLastAction = new Map<string, { time: number; isLogout: boolean }>()
-
-      data.forEach((log) => {
-        const u = String(log.operator_username || "").trim().toLowerCase()
-        if (!u) return
-        const logTime = new Date(log.created_at).getTime()
-        const prev = userLastAction.get(u)
-        if (!prev || logTime > prev.time) {
-          userLastAction.set(u, { time: logTime, isLogout: log.action_type === "SESSION_LOGOUT" })
-        }
-      })
-
+      // Active user detection: heartbeat-validated
+      const HEARTBEAT_TIMEOUT = 30 * 1000 // 30s
       const activeSet = new Set<string>()
-      userLastAction.forEach(({ time, isLogout }, username) => {
-        if (!isLogout && time >= twelveHoursAgo) {
-          activeSet.add(username)
-        }
-      })
 
-      // Always mark current operator as active
+      if (currentOperator?.username) {
+        activeSet.add(String(currentOperator.username).trim().toLowerCase())
+      }
+
+      try {
+        const now = Date.now()
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i)
+          if (key && key.startsWith("pinv_active_heartbeat_")) {
+            const u = key.replace("pinv_active_heartbeat_", "").trim().toLowerCase()
+            const val = Number(localStorage.getItem(key))
+            if (val && (now - val < HEARTBEAT_TIMEOUT)) {
+              activeSet.add(u)
+            } else {
+              localStorage.removeItem(key)
+            }
+          }
+        }
+      } catch (e) {}
+
+      if (data && data.length > 0) {
+        const logoutTypes = ["SESSION_LOGOUT", "FORCE_LOGOUT", "TARGET_SESSION_TERMINATED"]
+        const userLastAction = new Map<string, { time: number; actionType: string }>()
+
+        data.forEach((log) => {
+          const u = String(log.operator_username || "").trim().toLowerCase()
+          if (!u) return
+          const logTime = new Date(log.created_at).getTime()
+          const prev = userLastAction.get(u)
+          if (!prev || logTime > prev.time) {
+            userLastAction.set(u, { time: logTime, actionType: String(log.action_type || "") })
+          }
+        })
+
+        userLastAction.forEach(({ actionType }, username) => {
+          if (logoutTypes.includes(actionType)) {
+            if (username !== currentOperator?.username?.toLowerCase()) {
+              activeSet.delete(username)
+            }
+          }
+        })
+      }
+
       if (currentOperator?.username) {
         activeSet.add(String(currentOperator.username).trim().toLowerCase())
       }
@@ -502,16 +477,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
   }
 
   const fetchBatchSalesHistory = async () => {
-    const { data, error } = await supabase
-      .from("sale_item_batches")
-      .select("*")
-      .order("id", { ascending: false })
-      .limit(200)
-
-    if (error) {
-      console.error("Error fetching batch sales history:", error.message)
-      return
-    }
+    const data = await fetchAllSupabaseRows("sale_item_batches", "*", { column: "id", ascending: false })
     if (data) setBatchSales(data)
   }
 
@@ -564,18 +530,28 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
 
   const handleForceLogoutProfile = async (username: string) => {
     const normUser = String(username || "").trim().toLowerCase()
+    if (normUser === currentOperator?.username?.toLowerCase()) {
+      alert("Notice: To logout your current session, use the 'Log Out Session' button on the sidebar.")
+      return
+    }
+
+    try {
+      localStorage.removeItem(`pinv_active_heartbeat_${normUser}`)
+    } catch (e) {}
+
     await supabase.from("system_audit_logs").insert({
-      operator_username: "admin",
-      action_type: "TARGET_SESSION_TERMINATED",
-      module_target: "SUPER_ADMIN",
-      details_summary: normUser
+      operator_username: normUser,
+      action_type: "SESSION_LOGOUT",
+      module_target: "ADMIN_PANEL",
+      details_summary: `Session forcibly terminated by @${currentOperator?.username || 'admin'}`
     })
 
     setActiveUsernames(prev => prev.filter(u => u !== normUser))
-    await onLogAction("FORCE_LOGOUT", "SUPER_ADMIN", `Forcibly terminated session for operator @${username}`)
-    triggerForceLogout(username, "admin")
+    await onLogAction("FORCE_LOGOUT", "ADMIN_PANEL", `Forcibly terminated session for operator @${username}`)
+    triggerForceLogout(username, currentOperator?.username || "admin")
     setOpenActionProfileId(null)
     alert(`Active session for @${username} has been logged out!`)
+    await fetchAdminLogs()
   }
 
   const handleSaveEditProfile = async (e: React.FormEvent) => {
@@ -699,8 +675,8 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
   const [stockBatches, setStockBatches] = useState<any[]>([])
 
   const fetchInventoryBatches = async () => {
-    const { data: invData } = await supabase.from("inventory").select("id, name")
-    const { data: batchData } = await supabase.from("inventory_batches").select("*").order("id", { ascending: false }).limit(200)
+    const invData = await fetchAllSupabaseRows("inventory", "id, name")
+    const batchData = await fetchAllSupabaseRows("inventory_batches", "*", { column: "id", ascending: false })
     
     if (batchData) {
       const formatted = batchData.map((b: any) => {
@@ -902,25 +878,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
       downloadExcelWithAutoFit("batch_sales_logs", "Batch Sales Logs", headers, rows);
     } else {
       if (filteredStockAdditions.length === 0) return;
-      const headers = ["Batch Event Tag", "Product Name", "Batch Label", "Stock Added (pcs)", "Unit Price (PHP)", "Total Item Value (PHP)", "Time & Date"];
-      const rows: (string | number)[][] = [];
-
-      filteredStockAdditions.forEach(group => {
-        group.items.forEach(item => {
-          const itemTotalVal = (item.stock || 0) * (item.price || 0);
-          rows.push([
-            group.batch_tag,
-            item.name,
-            item.label || "",
-            item.stock,
-            item.price,
-            itemTotalVal,
-            formatDateString(group.created_at)
-          ]);
-        });
-      });
-
-      downloadExcelWithAutoFit("stock_additions_logs", "Stock Additions Logs", headers, rows);
+      downloadMultiSheetStockAdditionsWorkbook("stock_additions_logs", filteredStockAdditions);
     }
   };
 

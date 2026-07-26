@@ -61,3 +61,37 @@ export function triggerForceLogoutBelowSuperAdmin(initiatedBy?: string) {
     }
   }
 }
+
+export async function fetchAllSupabaseRows<T = any>(
+  tableName: string,
+  selectStr: string = '*',
+  orderBy?: { column: string; ascending?: boolean }
+): Promise<T[]> {
+  const PAGE_SIZE = 1000
+  let allRows: T[] = []
+  let page = 0
+  let hasMore = true
+
+  while (hasMore) {
+    const start = page * PAGE_SIZE
+    const end = start + PAGE_SIZE - 1
+    let query = supabase.from(tableName).select(selectStr).range(start, end)
+    if (orderBy) {
+      query = query.order(orderBy.column, { ascending: orderBy.ascending ?? true })
+    }
+
+    const { data, error } = await query
+    if (error || !data || data.length === 0) {
+      hasMore = false
+    } else {
+      allRows = allRows.concat(data as T[])
+      if (data.length < PAGE_SIZE) {
+        hasMore = false
+      } else {
+        page++
+      }
+    }
+  }
+
+  return allRows
+}
