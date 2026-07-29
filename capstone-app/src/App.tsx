@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { Home, ShoppingCart, Package, Clock, ShieldAlert, LogOut, ClipboardList, Menu, X, Bell, AlertTriangle, Sun, Moon, ChevronLeft, ChevronRight, Flame } from "lucide-react"
+import { Home, ShoppingCart, Package, Clock, ShieldAlert, LogOut, ClipboardList, Menu, X, Bell, AlertTriangle, Sun, Moon, ChevronLeft, ChevronRight, Flame, UserCheck } from "lucide-react"
 import { Dashboard } from "./components/Dashboard"
 import { POSCheckout } from "./components/POSCheckout"
 import { InventoryManager } from "./components/InventoryManager"
@@ -8,6 +8,8 @@ import { SalesHistory } from "./components/SalesHistory"
 import { AdminPanel } from "./components/AdminPanel"
 import { SuperAdminPanel } from "./components/SuperAdminPanel"
 import { LoginScreen } from "./components/LoginScreen"
+import { StaffAttendanceModal } from "./components/StaffAttendanceModal"
+import { StaffAttendancePage } from "./components/StaffAttendancePage"
 import { supabase, broadcastChannel, triggerGlobalSync, fetchAllSupabaseRows } from "./utils/apiClient"
 
 export interface InventoryItem {
@@ -44,6 +46,7 @@ export interface Sale {
   paymentMethod: "cash" | "other"
   onlineChannel?: string
   discountLabel: string
+  customerName?: string
   processedBy: string
   isRefunded?: boolean
 }
@@ -61,6 +64,7 @@ export default function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
+  const [showAttendanceModal, setShowAttendanceModal] = useState(false)
 
   const [currentOperator, setCurrentOperator] = useState<{ username: string; displayName: string; systemRole: string } | null>(() => {
     try {
@@ -458,6 +462,22 @@ export default function App() {
       const isCash = !rawPay || rawPay.toLowerCase() === "cash"
       const onlineChan = !isCash ? (rawPay.includes(":") ? rawPay.split(":")[1] : (rawPay.toLowerCase() === "other" ? "" : rawPay)) : ""
 
+      const discLabel = sale.discount_label || "NONE"
+      let localCustomerMap: Record<string, string> = {}
+      try {
+        localCustomerMap = JSON.parse(localStorage.getItem("pinv_customer_sales_map") || "{}")
+      } catch (e) {}
+
+      let extractedCustomerName = sale.customer_name || sale.customerName || localCustomerMap[String(sale.id)] || localCustomerMap[String(idx + 1)] || undefined
+
+      // Extract embedded customer name from legacy discount_label e.g. "SENIOR CITIZEN (kervin)"
+      if (!extractedCustomerName && discLabel.includes("(") && discLabel.includes(")")) {
+        const match = discLabel.match(/\(([^)]+)\)/)
+        if (match && match[1] && !["20%", "10%", "5%", "100%"].includes(match[1].trim())) {
+          extractedCustomerName = match[1].trim()
+        }
+      }
+
       return {
         id: String(idx + 1),
         dbId: String(sale.id),
@@ -473,7 +493,8 @@ export default function App() {
         change: Number(sale.change) || 0,
         paymentMethod: isCash ? "cash" : "other",
         onlineChannel: onlineChan || sale.online_channel || "",
-        discountLabel: sale.discount_label || "NONE",
+        discountLabel: discLabel,
+        customerName: extractedCustomerName,
         processedBy: sale.processed_by || "admin",
         isRefunded: Boolean(sale.is_refunded)
       }
@@ -483,7 +504,13 @@ export default function App() {
 
   const addSale = async (sale: Sale) => {
     if (!currentOperator) return
-    
+
+    const trimmedCustomer = (sale.customerName || "").trim()
+    const baseDiscountLabel = sale.discountLabel || "NONE"
+    const dbDiscountLabel = (trimmedCustomer && !baseDiscountLabel.includes("("))
+      ? `${baseDiscountLabel} (${trimmedCustomer})`
+      : baseDiscountLabel
+
     let saleId: any = null
     // payment_method MUST be strictly 'cash' or 'other' (database check constraint)
     const payMethodValue = sale.paymentMethod === "other" ? "other" : "cash"
@@ -501,7 +528,8 @@ export default function App() {
       vat: sale.vat,
       cash_received: sale.cashReceived,
       change: sale.change,
-      discount_label: sale.discountLabel,
+      discount_label: dbDiscountLabel,
+      customer_name: trimmedCustomer || null,
       processed_by: currentOperator.username
     }
 
@@ -538,12 +566,12 @@ export default function App() {
         vat: sale.vat,
         cash_received: sale.cashReceived,
         change: sale.change,
-        discount_label: sale.discountLabel,
+        discount_label: dbDiscountLabel,
         payment_method: payMethodValue,
         processed_by: currentOperator.username,
         is_refunded: false
       }).select('id').single()
-      
+
       if (fallbackSale && !fbErr) {
         saleId = fallbackSale.id
         // Try to update online_channel separately
@@ -553,6 +581,15 @@ export default function App() {
       } else {
         console.error("All inserts failed:", fbErr?.message)
       }
+    }
+
+    if (trimmedCustomer && saleId) {
+      try {
+        const map = JSON.parse(localStorage.getItem("pinv_customer_sales_map") || "{}")
+        map[String(saleId)] = trimmedCustomer
+        map[String(sales.length + 1)] = trimmedCustomer
+        localStorage.setItem("pinv_customer_sales_map", JSON.stringify(map))
+      } catch (e) {}
     }
 
     try {
@@ -581,8 +618,51 @@ export default function App() {
         }))
         await supabase.from('sale_item_batches').insert(batchRows)
       }
+
+      // Deduct stock from inventory_batches and inventory in Supabase
+      for (const si of sale.items) {
+        const qtyToDeduct = Math.floor(Number(si.quantity)) || 1
+        const targetItemId = si.item.id
+
+        // 1. Fetch active batches for target item
+        const { data: itemBatches } = await supabase
+          .from('inventory_batches')
+          .select('*')
+          .eq('item_id', Number(targetItemId) || targetItemId)
+
+        if (itemBatches && itemBatches.length > 0) {
+          const sortedBatches = [...itemBatches]
+            .filter((b: any) => Number(b.stock) > 0)
+            .sort((a: any, b: any) => {
+              if (!a.expiry_date) return 1
+              if (!b.expiry_date) return -1
+              return new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime()
+            })
+
+          let remainingDeduct = qtyToDeduct
+          for (const batch of sortedBatches) {
+            if (remainingDeduct <= 0) break
+            const currentBatchStock = Number(batch.stock) || 0
+            const deductFromThis = Math.min(remainingDeduct, currentBatchStock)
+            const newStock = currentBatchStock - deductFromThis
+            remainingDeduct -= deductFromThis
+
+            await supabase
+              .from('inventory_batches')
+              .update({ stock: newStock })
+              .eq('id', batch.id)
+          }
+        } else {
+          // Fallback: If item has no batch rows, attempt updating inventory table directly
+          const { data: invItem } = await supabase.from('inventory').select('stock').eq('id', targetItemId).single()
+          if (invItem && invItem.stock != null) {
+            const newInvStock = Math.max(0, Number(invItem.stock) - qtyToDeduct)
+            await supabase.from('inventory').update({ stock: newInvStock }).eq('id', targetItemId)
+          }
+        }
+      }
     } catch (e) {
-      console.warn("Sale items insert exception:", e)
+      console.warn("Sale items insert/stock deduction exception:", e)
     }
 
     const payLabel = sale.paymentMethod === "other" ? (sale.onlineChannel ? `ONLINE (${sale.onlineChannel})` : "ONLINE PAYMENT") : "CASH"
@@ -653,19 +733,29 @@ export default function App() {
     )
   }
 
+  const isAdminUser = currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin"
+
   const navigationTabs = [
     { id: "dashboard", label: "Dashboard", icon: Home },
     { id: "pos", label: "Pos–Checkout", icon: ShoppingCart },
-    { id: "inventory", label: "Item specs", icon: Package },
-    { id: "stock_adjust", label: "Inventory", icon: ClipboardList }, 
-    { id: "history", label: "Sales History", icon: Clock },
   ]
-  if (currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin") {
+  if (isAdminUser) {
+    navigationTabs.push({ id: "inventory", label: "Item specs", icon: Package })
+    navigationTabs.push({ id: "stock_adjust", label: "Inventory", icon: ClipboardList })
+  }
+  navigationTabs.push({ id: "history", label: "Sales History", icon: Clock })
+
+  if (isAdminUser) {
+    navigationTabs.push({ id: "attendance", label: "Staff Attendance", icon: UserCheck })
     navigationTabs.push({ id: "admin_control", label: "Admin Panel", icon: ShieldAlert })
   }
   if (currentOperator.systemRole === "superadmin") {
     navigationTabs.push({ id: "super_admin", label: "Super Admin", icon: Flame })
-  }  const lowStockItems = inventory.filter(i => (i.stock || 0) <= (i.minStock || 10))
+  }
+
+  const lowStockItems = inventory
+    .filter(i => (i.stock || 0) <= (i.minStock || 10))
+    .sort((a, b) => (a.stock || 0) - (b.stock || 0))
   const expiringItems = inventory
     .flatMap(item => (item.batches || []).map(b => ({ name: item.name, expiryDate: b.expiryDate, stock: b.stock })))
     .filter(b => {
@@ -751,11 +841,21 @@ export default function App() {
               {activeTab === "inventory" && "Item specs"}
               {activeTab === "stock_adjust" && "Inventory"}
               {activeTab === "history" && "Sales History"}
+              {activeTab === "attendance" && "Staff Attendance"}
               {activeTab === "admin_control" && "Admin Panel"}
               {activeTab === "super_admin" && "Super Admin"}
             </h1>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setShowAttendanceModal(true)}
+              className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-2xs transition-all flex items-center gap-1.5 active:scale-95"
+              title="Time In / Time Out Attendance"
+            >
+              <Clock className="w-4 h-4" />
+              <span className="hidden sm:inline">Time In / Out</span>
+            </button>
             <button type="button" onClick={() => setTheme(t => t === "light" ? "dark" : "light")} className="w-10 h-10 rounded-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-gray-800 dark:text-gray-200 flex items-center justify-center shadow-2xs hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
               {theme === "light" ? <Moon className="w-5 h-5 text-gray-700" /> : <Sun className="w-5 h-5 text-amber-400" />}
             </button>
@@ -787,12 +887,7 @@ export default function App() {
                             className="p-2 bg-red-50/60 dark:bg-red-950/40 rounded-lg border border-red-100 dark:border-red-900/50 mb-1 flex justify-between items-center cursor-pointer hover:bg-red-100/60 dark:hover:bg-red-900/60 transition-colors"
                           >
                             <span className="font-medium text-gray-900 dark:text-gray-100">{item.name}</span>
-                            <div className="flex items-center gap-2">
-                              <span className={`font-bold font-mono text-[10px] px-1.5 py-0.5 rounded ${item.daysLeft <= 0 ? 'bg-red-200 text-red-800' : 'bg-orange-100 text-orange-800'}`}>
-                                {item.daysLeft <= 0 ? "EXPIRED" : `${item.daysLeft}d left`}
-                              </span>
-                              <span className="font-bold text-red-600 dark:text-red-300 font-mono">{item.expiryDate}</span>
-                            </div>
+                            <span className="font-bold text-red-700 dark:text-red-300">{item.daysLeft <= 0 ? "EXPIRED" : `${item.daysLeft}d left`}</span>
                           </div>
                         ))
                       )}
@@ -805,10 +900,11 @@ export default function App() {
         </header>
         <main className="flex-1 px-4 sm:px-8 pb-8 overflow-y-auto">
           {activeTab === "dashboard" && <Dashboard inventory={inventory} sales={sales} categoriesList={categoriesList} />}
-          {activeTab === "pos" && <POSCheckout inventory={inventory} categoriesList={categoriesList} onCompleteSale={addSale} />}
-          {activeTab === "inventory" && <InventoryManager inventory={inventory} categoriesList={categoriesList} refreshCategories={fetchCategories} refreshInventory={fetchInventory} onUpdateInventory={updateInventoryItem} onDeleteProduct={deleteInventoryItem} onLogAction={logSystemAction} />}
-          {activeTab === "stock_adjust" && <StockAdjustment inventory={inventory} categoriesList={categoriesList} fetchInventory={fetchInventory} onLogAction={logSystemAction} />}
-          {activeTab === "history" && <SalesHistory sales={sales} onToggleRefund={handleToggleRefund} />}
+          {activeTab === "pos" && <POSCheckout inventory={inventory} sales={sales} categoriesList={categoriesList} onCompleteSale={addSale} />}
+          {activeTab === "inventory" && <InventoryManager currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} refreshCategories={fetchCategories} refreshInventory={fetchInventory} onUpdateInventory={updateInventoryItem} onDeleteProduct={deleteInventoryItem} onLogAction={logSystemAction} />}
+          {activeTab === "stock_adjust" && <StockAdjustment currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} fetchInventory={fetchInventory} onLogAction={logSystemAction} />}
+          {activeTab === "history" && <SalesHistory currentOperator={currentOperator} sales={sales} onToggleRefund={handleToggleRefund} />}
+          {activeTab === "attendance" && isAdminUser && <StaffAttendancePage currentOperator={currentOperator} />}
           {activeTab === "admin_control" && (currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin") && (
             <AdminPanel
               currentOperator={currentOperator}
@@ -830,6 +926,14 @@ export default function App() {
             />
           )}
         </main>
+
+        {showAttendanceModal && (
+          <StaffAttendanceModal
+            currentOperator={currentOperator}
+            onClose={() => setShowAttendanceModal(false)}
+            onLogAction={logSystemAction}
+          />
+        )}
       </div>
     </div>
   )

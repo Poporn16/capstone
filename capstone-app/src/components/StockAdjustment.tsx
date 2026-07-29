@@ -5,13 +5,14 @@ import { downloadExcelWithAutoFit, parseSpreadsheetFile } from "../utils/excelUt
 import { Plus, Minus, Layers, AlertCircle, Trash2, Calendar, Download, Upload, FileSpreadsheet, Clock, CheckCircle2, X } from "lucide-react"
 
 interface StockAdjustmentProps {
+  currentOperator?: { username: string; displayName: string; systemRole: string } | null
   inventory: InventoryItem[]
   categoriesList: string[]
   fetchInventory: () => Promise<void>
   onLogAction?: (actionType: string, moduleTarget: string, details: string) => Promise<void>
 }
 
-export function StockAdjustment({ inventory, categoriesList, fetchInventory, onLogAction }: StockAdjustmentProps) {
+export function StockAdjustment({ currentOperator, inventory, categoriesList, fetchInventory, onLogAction }: StockAdjustmentProps) {
   const [query, setQuery] = useState("")
   const [catFilter, setCatFilter] = useState("all")
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null)
@@ -531,16 +532,23 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
     return `${m}m ${s}s remaining`
   }
 
+  const isAdmin = !currentOperator || currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin"
+
   return (
-    <div className="space-y-4 text-xs font-medium">
+    <div className="space-y-4 text-xs font-medium font-sans">
+      {!isAdmin && (
+        <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 rounded-xl text-amber-800 dark:text-amber-300 text-xs font-medium flex items-center justify-between">
+          <span>🔒 <strong>Staff Read-Only View:</strong> Only Administrators can add batches, adjust stock levels, or bulk import inventory.</span>
+        </div>
+      )}
 
       {/* Bulk CSV Stock Bar */}
-      <div className="bg-white rounded-xl border p-4 flex flex-wrap items-center justify-between gap-4 shadow-xs">
+      <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-4 flex flex-wrap items-center justify-between gap-4 shadow-xs">
         <div className="flex items-center gap-2">
           <FileSpreadsheet className="w-5 h-5 text-green-600" />
           <div>
-            <h3 className="font-bold text-gray-800 text-sm">Bulk Stock Management</h3>
-            <p className="text-[10px] text-gray-500">Download Excel template pre-filled with product names, or upload Excel (.xlsx, .xls, .csv) files to update stock quantities.</p>
+            <h3 className="font-bold text-gray-800 dark:text-white text-sm">Bulk Stock Management</h3>
+            <p className="text-[10px] text-gray-500 dark:text-slate-400">Download Excel template pre-filled with product names, or upload Excel (.xlsx, .xls, .csv) files to update stock quantities.</p>
           </div>
         </div>
 
@@ -548,7 +556,7 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
           <button
             type="button"
             onClick={handleDownloadStockTemplate}
-            className="px-3.5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-lg flex items-center gap-1.5 border transition-colors"
+            className="px-3.5 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 font-bold rounded-lg flex items-center gap-1.5 border dark:border-slate-600 transition-colors"
           >
             <Download className="w-4 h-4 text-gray-500" />
             Download Stock Template
@@ -564,9 +572,20 @@ export function StockAdjustment({ inventory, categoriesList, fetchInventory, onL
 
           <button
             type="button"
-            disabled={isBulkUploading || importProgress.active}
-            onClick={() => fileInputRef.current?.click()}
-            className="px-3.5 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!isAdmin || isBulkUploading || importProgress.active}
+            onClick={() => {
+              if (!isAdmin) {
+                alert("Admin Access Required: Only Administrators can bulk import stock.")
+                return
+              }
+              fileInputRef.current?.click()
+            }}
+            className={`px-3.5 py-2 font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors ${
+              isAdmin 
+                ? "bg-green-600 hover:bg-green-700 text-white" 
+                : "bg-gray-300 dark:bg-slate-700 text-gray-500 cursor-not-allowed"
+            }`}
+            title={!isAdmin ? "Only Admin can upload stock files" : undefined}
           >
             <Upload className="w-4 h-4" />
             {isBulkUploading || importProgress.active ? "Processing Import..." : "Upload Stock Excel / CSV"}

@@ -40,12 +40,20 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
   const [logs, setLogs] = useState<AuditLog[]>([])
   const [batchSales, setBatchSales] = useState<BatchSaleRecord[]>([])
   const [profiles, setProfiles] = useState<AccountProfile[]>([])
+  const [attendanceLogs, setAttendanceLogs] = useState<any[]>([])
   const [activeUsernames, setActiveUsernames] = useState<string[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [openActionProfileId, setOpenActionProfileId] = useState<number | null>(null)
 
   const [selectedBatchReceiptSaleId, setSelectedBatchReceiptSaleId] = useState<number | null>(null)
   const [selectedLogSummary, setSelectedLogSummary] = useState<AuditLog | null>(null)
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("pinv_staff_attendance")
+      if (stored) setAttendanceLogs(JSON.parse(stored))
+    } catch (e) {}
+  }, [])
 
   const [regUsername, setRegUsername] = useState("")
   const [regPin, setRegPin] = useState("")
@@ -1056,6 +1064,66 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
 
         {/* Right Column: Audit Logs & Batch Logs (Col-span 8) */}
         <div className="lg:col-span-8 space-y-6">
+
+          {/* Staff Attendance Summary Log Card */}
+          <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 shadow-xs p-5 space-y-4">
+            <div className="flex items-center justify-between border-b dark:border-slate-700 pb-3">
+              <h3 className="font-bold text-gray-900 dark:text-white text-sm flex items-center gap-2">
+                <History className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                Staff Attendance Logs (Time In / Time Out)
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    const stored = localStorage.getItem("pinv_staff_attendance")
+                    if (stored) setAttendanceLogs(JSON.parse(stored))
+                  } catch (e) {}
+                }}
+                className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-bold"
+              >
+                Refresh Attendance
+              </button>
+            </div>
+
+            <div className="overflow-x-auto max-h-56 overflow-y-auto">
+              {attendanceLogs.length === 0 ? (
+                <p className="text-xs text-gray-400 dark:text-slate-500 italic py-4 text-center">No staff clock-in / clock-out entries recorded yet.</p>
+              ) : (
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="bg-gray-50 dark:bg-slate-900 text-gray-500 dark:text-slate-400 font-bold sticky top-0">
+                    <tr>
+                      <th className="p-2">Operator</th>
+                      <th className="p-2">Role</th>
+                      <th className="p-2">Time In</th>
+                      <th className="p-2">Time Out</th>
+                      <th className="p-2">Shift Duration</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-slate-700">
+                    {attendanceLogs.map((r: any) => {
+                      const inStr = new Date(r.timeIn).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+                      const outStr = r.timeOut ? new Date(r.timeOut).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "Active Shift"
+                      const durationDisplay = r.durationMinutes ? `${Math.floor(r.durationMinutes / 60)}h ${r.durationMinutes % 60}m` : "-"
+                      return (
+                        <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
+                          <td className="p-2 font-bold text-gray-800 dark:text-white">
+                            {r.displayName || r.username} <span className="text-[10px] text-gray-400 font-normal">(@{r.username})</span>
+                          </td>
+                          <td className="p-2 font-mono uppercase text-[10px]">{r.systemRole || "staff"}</td>
+                          <td className="p-2">{inStr}</td>
+                          <td className="p-2">
+                            <span className={r.timeOut ? "text-gray-700 dark:text-slate-300" : "text-emerald-600 font-bold"}>{outStr}</span>
+                          </td>
+                          <td className="p-2 font-mono font-bold text-blue-700 dark:text-blue-400">{durationDisplay}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
 
           {/* Realtime System Audit Trail Logs Table */}
           <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 shadow-xs p-5 space-y-4">

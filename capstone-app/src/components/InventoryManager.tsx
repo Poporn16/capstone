@@ -5,6 +5,7 @@ import { downloadExcelWithAutoFit, parseSpreadsheetFile } from "../utils/excelUt
 import { Search, FolderPlus, Download, Upload, FileSpreadsheet, X, Trash2, Edit2, Clock, CheckCircle2 } from "lucide-react"
 
 interface InventoryManagerProps {
+  currentOperator?: { username: string; displayName: string; systemRole: string } | null
   inventory: InventoryItem[]
   categoriesList: string[]
   refreshCategories: () => Promise<void>
@@ -15,6 +16,7 @@ interface InventoryManagerProps {
 }
 
 export function InventoryManager({ 
+  currentOperator,
   inventory, 
   categoriesList, 
   refreshCategories, 
@@ -585,16 +587,23 @@ export function InventoryManager({
     return `${m}m ${s}s remaining`
   }
 
+  const isAdmin = !currentOperator || currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin"
+
   return (
-    <div className="space-y-4 text-xs font-medium">
-      
+    <div className="space-y-6 text-xs font-medium">
+      {!isAdmin && (
+        <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 rounded-xl text-amber-800 dark:text-amber-300 text-xs font-medium flex items-center justify-between">
+          <span>🔒 <strong>Staff Read-Only View:</strong> Only Administrators can add product profiles, edit item specifications, or bulk import files.</span>
+        </div>
+      )}
+
       {/* Excel Data Imports Header */}
-      <div className="bg-white rounded-xl border p-4 flex flex-wrap items-center justify-between gap-4 shadow-xs">
+      <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-4 flex flex-wrap items-center justify-between gap-4 shadow-xs">
         <div className="flex items-center gap-2">
           <FileSpreadsheet className="w-5 h-5 text-green-600" />
           <div>
-            <h3 className="font-bold text-gray-800 text-sm">Bulk Data Management</h3>
-            <p className="text-[10px] text-gray-500">Download blank template or upload Excel (.xlsx, .xls, .csv) files.</p>
+            <h3 className="font-bold text-gray-800 dark:text-white text-sm">Bulk Data Management</h3>
+            <p className="text-[10px] text-gray-500 dark:text-gray-400">Download blank template or upload Excel (.xlsx, .xls, .csv) files.</p>
           </div>
         </div>
 
@@ -602,7 +611,7 @@ export function InventoryManager({
           <button
             type="button"
             onClick={handleDownloadTemplate}
-            className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-lg flex items-center gap-1.5 border transition-colors"
+            className="px-3 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-gray-700 dark:text-gray-200 font-bold rounded-lg flex items-center gap-1.5 border dark:border-slate-600 transition-colors"
           >
             <Download className="w-4 h-4 text-gray-500" />
             Download Blank Template
@@ -618,9 +627,20 @@ export function InventoryManager({
 
           <button
             type="button"
-            disabled={isBulkUploading || importProgress.active}
-            onClick={() => fileInputRef.current?.click()}
-            className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!isAdmin || isBulkUploading || importProgress.active}
+            onClick={() => {
+              if (!isAdmin) {
+                alert("Admin Access Required: Only Administrators can upload files.")
+                return
+              }
+              fileInputRef.current?.click()
+            }}
+            className={`px-3 py-2 font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors ${
+              isAdmin 
+                ? "bg-green-600 hover:bg-green-700 text-white" 
+                : "bg-gray-300 dark:bg-slate-700 text-gray-500 cursor-not-allowed"
+            }`}
+            title={!isAdmin ? "Only Admin can upload files" : undefined}
           >
             <Upload className="w-4 h-4" />
             {isBulkUploading || importProgress.active ? "Processing..." : "Upload Excel / CSV"}
@@ -629,21 +649,37 @@ export function InventoryManager({
       </div>
 
       {/* Categories Controls */}
-      <div className="bg-white rounded-xl border p-4 space-y-3">
-        <h3 className="font-bold text-gray-800 text-sm flex items-center gap-1"><FolderPlus className="w-4 h-4 text-blue-600"/>Manage Categories</h3>
+      <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-4 space-y-3">
+        <h3 className="font-bold text-gray-800 dark:text-slate-200 text-sm flex items-center gap-1"><FolderPlus className="w-4 h-4 text-blue-600"/>Manage Categories</h3>
         <div className="flex flex-wrap gap-2 items-center">
           <div className="flex gap-1">
-            <input type="text" placeholder="Category name..." value={newCatInput} onChange={e=>setNewCatInput(e.target.value)} className="px-2 py-1.5 border rounded-lg bg-white" />
-            <button type="button" onClick={handleAddCategory} className="px-3 py-1.5 bg-blue-600 text-white font-bold rounded-lg">Add</button>
+            <input 
+              type="text" 
+              disabled={!isAdmin}
+              placeholder={isAdmin ? "Category name..." : "Admin access required"} 
+              value={newCatInput} 
+              onChange={e=>setNewCatInput(e.target.value)} 
+              className="px-2 py-1.5 border rounded-lg bg-white dark:bg-slate-900 dark:border-slate-700 dark:text-white text-xs disabled:bg-gray-100 dark:disabled:bg-slate-800" 
+            />
+            <button 
+              type="button" 
+              disabled={!isAdmin}
+              onClick={handleAddCategory} 
+              className={`px-3 py-1.5 font-bold rounded-lg text-white ${isAdmin ? "bg-blue-600 hover:bg-blue-700" : "bg-gray-400 cursor-not-allowed"}`}
+            >
+              Add
+            </button>
           </div>
-          <div className="flex flex-wrap gap-1.5 ml-2 border-l pl-3">
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-gray-100 border font-bold uppercase text-[10px]">
+          <div className="flex flex-wrap gap-1.5 ml-2 border-l border-gray-200 dark:border-slate-700 pl-3">
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-gray-100 dark:bg-slate-700 border dark:border-slate-600 font-bold uppercase text-[10px]">
               unmarked category
             </span>
             {dynamicCategories.map(cat => (
-              <span key={cat} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-gray-100 border font-bold uppercase text-[10px]">
+              <span key={cat} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-gray-100 dark:bg-slate-700 border dark:border-slate-600 font-bold uppercase text-[10px]">
                 {cat}
-                <button type="button" onClick={() => handleRemoveCategory(cat)} className="text-red-500 font-black ml-1 text-xs">×</button>
+                {isAdmin && (
+                  <button type="button" onClick={() => handleRemoveCategory(cat)} className="text-red-500 font-black ml-1 text-xs">×</button>
+                )}
               </span>
             ))}
           </div>
@@ -651,18 +687,33 @@ export function InventoryManager({
       </div>
 
       {/* Search Header Bar */}
-      <div className="bg-white rounded-xl border p-4">
+      <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-4">
         <div className="flex flex-col md:flex-row gap-4">
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
-            <input type="text" placeholder="Search product profile templates..." value={query} onChange={e=>setQuery(e.target.value)} className="w-full pl-9 pr-3 py-2 border rounded-lg" />
+            <input type="text" placeholder="Search product profile templates..." value={query} onChange={e=>setQuery(e.target.value)} className="w-full pl-9 pr-3 py-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
           </div>
-          <select value={catFilter} onChange={e=>setCatFilter(e.target.value)} className="px-4 py-2 border rounded-lg uppercase tracking-wider bg-white">
+          <select value={catFilter} onChange={e=>setCatFilter(e.target.value)} className="px-4 py-2 border rounded-lg uppercase tracking-wider bg-white dark:bg-slate-900 dark:border-slate-700 dark:text-white">
             <option value="all">All Categories</option>
             <option value="unmarked category">UNMARKED CATEGORY</option>
             {dynamicCategories.map(cat => (<option key={cat} value={cat}>{cat.toUpperCase()}</option>))}
           </select>
-          <button onClick={() => { setEditingItem(null); setShowAdd(true); }} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow-xs transition-colors flex items-center gap-1.5 whitespace-nowrap">
+          <button 
+            type="button"
+            disabled={!isAdmin}
+            onClick={() => {
+              if (!isAdmin) {
+                alert("Admin Access Required: Only Administrators can add new product items.")
+                return
+              }
+              setEditingItem(null)
+              setShowAdd(true)
+            }} 
+            className={`px-4 py-2 rounded-lg font-bold shadow-xs transition-colors flex items-center gap-1.5 whitespace-nowrap text-white ${
+              isAdmin ? "bg-blue-600 hover:bg-blue-700" : "bg-gray-400 dark:bg-slate-700 cursor-not-allowed"
+            }`}
+            title={!isAdmin ? "Only Admin can add items" : undefined}
+          >
             Add Item Profile
           </button>
         </div>

@@ -1,9 +1,10 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import type { InventoryItem, Sale } from "../App"
 import { ArrowLeft, Printer, CreditCard, X } from "lucide-react"
 
 interface POSCheckoutProps {
   inventory: InventoryItem[]
+  sales?: Sale[]
   categoriesList: string[]
   onCompleteSale: (sale: Sale) => void
 }
@@ -13,10 +14,10 @@ interface CartItem {
   quantity: number
 }
 
-type DiscountType = "none" | "5" | "10" | "20" | "100" | "senior" | "pwd" | "naac" | "soloparent" | "custom"
+type DiscountType = "none" | "senior" | "pwd" | "naac" | "soloparent" | "custom"
 type OnlineChannel = "GCash" | "PayMaya" | "BDO" | "BPI" | "Bank Transfer" | "Card" | "Other"
 
-export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCheckoutProps) {
+export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }: POSCheckoutProps) {
   const [cart, setCart] = useState<CartItem[]>([])
   const [query, setQuery] = useState("")
   const [activeCategoryTab, setActiveCategoryTab] = useState<string>("all")
@@ -28,6 +29,8 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
   
   const [discountType, setDiscountType] = useState<DiscountType>("none")
   const [customDiscountPercent, setCustomDiscountPercent] = useState<number>(0)
+  const [customerName, setCustomerName] = useState<string>("")
+  const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false)
   const [cashReceived, setCashReceived] = useState<string>("")
   const [selectedGenericGroup, setSelectedGenericGroup] = useState<string | null>(null)
   const [displayLimit, setDisplayLimit] = useState<number>(20)
@@ -160,13 +163,19 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
   }
 
   const handleManualQtyChange = (id: string, value: string, maxStock: number) => {
-    let parsed = parseInt(value)
-    if (value === "" || Number.isNaN(parsed) || parsed < 1) {
-      setCart(prev => prev.filter(ci => ci.item.id !== id))
+    if (value === "" || value === "0") {
+      setCart(prev => prev.map(ci => ci.item.id === id ? { ...ci, quantity: 0 } : ci))
       return
     }
+    let parsed = parseInt(value, 10)
+    if (Number.isNaN(parsed)) return
+    if (parsed < 0) parsed = 0
     if (parsed > maxStock) parsed = maxStock
     setCart(prev => prev.map(ci => ci.item.id === id ? { ...ci, quantity: parsed } : ci))
+  }
+
+  const handleQtyBlur = (id: string) => {
+    setCart(prev => prev.map(ci => ci.item.id === id && ci.quantity <= 0 ? { ...ci, quantity: 1 } : ci))
   }
 
   const updateQtyDelta = (id: string, delta: number, maxStock: number) => {
@@ -191,11 +200,7 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
     total = base - computedDiscount
   } else {
     let rate = 0
-    if (discountType === "5") rate = 0.05
-    else if (discountType === "10") rate = 0.10
-    else if (discountType === "20") rate = 0.20
-    else if (discountType === "100") rate = 1.00
-    else if (discountType === "custom") rate = (Number(customDiscountPercent) || 0) / 100
+    if (discountType === "custom") rate = (Number(customDiscountPercent) || 0) / 100
 
     computedDiscount = subtotal * rate
     const net = subtotal - computedDiscount
@@ -204,19 +209,101 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
   }
 
   const getDiscountLabel = () => {
-    if (discountType === "none") return "NONE"
     if (discountType === "custom") return `CUSTOM (${customDiscountPercent || 0}%)`
     if (discountType === "soloparent") return "SOLO PARENT"
     if (discountType === "senior") return "SENIOR CITIZEN"
     if (discountType === "pwd") return "PWD"
     if (discountType === "naac") return "NAAC"
-    return `${discountType}% DISCOUNT`
+    return "NONE"
   }
 
   const isOthersActive = ["naac", "soloparent", "custom"].includes(discountType)
 
+  const knownCustomerNames = Array.from(
+    new Set([
+      "Regular Customer",
+      "Senior Citizen",
+      "PWD Customer",
+      "Solo Parent",
+      ...(sales || []).map(s => s.customerName).filter((n): n is string => Boolean(n && n.trim())),
+      ...(() => {
+        try { return JSON.parse(localStorage.getItem("pinv_customer_names") || "[]") } catch (e) { return [] }
+      })()
+    ])
+  )
+
+  const matchingCustomerSuggestions = knownCustomerNames.filter(name => {
+    if (!customerName || !customerName.trim()) return true
+    return name.toLowerCase().includes(customerName.toLowerCase().trim())
+  })
+
+  const customerPreviousSales = (sales || [])
+    .filter(s => {
+      const q = customerName.trim().toLowerCase()
+      if (!q) return false
+      const cName = (s.customerName || (s.discountLabel && s.discountLabel.includes("(") ? s.discountLabel.split("(")[1]?.replace(")", "").trim() : "")).toLowerCase()
+      return cName === q
+    })
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+
+  // Auto-detect & auto-select customer's discount preference from history
+  useEffect(() => {
+    const trimmed = customerName.trim().toLowerCase()
+    if (!trimmed) return
+
+    // 1. Check local storage customer discount map
+    try {
+      const map = JSON.parse(localStorage.getItem("pinv_customer_discounts") || "{}")
+      if (map[trimmed] && map[trimmed] !== "none") {
+        setDiscountType(map[trimmed] as DiscountType)
+        return
+      }
+    } catch (e) {}
+
+    // 2. Check customer previous sales history
+    if (customerPreviousSales.length > 0) {
+      const lastDisc = customerPreviousSales[0].discountLabel || ""
+      const lbl = lastDisc.toLowerCase()
+      if (lbl.includes("senior")) setDiscountType("senior")
+      else if (lbl.includes("pwd")) setDiscountType("pwd")
+      else if (lbl.includes("solo")) setDiscountType("soloparent")
+      else if (lbl.includes("naac")) setDiscountType("naac")
+      else if (lbl.includes("custom")) setDiscountType("custom")
+    }
+  }, [customerName])
+
+  const readdPreviousItems = (saleItems: any[]) => {
+    saleItems.forEach(si => {
+      const invItem = inventory.find(i => String(i.id) === String(si.item.id) || i.name.toLowerCase() === (si.item?.name || "").toLowerCase())
+      if (invItem && invItem.stock > 0) {
+        const qtyToAdd = Math.min(si.quantity || 1, invItem.stock)
+        for (let k = 0; k < qtyToAdd; k++) {
+          addToCart(invItem)
+        }
+      }
+    })
+  }
+
   const completeSale = () => {
     if (!cart.length || (paymentMethod === "cash" && parseFloat(cashReceived) < total)) return
+
+    const trimmedCustomer = customerName.trim()
+    if (trimmedCustomer) {
+      try {
+        const stored: string[] = JSON.parse(localStorage.getItem("pinv_customer_names") || "[]")
+        if (!stored.map(s => s.toLowerCase()).includes(trimmedCustomer.toLowerCase())) {
+          localStorage.setItem("pinv_customer_names", JSON.stringify([trimmedCustomer, ...stored]))
+        }
+      } catch (e) {}
+
+      if (discountType !== "none") {
+        try {
+          const discMap = JSON.parse(localStorage.getItem("pinv_customer_discounts") || "{}")
+          discMap[trimmedCustomer.toLowerCase()] = discountType
+          localStorage.setItem("pinv_customer_discounts", JSON.stringify(discMap))
+        } catch (e) {}
+      }
+    }
 
     const saleRecord = {
       id: Date.now().toString(),
@@ -232,7 +319,8 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
       change: paymentMethod === "cash" ? parseFloat(cashReceived) - total : 0,
       paymentMethod,
       onlineChannel: paymentMethod === "other" ? onlineChannel : null,
-      discountLabel: getDiscountLabel()
+      discountLabel: getDiscountLabel(),
+      customerName: trimmedCustomer || undefined
     }
 
     onCompleteSale(saleRecord as any)
@@ -241,6 +329,8 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
     setCashReceived("")
     setDiscountType("none")
     setCustomDiscountPercent(0)
+    setCustomerName("")
+    setShowCustomerSuggestions(false)
     setSelectedGenericGroup(null)
     setShowReceipt(true)
   }
@@ -457,7 +547,7 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
 
                     {groupItems.map((ci, itemIdx) => {
                       const itemTotal = getItemBatchAwarePrice(ci.item, ci.quantity)
-                      const avgUnitPrice = itemTotal / ci.quantity
+                      const avgUnitPrice = itemTotal / (ci.quantity || 1)
                       return (
                         <div key={ci.item.id} className={`flex justify-between items-center px-2.5 py-1.5 bg-white dark:bg-slate-800 ${itemIdx < groupItems.length - 1 ? 'border-b border-dashed border-gray-100 dark:border-slate-700' : ''}`}>
                           <div className="flex-1 min-w-0 pr-2">
@@ -466,7 +556,14 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
                           </div>
                           <div className="flex items-center gap-1">
                             <button type="button" onClick={() => updateQtyDelta(ci.item.id, -1, ci.item.stock)} className="w-5 h-5 border bg-gray-50 dark:bg-slate-700 rounded font-bold hover:bg-gray-100 flex items-center justify-center text-gray-700 dark:text-gray-200 text-xs">-</button>
-                            <input type="text" value={ci.quantity} onChange={e => handleManualQtyChange(ci.item.id, e.target.value, ci.item.stock)} className="w-8 text-center border rounded font-bold text-gray-900 dark:text-white bg-white dark:bg-slate-900 text-[10px] py-0.5" />
+                            <input
+                              type="text font-mono"
+                              value={ci.quantity === 0 ? "" : ci.quantity}
+                              onFocus={e => e.target.select()}
+                              onChange={e => handleManualQtyChange(ci.item.id, e.target.value, ci.item.stock)}
+                              onBlur={() => handleQtyBlur(ci.item.id)}
+                              className="w-10 text-center border rounded font-mono font-bold text-gray-900 dark:text-white bg-white dark:bg-slate-900 text-xs py-0.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                            />
                             <button type="button" onClick={() => updateQtyDelta(ci.item.id, 1, ci.item.stock)} className="w-5 h-5 border bg-gray-50 dark:bg-slate-700 rounded font-bold hover:bg-gray-100 flex items-center justify-center text-gray-700 dark:text-gray-200 text-xs">+</button>
                             <button type="button" onClick={() => setCart(prev => prev.filter(i => i.item.id !== ci.item.id))} className="text-red-400 ml-0.5 font-bold text-xs hover:text-red-600">×</button>
                           </div>
@@ -540,43 +637,138 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
               </div>
             )}
 
-            <div className="bg-gray-50 dark:bg-slate-900 p-2 rounded-lg space-y-1.5 border dark:border-slate-700">
-              <label className="block text-[9px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Discount Matrix</label>
-              <div className="grid grid-cols-5 gap-1">
-                {["5","10","20","100"].map(p=>(
+            <div className="bg-gray-50 dark:bg-slate-900 p-2.5 rounded-lg space-y-2 border dark:border-slate-700">
+              <div className="flex justify-between items-center">
+                <label className="block text-[9px] font-bold text-gray-500 dark:text-slate-400 uppercase tracking-wide">
+                  Discount Matrix
+                </label>
+                {discountType !== "none" && (
                   <button 
-                    key={p} 
                     type="button" 
-                    onClick={()=>setDiscountType(p as any)} 
-                    className={`p-1 border rounded text-[10px] font-bold transition-all ${discountType===p?'bg-blue-600 text-white border-blue-600':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
+                    onClick={() => { setDiscountType("none"); setCustomerName(""); }} 
+                    className="text-[9px] text-red-600 dark:text-red-400 hover:underline font-bold"
                   >
-                    {p}%
+                    Clear Discount (×)
                   </button>
-                ))}
-                <button type="button" onClick={()=>setDiscountType("none")} className="p-1 border rounded bg-red-50 text-red-600 font-bold hover:bg-red-100">×</button>
+                )}
               </div>
-              <div className="grid grid-cols-3 gap-1">
+
+              <div className="grid grid-cols-4 gap-1">
                 <button 
                   type="button" 
-                  onClick={()=>setDiscountType("senior")} 
-                  className={`p-1 border rounded text-[9px] font-bold uppercase transition-all ${discountType==='senior'?'bg-blue-600 text-white border-blue-600':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
+                  onClick={() => setDiscountType("senior")} 
+                  className={`p-1.5 border rounded text-[9px] font-bold uppercase transition-all ${discountType==='senior'?'bg-blue-600 text-white border-blue-600 shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
                 >
-                  SENIOR
+                  SENIOR (20%)
                 </button>
                 <button 
                   type="button" 
-                  onClick={()=>setDiscountType("pwd")} 
-                  className={`p-1 border rounded text-[9px] font-bold uppercase transition-all ${discountType==='pwd'?'bg-blue-600 text-white border-blue-600':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
+                  onClick={() => setDiscountType("pwd")} 
+                  className={`p-1.5 border rounded text-[9px] font-bold uppercase transition-all ${discountType==='pwd'?'bg-blue-600 text-white border-blue-600 shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
                 >
-                  PWD
+                  PWD (20%)
                 </button>
                 <button 
                   type="button" 
-                  onClick={()=>setShowOthersModal(true)} 
-                  className={`p-1 border rounded text-[9px] font-bold uppercase tracking-wide truncate transition-all ${isOthersActive?'bg-blue-600 text-white border-blue-600':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
+                  onClick={() => setDiscountType("soloparent")} 
+                  className={`p-1.5 border rounded text-[9px] font-bold uppercase transition-all ${discountType==='soloparent'?'bg-blue-600 text-white border-blue-600 shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
                 >
-                  {discountType === "naac" ? "NAAC" : discountType === "soloparent" ? "SOLO" : discountType === "custom" ? `CUSTOM` : "OTHERS"}
+                  SOLO (10%)
                 </button>
+                <button 
+                  type="button" 
+                  onClick={() => setShowOthersModal(true)} 
+                  className={`p-1.5 border rounded text-[9px] font-bold uppercase tracking-wide truncate transition-all ${isOthersActive?'bg-blue-600 text-white border-blue-600 shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
+                >
+                  {discountType === "naac" ? "NAAC" : discountType === "custom" ? `CUSTOM (${customDiscountPercent}%)` : "OTHERS..."}
+                </button>
+              </div>
+
+              {/* Customer Name Entry */}
+              <div className="pt-2 border-t border-gray-200 dark:border-slate-800 space-y-1">
+                <div className="flex justify-between items-center">
+                  <label className="text-[9px] font-bold text-gray-600 dark:text-slate-400 uppercase">
+                    Customer Name:
+                  </label>
+                  {customerName && (
+                    <span className="text-[9px] text-blue-600 dark:text-blue-400 font-semibold truncate max-w-[120px]">
+                      {customerName}
+                    </span>
+                  )}
+                </div>
+
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Type customer name (e.g. Kervin)..."
+                    value={customerName}
+                    onFocus={() => setShowCustomerSuggestions(true)}
+                    onBlur={() => setTimeout(() => setShowCustomerSuggestions(false), 200)}
+                    onChange={e => {
+                      setCustomerName(e.target.value)
+                      setShowCustomerSuggestions(true)
+                    }}
+                    className="w-full p-1.5 border bg-white dark:bg-slate-900 border-gray-300 dark:border-slate-700 rounded text-xs text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+                  />
+                  {showCustomerSuggestions && customerName.trim().length > 0 && (
+                    <div className="absolute left-0 right-0 top-full mt-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-2xl z-40 max-h-40 overflow-y-auto">
+                      <div className="flex items-center justify-between p-1 px-2 border-b dark:border-slate-700 bg-gray-50 dark:bg-slate-900 text-[9px] text-gray-400 font-bold uppercase">
+                        <span>Customer Suggestions</span>
+                        <button
+                          type="button"
+                          onMouseDown={e => { e.preventDefault(); setShowCustomerSuggestions(false); }}
+                          className="text-red-500 hover:text-red-700 font-bold"
+                        >
+                          ✕ Close
+                        </button>
+                      </div>
+                      {matchingCustomerSuggestions.length === 0 ? (
+                        <div className="p-2 text-[10px] text-gray-400 italic">
+                          New customer name "{customerName.trim()}" (will be remembered)
+                        </div>
+                      ) : (
+                        matchingCustomerSuggestions.map((name, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onMouseDown={e => {
+                              e.preventDefault()
+                              setCustomerName(name)
+                              setShowCustomerSuggestions(false)
+                            }}
+                            className="w-full text-left px-3 py-1.5 text-xs text-gray-800 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-blue-900/40 font-medium flex items-center justify-between border-b border-gray-100 dark:border-slate-700/50 last:border-0"
+                          >
+                            <span className="font-bold">{name}</span>
+                            <span className="text-[9px] text-blue-600 dark:text-blue-400 font-bold uppercase">Select</span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Customer Previous Purchases Card */}
+                {customerName.trim() && customerPreviousSales.length > 0 && (
+                  <div className="mt-2 p-2 bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 rounded-lg space-y-1 text-xs animate-in fade-in duration-150">
+                    <div className="flex justify-between items-center text-[9px] font-bold text-blue-800 dark:text-blue-300 uppercase">
+                      <span>Previous History for "{customerName.trim()}"</span>
+                      <span className="bg-blue-200 dark:bg-blue-900 px-1.5 py-0.5 rounded">{customerPreviousSales.length} Total Orders</span>
+                    </div>
+                    <div className="text-[10px] text-gray-700 dark:text-slate-300">
+                      <span className="font-semibold text-gray-500">Last Order: </span>
+                      <span className="font-mono text-gray-800 dark:text-slate-200">
+                        {customerPreviousSales[0].items.map((i: any) => `${i.quantity}x ${i.item?.name || i.name}`).join(", ")}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => readdPreviousItems(customerPreviousSales[0].items)}
+                      className="w-full mt-1 py-1 px-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-bold text-[10px] uppercase tracking-wide transition-colors flex items-center justify-center gap-1 shadow-2xs"
+                    >
+                      🛒 Re-add Previous Items to Cart
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -706,6 +898,12 @@ export function POSCheckout({ inventory, categoriesList, onCompleteSale }: POSCh
             </div>
 
             <div className="space-y-1 text-gray-600 dark:text-slate-300">
+              {lastSale.customerName && (
+                <div className="flex justify-between text-blue-800 dark:text-blue-300 font-bold border-b border-gray-100 dark:border-slate-800 pb-1">
+                  <span>Customer:</span>
+                  <span>{lastSale.customerName}</span>
+                </div>
+              )}
               <div className="flex justify-between"><span>Gross Total Base:</span><span>₱{lastSale.grossTotal?.toFixed(2) || lastSale.total.toFixed(2)}</span></div>
               {lastSale.discount > 0 && (
                 <div className="flex justify-between text-green-700 dark:text-green-400 font-bold">

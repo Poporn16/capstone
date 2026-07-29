@@ -5,6 +5,7 @@ import { Search, RotateCcw, FileText, Download, User, Printer, X } from "lucide-
 import { supabase } from "../utils/apiClient";
 
 interface SalesHistoryProps {
+  currentOperator?: { username: string; displayName: string; systemRole: string } | null;
   sales: Sale[];
   onToggleRefund: (saleId: string, currentStatus: boolean) => void;
 }
@@ -15,15 +16,17 @@ type PaymentRoute = "all" | "cash" | "other" | "gcash" | "paymaya" | "bdo" | "bp
 
 const ONLINE_CHANNELS = ["gcash", "paymaya", "bdo", "bpi", "card", "bank transfer"] as const
 
-export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
+export function SalesHistory({ currentOperator, sales, onToggleRefund }: SalesHistoryProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [dateFrame, setDateFrame] = useState<DateFrame>("all");
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [statusCondition, setStatusCondition] = useState<StatusCondition>("all");
   const [paymentRoute, setPaymentRoute] = useState<PaymentRoute>("all");
+  const [customerFilter, setCustomerFilter] = useState<"all" | "named" | "walkin" | "senior" | "pwd" | "soloparent" | "naac" | "custom">("all");
   const [selectedInvoice, setSelectedInvoice] = useState<Sale | null>(null);
   const [showOnlineFilter, setShowOnlineFilter] = useState(false);
+  const [showDiscountFilter, setShowDiscountFilter] = useState(false);
 
   useEffect(() => {
     const salesChannel = supabase
@@ -50,9 +53,33 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
       result = result.filter(sale => {
         const matchId = sale.id.toLowerCase().includes(q) || `#${sale.id}`.toLowerCase().includes(q);
         const matchItems = sale.items.some(si => si.item.name.toLowerCase().includes(q));
-        const matchOperator = sale.processedBy?.toLowerCase().includes(q);
-        return matchId || matchItems || matchOperator;
+        const matchOperator = (sale.processedBy || "").toLowerCase().includes(q);
+        const matchCustomer = (sale.customerName || "").toLowerCase().includes(q);
+        const matchDisc = (sale.discountLabel || "").toLowerCase().includes(q);
+        return matchId || matchItems || matchOperator || matchCustomer || matchDisc;
       });
+    }
+
+    if (customerFilter === "named") {
+      result = result.filter(sale => {
+        const cName = sale.customerName || (sale.discountLabel && sale.discountLabel.includes("(") ? sale.discountLabel.split("(")[1]?.replace(")", "").trim() : "");
+        return Boolean(cName && cName.trim());
+      });
+    } else if (customerFilter === "walkin") {
+      result = result.filter(sale => {
+        const cName = sale.customerName || (sale.discountLabel && sale.discountLabel.includes("(") ? sale.discountLabel.split("(")[1]?.replace(")", "").trim() : "");
+        return !cName || !cName.trim();
+      });
+    } else if (customerFilter === "senior") {
+      result = result.filter(sale => (sale.discountLabel || "").toLowerCase().includes("senior"));
+    } else if (customerFilter === "pwd") {
+      result = result.filter(sale => (sale.discountLabel || "").toLowerCase().includes("pwd"));
+    } else if (customerFilter === "soloparent") {
+      result = result.filter(sale => (sale.discountLabel || "").toLowerCase().includes("solo"));
+    } else if (customerFilter === "naac") {
+      result = result.filter(sale => (sale.discountLabel || "").toLowerCase().includes("naac"));
+    } else if (customerFilter === "custom") {
+      result = result.filter(sale => (sale.discountLabel || "").toLowerCase().includes("custom"));
     }
 
     const now = new Date();
@@ -186,19 +213,65 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
     });
   };
 
+  const isAdmin = !currentOperator || currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin";
+
+  const uniqueCustomerNames = Array.from(
+    new Set(sales.map(s => s.customerName).filter((n): n is string => Boolean(n && n.trim())))
+  )
+
   return (
     <div className="space-y-6 text-xs font-medium font-sans">
+      {!isAdmin && (
+        <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 rounded-xl text-amber-800 dark:text-amber-300 text-xs font-medium flex items-center justify-between">
+          <span>🔒 <strong>Staff Restricted View:</strong> Downloading sale history spreadsheets and voiding receipts require Administrator privileges.</span>
+        </div>
+      )}
+
       <div className="bg-white dark:bg-slate-800 p-5 rounded-xl border border-gray-100 dark:border-slate-700 shadow-sm space-y-4">
         <div className="relative">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-gray-400" />
           <input 
             type="text" 
-            placeholder="Search by transaction ID, item, or operator..." 
+            placeholder="Search by customer name (e.g. Kervin), transaction ID, item, or operator..." 
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             className="w-full pl-10 pr-4 py-2.5 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-xl font-medium text-gray-800 dark:text-white text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400 hover:text-gray-600 dark:hover:text-white"
+            >
+              Clear
+            </button>
+          )}
         </div>
+
+        {/* Named Customers Quick Filter Bar */}
+        {uniqueCustomerNames.length > 0 && (
+          <div className="space-y-1 pt-1 border-t border-gray-100 dark:border-slate-700/60">
+            <span className="block text-[9px] font-bold text-gray-400 dark:text-gray-400 uppercase tracking-wider">
+              Filter By Named Customer Profile ({uniqueCustomerNames.length}):
+            </span>
+            <div className="flex flex-wrap gap-1">
+              {uniqueCustomerNames.slice(0, 15).map(cName => (
+                <button
+                  key={cName}
+                  type="button"
+                  onClick={() => setSearchQuery(searchQuery.toLowerCase() === cName.toLowerCase() ? "" : cName)}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold border transition-all ${
+                    searchQuery.toLowerCase() === cName.toLowerCase()
+                      ? "bg-blue-600 text-white border-blue-600 shadow-2xs"
+                      : "bg-blue-50 dark:bg-blue-950/40 text-blue-800 dark:text-blue-300 border-blue-200 dark:border-blue-900 hover:bg-blue-100"
+                  }`}
+                >
+                  👤 {cName}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-wrap gap-6 items-center pt-1 text-[10px] text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider">
           <div className="space-y-1.5">
@@ -248,28 +321,83 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
                 type="button"
                 onClick={() => setShowOnlineFilter(v => !v)}
                 className={`px-3 py-1 rounded-md border transition-all text-[10px] font-bold uppercase tracking-wider ${
-                  ONLINE_CHANNELS.includes(paymentRoute as any)
-                    ? 'bg-purple-600 text-white border-purple-600'
-                    : 'bg-white dark:bg-slate-900 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-slate-700 hover:border-purple-300'
+                  showOnlineFilter
+                    ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
+                    : 'bg-white dark:bg-slate-900 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800 hover:border-purple-400'
                 }`}
               >
-                {ONLINE_CHANNELS.includes(paymentRoute as any) ? `▾ ${paymentRoute.toUpperCase()}` : '▾ Channel'}
+                Channels Filter ▾
               </button>
             </div>
             {showOnlineFilter && (
-              <div className="flex flex-wrap gap-1 pt-1">
+              <div className="flex flex-wrap gap-1 pt-1.5 animate-in fade-in duration-100">
                 {ONLINE_CHANNELS.map(ch => (
                   <button
                     key={ch}
                     type="button"
                     onClick={() => { setPaymentRoute(ch as PaymentRoute); setShowOnlineFilter(false); }}
-                    className={`px-3 py-1 rounded-md border transition-all text-[10px] font-bold uppercase tracking-wider ${
+                    className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase border transition-all ${
                       paymentRoute === ch
-                        ? 'bg-purple-600 text-white border-purple-600'
-                        : 'bg-white dark:bg-slate-900 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-900 hover:bg-purple-50 dark:hover:bg-purple-950'
+                        ? 'bg-purple-700 text-white border-purple-700 shadow-2xs'
+                        : 'bg-purple-50 dark:bg-purple-950/40 text-purple-800 dark:text-purple-300 border-purple-200 dark:border-purple-900 hover:bg-purple-100'
                     }`}
                   >
-                    {ch.toUpperCase()}
+                    {ch}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <span className="block text-gray-400 dark:text-gray-400">Customer Profile</span>
+            <div className="flex flex-wrap gap-1">
+              {(["all", "named", "walkin"] as const).map(cf => (
+                <button
+                  key={cf}
+                  type="button"
+                  onClick={() => { setCustomerFilter(cf); setShowDiscountFilter(false); }}
+                  className={`px-3 py-1 rounded-md border transition-all text-[10px] font-bold uppercase tracking-wider ${
+                    customerFilter === cf
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                      : 'bg-white dark:bg-slate-900 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-slate-700 hover:border-blue-300'
+                  }`}
+                >
+                  {cf === "all" ? "All" : cf === "named" ? "Named" : "Walk-in"}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setShowDiscountFilter(v => !v)}
+                className={`px-3 py-1 rounded-md border transition-all text-[10px] font-bold uppercase tracking-wider ${
+                  showDiscountFilter || ["senior", "pwd", "soloparent", "naac", "custom"].includes(customerFilter)
+                    ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
+                    : 'bg-white dark:bg-slate-900 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800 hover:border-purple-400'
+                }`}
+              >
+                Discount Filter ▾
+              </button>
+            </div>
+            {showDiscountFilter && (
+              <div className="flex flex-wrap gap-1 pt-1.5 animate-in fade-in duration-100">
+                {[
+                  { id: "senior", label: "Senior (20%)" },
+                  { id: "pwd", label: "PWD (20%)" },
+                  { id: "soloparent", label: "Solo Parent (10%)" },
+                  { id: "naac", label: "NAAC" },
+                  { id: "custom", label: "Custom" }
+                ].map(d => (
+                  <button
+                    key={d.id}
+                    type="button"
+                    onClick={() => { setCustomerFilter(d.id as any); setShowDiscountFilter(false); }}
+                    className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase border transition-all ${
+                      customerFilter === d.id
+                        ? 'bg-purple-700 text-white border-purple-700 shadow-2xs'
+                        : 'bg-purple-50 dark:bg-purple-950/40 text-purple-800 dark:text-purple-300 border-purple-200 dark:border-purple-900 hover:bg-purple-100'
+                    }`}
+                  >
+                    {d.label}
                   </button>
                 ))}
               </div>
@@ -278,7 +406,7 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs flex flex-col justify-between">
           <span className="text-gray-400 dark:text-gray-400 font-bold text-[9px] uppercase tracking-wider">Revenue (Active Matrix Filtered)</span>
           <h3 className="text-gray-900 dark:text-white font-bold text-lg mt-1 font-mono">₱{matrixRevenue.toFixed(2)}</h3>
@@ -314,15 +442,21 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
             Logged Invoices Explorer
             <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" title="Realtime Active" />
           </h3>
-          <button 
-            type="button" 
-            onClick={handleExportCSV} 
-            disabled={filteredSales.length === 0}
-            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors disabled:opacity-50"
-          >
-            <Download className="w-3.5 h-3.5" />
-            Export CSV
-          </button>
+          {isAdmin ? (
+            <button 
+              type="button" 
+              onClick={handleExportCSV} 
+              disabled={filteredSales.length === 0}
+              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors disabled:opacity-50"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Export CSV
+            </button>
+          ) : (
+            <span className="text-[10px] text-gray-400 font-bold bg-gray-100 dark:bg-slate-700 px-2 py-1 rounded">
+              Export Admin-Only
+            </span>
+          )}
         </div>
 
         <div className="overflow-x-auto max-h-[580px] overflow-y-auto">
@@ -331,6 +465,7 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
               <tr className="text-gray-500 dark:text-gray-400 font-bold">
                 <th className="p-4">Transaction ID</th>
                 <th className="p-4">Date & Time</th>
+                <th className="p-4">Customer Name</th>
                 <th className="p-4">Operator</th>
                 <th className="p-4">Payment Type</th>
                 <th className="p-4">Status Profile</th>
@@ -341,7 +476,7 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
             <tbody>
               {filteredSales.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-gray-400 dark:text-gray-400 font-medium bg-white dark:bg-slate-800">
+                  <td colSpan={8} className="p-8 text-center text-gray-400 dark:text-gray-400 font-medium bg-white dark:bg-slate-800">
                     No order rows match the filter variables.
                   </td>
                 </tr>
@@ -350,6 +485,25 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
                   <tr key={sale.id} className={`border-b border-gray-50 dark:border-slate-700/60 last:border-0 hover:bg-gray-50/60 dark:hover:bg-slate-700/60 transition-colors items-center ${sale.isRefunded ? 'bg-red-50/20 dark:bg-red-950/20 text-gray-400 dark:text-gray-500' : 'bg-white dark:bg-slate-800'}`}>
                     <td className="p-4 font-mono font-bold text-gray-700 dark:text-slate-200">#{sale.id}</td>
                     <td className="p-4 text-gray-600 dark:text-slate-300 font-medium whitespace-nowrap">{formatReceiptDate(sale.date)}</td>
+                    <td className="p-4">
+                      {(() => {
+                        const displayCustomer = sale.customerName || (sale.discountLabel && sale.discountLabel.includes("(") ? sale.discountLabel.split("(")[1]?.replace(")", "").trim() : null)
+                        if (displayCustomer) {
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => setSearchQuery(displayCustomer)}
+                              className="px-2 py-0.5 rounded font-bold text-[10px] bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/40 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 transition-colors inline-flex items-center gap-1"
+                              title="Click to search all orders by this customer"
+                            >
+                              <User className="w-3 h-3 text-blue-500" />
+                              <span>{displayCustomer}</span>
+                            </button>
+                          )
+                        }
+                        return <span className="text-[10px] text-gray-400 italic">Walk-in</span>
+                      })()}
+                    </td>
                     <td className="p-4">
                       <div className="flex items-center gap-1 text-gray-700 dark:text-slate-200 font-semibold uppercase text-[10px]">
                         <User className="w-3 h-3 text-gray-400 dark:text-gray-400" />
@@ -387,14 +541,25 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
                         >
                           <FileText className="w-4 h-4" />
                         </button>
-                        <button 
-                          type="button" 
-                          onClick={() => setVoidConfirmSale({ id: sale.id, isRefunded: !!sale.isRefunded, total: sale.total })}
-                          className={`p-1 transition-colors ${sale.isRefunded ? 'text-gray-400 hover:text-green-600 dark:hover:text-green-400' : 'text-gray-400 hover:text-red-500 dark:hover:text-red-400'}`}
-                          title={sale.isRefunded ? "Revert Void" : "Void Invoice"}
-                        >
-                          <RotateCcw className="w-4 h-4" />
-                        </button>
+                        {isAdmin ? (
+                          <button 
+                            type="button" 
+                            onClick={() => setVoidConfirmSale({ id: sale.id, isRefunded: !!sale.isRefunded, total: sale.total })}
+                            className={`p-1 transition-colors ${sale.isRefunded ? 'text-gray-400 hover:text-green-600 dark:hover:text-green-400' : 'text-gray-400 hover:text-red-500 dark:hover:text-red-400'}`}
+                            title={sale.isRefunded ? "Revert Void" : "Void Invoice"}
+                          >
+                            <RotateCcw className="w-4 h-4" />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => alert("Admin Access Required: Only Administrators can void receipts.")}
+                            className="p-1 text-gray-300 dark:text-slate-600 cursor-not-allowed"
+                            title="Admin Access Required to Void"
+                          >
+                            <RotateCcw className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -491,6 +656,12 @@ export function SalesHistory({ sales, onToggleRefund }: SalesHistoryProps) {
             </div>
 
             <div className="space-y-1 text-gray-600 dark:text-slate-300">
+              {selectedInvoice.customerName && (
+                <div className="flex justify-between text-blue-800 dark:text-blue-300 font-bold border-b border-gray-100 dark:border-slate-800 pb-1">
+                  <span>Customer:</span>
+                  <span>{selectedInvoice.customerName}</span>
+                </div>
+              )}
               <div className="flex justify-between"><span>Gross Total Base:</span><span>₱{selectedInvoice.grossTotal?.toFixed(2) || selectedInvoice.total.toFixed(2)}</span></div>
               {selectedInvoice.discount > 0 && (
                 <div className="flex justify-between text-green-700 dark:text-green-400 font-bold">

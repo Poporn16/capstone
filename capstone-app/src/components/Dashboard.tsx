@@ -36,7 +36,9 @@ export function Dashboard({ inventory, sales, categoriesList = [] }: DashboardPr
   const profit = totalRevenue - costOfGoods;
   const totalUnitsInStock = inventory.reduce((sum, i) => sum + (i.stock || 0), 0);
 
-  const lowStockAlerts = inventory.filter(item => (item.stock || 0) <= (item.minStock || 10));
+  const lowStockAlerts = inventory
+    .filter(item => (item.stock || 0) <= (item.minStock || 10))
+    .sort((a, b) => (a.stock || 0) - (b.stock || 0));
 
   // Merge categoriesList prop and existing inventory categories to show all categories
   const allCategoryNames = Array.from(
