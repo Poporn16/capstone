@@ -59,6 +59,7 @@ export function Dashboard({ inventory, sales, categoriesList = [] }: DashboardPr
         value: matchingItems.reduce((sum, item) => sum + ((item.price || 0) * (item.stock || 0)), 0)
       };
     })
+    .filter(c => c.units > 0 && c.name.toLowerCase() !== "unmarked category")
     .sort((a, b) => b.value - a.value);
 
   // All nearly expired and expired products display

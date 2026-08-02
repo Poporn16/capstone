@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react"
 import { supabase, triggerForceLogout, triggerForceLogoutBelowSuperAdmin } from "../utils/apiClient"
+import { hashPassword } from "../utils/passwordUtils"
 import { ShieldAlert, UserPlus, Trash2, History, RefreshCw, Eye, X, Flame, Database, AlertOctagon, RotateCcw, LogOut, Download, Edit, Plus, Calendar, HardDrive } from "lucide-react"
 
 interface SuperAdminPanelProps {
@@ -20,7 +21,7 @@ interface AuditLog {
 interface AccountProfile {
   id: number
   username: string
-  password_text: string
+  password_hash: string
   display_name: string
   system_role: string
 }
@@ -522,12 +523,22 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
         advance()
       }
 
+      if (type === "all") {
+        try {
+          localStorage.setItem("pinv_named_persons_registry", JSON.stringify([]))
+          localStorage.setItem("pinv_customer_sales_map", JSON.stringify({}))
+          localStorage.setItem("pinv_staff_attendance", JSON.stringify([]))
+          window.dispatchEvent(new Event("pinv_registry_updated"))
+          window.dispatchEvent(new Event("pinv_attendance_updated"))
+        } catch (e) {}
+      }
+
       // Final step: log & sync
       setResetProgress(prev => ({ ...prev, step: "Logging reset action & syncing data...", stepIndex: totalSteps, totalSteps }))
       await onLogAction(
-        type === "all" ? "FACTORY_RESET" : "DATA_RESET",
+        type === "all" ? "FACTORY_RESET" : "SUPER_ADMIN",
         "SUPER_ADMIN",
-        `Executed master data reset for: ${type.toUpperCase()}. Tables preserved.`
+        `Executed master data reset for: ${type.toUpperCase()}. All tables and registries cleared and ready for new data.`
       )
 
       setResetProgress(prev => ({ ...prev, step: "✓ Reset complete!", stepIndex: totalSteps, totalSteps }))
@@ -817,7 +828,7 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
 
     const { error } = await supabase.from("operator_profiles").insert({
       username: uName,
-      password_text: pin,
+      password_hash: hashPassword(pin),
       display_name: dName,
       system_role: regRole
     })
@@ -859,7 +870,7 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
       .from("operator_profiles")
       .update({
         display_name: dName,
-        password_text: pin,
+        password_hash: hashPassword(pin),
         system_role: role
       })
       .eq("id", editingProfile.id)
@@ -1135,7 +1146,7 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
                               onClick={() => {
                                 setEditingProfile(p)
                                 setEditDisplayName(p.display_name)
-                                setEditPin(p.password_text)
+                                setEditPin(p.password_hash || (p as any).password_text || "")
                                 setEditRole(p.system_role)
                                 setOpenActionProfileId(null)
                               }}

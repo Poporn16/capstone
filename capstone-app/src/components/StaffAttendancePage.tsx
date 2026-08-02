@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Clock, Search, Download, Calendar, UserCheck, RefreshCw } from "lucide-react"
 import { downloadExcelWithAutoFit } from "../utils/excelUtils"
 
@@ -20,6 +20,9 @@ export function StaffAttendancePage({ currentOperator }: StaffAttendancePageProp
   const [records, setRecords] = useState<AttendanceRecord[]>([])
   const [searchQuery, setSearchQuery] = useState("")
   const [roleFilter, setRoleFilter] = useState("all")
+  const [dateFrame, setDateFrame] = useState<"all" | "today" | "week" | "month" | "custom">("all")
+  const [startDate, setStartDate] = useState("")
+  const [endDate, setEndDate] = useState("")
 
   const loadAttendance = () => {
     try {
@@ -34,9 +37,47 @@ export function StaffAttendancePage({ currentOperator }: StaffAttendancePageProp
 
   useEffect(() => {
     loadAttendance()
+
+    const handleSync = () => loadAttendance()
+    window.addEventListener("storage", handleSync)
+    window.addEventListener("pinv_attendance_updated", handleSync)
+
+    return () => {
+      window.removeEventListener("storage", handleSync)
+      window.removeEventListener("pinv_attendance_updated", handleSync)
+    }
   }, [])
 
+  const checkDateFrame = (isoString: string) => {
+    if (dateFrame === "all") return true
+    if (!isoString) return false
+    const d = new Date(isoString)
+    const now = new Date()
+    if (dateFrame === "today") {
+      return d.toDateString() === now.toDateString()
+    }
+    if (dateFrame === "week") {
+      const day = now.getDay()
+      const diffToMon = now.getDate() - day + (day === 0 ? -6 : 1)
+      const startOfWeek = new Date(now.getFullYear(), now.getMonth(), diffToMon, 0, 0, 0, 0)
+      const endOfWeek = new Date(now.getFullYear(), now.getMonth(), diffToMon + 6, 23, 59, 59, 999)
+      return d >= startOfWeek && d <= endOfWeek
+    }
+    if (dateFrame === "month") {
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
+      return d >= startOfMonth && d <= endOfMonth
+    }
+    if (dateFrame === "custom") {
+      if (startDate && d < new Date(startDate + "T00:00:00")) return false
+      if (endDate && d > new Date(endDate + "T23:59:59")) return false
+      return true
+    }
+    return true
+  }
+
   const filteredRecords = records.filter(r => {
+    if (!checkDateFrame(r.timeIn)) return false
     const q = searchQuery.toLowerCase().trim()
     const matchSearch = !q ||
       r.username.toLowerCase().includes(q) ||
@@ -46,6 +87,28 @@ export function StaffAttendancePage({ currentOperator }: StaffAttendancePageProp
 
     return matchSearch && matchRole
   })
+
+  // Total shift duration calculation for searched staff/filter
+  const totalShiftSummary = useMemo(() => {
+    let totalMins = 0
+
+    filteredRecords.forEach(r => {
+      if (r.durationMinutes && r.durationMinutes > 0) {
+        totalMins += r.durationMinutes
+      } else if (!r.timeOut && r.timeIn) {
+        const start = new Date(r.timeIn).getTime()
+        const now = Date.now()
+        const liveMins = Math.max(1, Math.floor((now - start) / (1000 * 60)))
+        totalMins += liveMins
+      }
+    })
+
+    const hours = Math.floor(totalMins / 60)
+    const remMins = totalMins % 60
+    const formattedStr = hours > 0 ? `${totalMins}m (${hours}h ${remMins}m)` : `${totalMins}m`
+
+    return { totalMins, formattedStr, count: filteredRecords.length }
+  }, [filteredRecords])
 
   const handleExportExcel = () => {
     if (filteredRecords.length === 0) return
@@ -122,9 +185,9 @@ export function StaffAttendancePage({ currentOperator }: StaffAttendancePageProp
         </div>
       </div>
 
-      {/* Filter Header */}
-      <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-4">
-        <div className="flex flex-col md:flex-row gap-4">
+      {/* Filter Header with Date Frame */}
+      <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-4 space-y-3">
+        <div className="flex flex-col md:flex-row gap-3">
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
             <input
@@ -132,13 +195,13 @@ export function StaffAttendancePage({ currentOperator }: StaffAttendancePageProp
               placeholder="Search by staff username or display name..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700 dark:text-white text-xs"
+              className="w-full pl-9 pr-3 py-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700 dark:text-white text-xs font-medium focus:ring-1 focus:ring-blue-500"
             />
           </div>
           <select
             value={roleFilter}
             onChange={e => setRoleFilter(e.target.value)}
-            className="px-4 py-2 border rounded-lg uppercase tracking-wider bg-white dark:bg-slate-900 dark:border-slate-700 dark:text-white text-xs"
+            className="px-3 py-2 border rounded-lg uppercase tracking-wider bg-white dark:bg-slate-900 dark:border-slate-700 dark:text-white text-xs font-bold"
           >
             <option value="all">All Roles</option>
             <option value="staff">STAFF</option>
@@ -146,7 +209,60 @@ export function StaffAttendancePage({ currentOperator }: StaffAttendancePageProp
             <option value="superadmin">SUPERADMIN</option>
           </select>
         </div>
+
+        {/* Date Frame Filter Selector */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t dark:border-slate-700">
+          <div className="flex items-center gap-1.5 overflow-x-auto">
+            <span className="text-[10px] font-bold text-gray-400 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1 mr-1">
+              <Calendar className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+              Date Frame:
+            </span>
+            {(["all", "today", "week", "month", "custom"] as const).map(frame => (
+              <button
+                key={frame}
+                type="button"
+                onClick={() => setDateFrame(frame)}
+                className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase transition-all ${dateFrame === frame ? 'bg-blue-600 text-white shadow-2xs' : 'bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-300 hover:bg-gray-200 dark:hover:bg-slate-600'}`}
+              >
+                {frame === "all" ? "All Time" : frame === "today" ? "Today" : frame === "week" ? "This Week" : frame === "month" ? "This Month" : "Custom Range"}
+              </button>
+            ))}
+          </div>
+
+          {dateFrame === "custom" && (
+            <div className="flex items-center gap-2 animate-in fade-in duration-150">
+              <input
+                type="date"
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
+                className="p-1.5 border dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-900 text-gray-800 dark:text-white font-mono"
+              />
+              <span className="text-gray-400 text-xs font-bold">to</span>
+              <input
+                type="date"
+                value={endDate}
+                onChange={e => setEndDate(e.target.value)}
+                className="p-1.5 border dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-900 text-gray-800 dark:text-white font-mono"
+              />
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* Total Accumulated Time Summary Badge */}
+      {filteredRecords.length > 0 && (
+        <div className="p-3.5 bg-blue-50/80 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-900 rounded-xl flex items-center justify-between font-mono text-xs text-blue-900 dark:text-blue-200 shadow-2xs">
+          <span className="flex items-center gap-2 font-bold">
+            <Clock className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+            {searchQuery.trim()
+              ? `Total Accumulated Working Shift Time for "${searchQuery.trim()}":`
+              : "Total Combined Shift Duration (Filtered Records):"}
+          </span>
+          <span className="text-xs font-extrabold text-blue-600 dark:text-blue-300 bg-blue-100 dark:bg-blue-900 px-3 py-1 rounded-lg border border-blue-300 dark:border-blue-700">
+            ⏱️ {totalShiftSummary.formattedStr}
+          </span>
+        </div>
+      )}
 
       {/* Attendance Table */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs overflow-hidden">

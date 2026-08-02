@@ -1,12 +1,20 @@
 import { useState, useEffect, useRef } from "react"
 import { supabase, triggerForceLogout, fetchAllSupabaseRows } from "../utils/apiClient"
 import { downloadExcelWithAutoFit, downloadMultiSheetStockAdditionsWorkbook } from "../utils/excelUtils"
-import { ShieldAlert, UserPlus, Trash2, History, RefreshCw, ShoppingBag, Eye, X, Flame, Database, AlertOctagon, RotateCcw, LogOut, Download, Edit } from "lucide-react"
+import { hashPassword } from "../utils/passwordUtils"
+import { ShieldAlert, UserPlus, Trash2, History, RefreshCw, ShoppingBag, Eye, X, Flame, Database, AlertOctagon, RotateCcw, LogOut, Download, Edit, Users, Plus, Search, Edit2 } from "lucide-react"
 
 interface AdminPanelProps {
   currentOperator: { username: string; displayName: string; systemRole: string }
   onLogAction: (actionType: string, moduleTarget: string, details: string) => Promise<void>
   refreshAllData?: () => Promise<void>
+}
+
+export interface NamedPerson {
+  id: string
+  idNumber: string
+  name: string
+  discountType?: string
 }
 
 interface AuditLog {
@@ -31,7 +39,7 @@ interface BatchSaleRecord {
 interface AccountProfile {
   id: number
   username: string
-  password_text: string
+  password_hash: string
   display_name: string
   system_role: string
 }
@@ -41,18 +49,174 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
   const [batchSales, setBatchSales] = useState<BatchSaleRecord[]>([])
   const [profiles, setProfiles] = useState<AccountProfile[]>([])
   const [attendanceLogs, setAttendanceLogs] = useState<any[]>([])
+  const [namedPersons, setNamedPersons] = useState<NamedPerson[]>([])
   const [activeUsernames, setActiveUsernames] = useState<string[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [openActionProfileId, setOpenActionProfileId] = useState<number | null>(null)
 
+  const [opProgress, setOpProgress] = useState<{
+    isOpen: boolean
+    title: string
+    stepMessage: string
+    percent: number
+    isComplete: boolean
+  }>({
+    isOpen: false,
+    title: "",
+    stepMessage: "",
+    percent: 0,
+    isComplete: false
+  })
+
   const [selectedBatchReceiptSaleId, setSelectedBatchReceiptSaleId] = useState<number | null>(null)
   const [selectedLogSummary, setSelectedLogSummary] = useState<AuditLog | null>(null)
 
+  const fetchNamedPersonsFromSupabase = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('named_persons')
+        .select('*')
+        .order('id', { ascending: false })
+      
+      if (data && !error) {
+        const formatted: NamedPerson[] = data.map((item: any) => ({
+          id: String(item.id),
+          idNumber: String(item.id_number || ""),
+          name: String(item.name || ""),
+          discountType: String(item.discount_type || "none")
+        }))
+        setNamedPersons(formatted)
+        localStorage.setItem("pinv_named_persons_registry", JSON.stringify(formatted))
+      }
+    } catch (e) {
+      console.error("Error fetching named persons from Supabase", e)
+    }
+  }
+
   useEffect(() => {
+    fetchNamedPersonsFromSupabase()
+
+    const channel = supabase
+      .channel('realtime-named-persons-admin')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'named_persons' }, () => {
+        fetchNamedPersonsFromSupabase()
+      })
+      .subscribe()
+
+    const syncRegistry = () => {
+      fetchNamedPersonsFromSupabase()
+    }
+    window.addEventListener("storage", syncRegistry)
+    window.addEventListener("pinv_registry_updated", syncRegistry)
+
+    return () => {
+      supabase.removeChannel(channel)
+      window.removeEventListener("storage", syncRegistry)
+      window.removeEventListener("pinv_registry_updated", syncRegistry)
+    }
+  }, [])
+
+  const [personSearchQuery, setPersonSearchQuery] = useState("")
+  const [editingPerson, setEditingPerson] = useState<NamedPerson | null>(null)
+  const [personForm, setPersonForm] = useState({ idNumber: "", name: "", discountType: "none" })
+
+  const handleSavePerson = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!personForm.idNumber.trim() || !personForm.name.trim()) return
+
+    const cleanIdNumber = personForm.idNumber.trim()
+    const cleanName = personForm.name.trim()
+    const cleanDiscount = personForm.discountType
+
+    try {
+      if (editingPerson) {
+        const numId = Number(editingPerson.id)
+        if (!isNaN(numId) && numId > 0) {
+          await supabase.from('named_persons').update({
+            id_number: cleanIdNumber,
+            name: cleanName,
+            discount_type: cleanDiscount
+          }).eq('id', numId)
+        } else {
+          await supabase.from('named_persons').update({
+            id_number: cleanIdNumber,
+            name: cleanName,
+            discount_type: cleanDiscount
+          }).eq('id_number', editingPerson.idNumber)
+        }
+        setEditingPerson(null)
+      } else {
+        await supabase.from('named_persons').insert([{
+          id_number: cleanIdNumber,
+          name: cleanName,
+          discount_type: cleanDiscount
+        }])
+      }
+    } catch (e) {
+      console.error("Error saving named person to Supabase", e)
+    }
+
+    setPersonForm({ idNumber: "", name: "", discountType: "none" })
+    await fetchNamedPersonsFromSupabase()
+    window.dispatchEvent(new Event("pinv_registry_updated"))
+    onLogAction(editingPerson ? "UPDATE_NAMED_PERSON" : "REGISTER_NAMED_PERSON", "ADMIN_PANEL", `Saved named person record for ${cleanName} (#${cleanIdNumber})`)
+  }
+
+  const handleStartEditPerson = (person: NamedPerson) => {
+    setEditingPerson(person)
+    setPersonForm({
+      idNumber: person.idNumber,
+      name: person.name,
+      discountType: person.discountType || "none"
+    })
+  }
+
+  const handleDeletePerson = async (id: string) => {
+    const target = namedPersons.find(p => p.id === id)
+    try {
+      const numId = Number(id)
+      if (!isNaN(numId) && numId > 0) {
+        await supabase.from('named_persons').delete().eq('id', numId)
+      } else if (target) {
+        await supabase.from('named_persons').delete().eq('id_number', target.idNumber)
+      }
+    } catch (e) {
+      console.error("Error deleting named person from Supabase", e)
+    }
+
+    if (editingPerson?.id === id) {
+      setEditingPerson(null)
+      setPersonForm({ idNumber: "", name: "", discountType: "none" })
+    }
+
+    await fetchNamedPersonsFromSupabase()
+    window.dispatchEvent(new Event("pinv_registry_updated"))
+    if (target) {
+      onLogAction("DELETE_NAMED_PERSON", "ADMIN_PANEL", `Deleted named person record for ${target.name} (#${target.idNumber})`)
+    }
+  }
+
+  const filteredNamedPersons = namedPersons.filter(p => {
+    if (!personSearchQuery.trim()) return true
+    const q = personSearchQuery.toLowerCase().trim()
+    return p.name.toLowerCase().includes(q) || p.idNumber.toLowerCase().includes(q) || (p.discountType || "").toLowerCase().includes(q)
+  })
+
+  const loadAttendanceLogs = () => {
     try {
       const stored = localStorage.getItem("pinv_staff_attendance")
       if (stored) setAttendanceLogs(JSON.parse(stored))
     } catch (e) {}
+  }
+
+  useEffect(() => {
+    loadAttendanceLogs()
+    window.addEventListener("storage", loadAttendanceLogs)
+    window.addEventListener("pinv_attendance_updated", loadAttendanceLogs)
+    return () => {
+      window.removeEventListener("storage", loadAttendanceLogs)
+      window.removeEventListener("pinv_attendance_updated", loadAttendanceLogs)
+    }
   }, [])
 
   const [regUsername, setRegUsername] = useState("")
@@ -231,6 +395,14 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
 
     setIsLoading(true)
     setIsRestoring(true)
+    setOpProgress({
+      isOpen: true,
+      title: "Restoring Database Archive",
+      stepMessage: "Reading and decrypting AES-256 backup payload...",
+      percent: 15,
+      isComplete: false
+    })
+
     try {
       const text = await file.text()
       const payload = await decryptBackupPayload(text)
@@ -238,6 +410,8 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
       if (!payload || typeof payload !== "object") {
         throw new Error("Failed to parse decrypted backup contents.")
       }
+
+      setOpProgress(p => ({ ...p, stepMessage: "Restoring product categories and inventory items...", percent: 35 }))
 
       if (Array.isArray(payload.product_categories) && payload.product_categories.length > 0) {
         for (const cat of payload.product_categories) {
@@ -257,6 +431,8 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
         }
       }
 
+      setOpProgress(p => ({ ...p, stepMessage: "Restoring sales history and batch transactions...", percent: 65 }))
+
       if (Array.isArray(payload.sales) && payload.sales.length > 0) {
         for (const sale of payload.sales) {
           await supabase.from("sales").upsert(sale)
@@ -274,6 +450,8 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
           await supabase.from("sale_item_batches").upsert(sib)
         }
       }
+
+      setOpProgress(p => ({ ...p, stepMessage: "Restoring operator profiles and audit trail...", percent: 85 }))
 
       if (Array.isArray(payload.operator_profiles) && payload.operator_profiles.length > 0) {
         for (const p of payload.operator_profiles) {
@@ -293,13 +471,21 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
         `Successfully decrypted and restored database backup file: ${file.name}`
       )
 
-      alert(`✅ Database successfully restored from encrypted backup "${file.name}"!`)
+      setOpProgress({
+        isOpen: true,
+        title: "Restoration Complete",
+        stepMessage: `Database successfully restored from "${file.name}"!`,
+        percent: 100,
+        isComplete: true
+      })
 
       window.dispatchEvent(new Event("refresh_sales_data"))
+      window.dispatchEvent(new Event("pinv_sale_completed"))
       if (refreshAllData) await refreshAllData()
       await fetchAllAdminData()
     } catch (err: any) {
       console.error("Backup restoration error:", err)
+      setOpProgress(p => ({ ...p, stepMessage: `Error: ${err.message}`, isComplete: true }))
       alert(`⚠️ Restoration Failed: ${err.message}`)
     } finally {
       setIsLoading(false)
@@ -315,9 +501,19 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     }
 
     setIsLoading(true)
+    setOpProgress({
+      isOpen: true,
+      title: `Master Reset [${type.toUpperCase()}]`,
+      stepMessage: "Creating automatic pre-reset safety backup...",
+      percent: 20,
+      isComplete: false
+    })
+
     try {
       // 0. Automatic Pre-Reset Safety Backup
       await handleDownloadDatabaseBackup(`pre_reset_${type}`)
+
+      setOpProgress(p => ({ ...p, stepMessage: `Purging ${type.toUpperCase()} database tables...`, percent: 55 }))
 
       if (type === "inventory" || type === "all") {
         await supabase.from("inventory_batches").delete().neq("id", 0)
@@ -352,21 +548,43 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
         } catch (e) {}
       }
 
+      if (type === "all") {
+        try {
+          localStorage.setItem("pinv_named_persons_registry", JSON.stringify([]))
+          localStorage.setItem("pinv_customer_sales_map", JSON.stringify({}))
+          localStorage.setItem("pinv_staff_attendance", JSON.stringify([]))
+          setNamedPersons([])
+          window.dispatchEvent(new Event("pinv_registry_updated"))
+          window.dispatchEvent(new Event("pinv_attendance_updated"))
+        } catch (e) {}
+      }
+
+      setOpProgress(p => ({ ...p, stepMessage: "Resetting auto-increment sequences and state...", percent: 85 }))
+
       await onLogAction(
         type === "all" ? "FACTORY_RESET" : "DATA_RESET",
         "SUPER_ADMIN",
-        `Executed master data reset for: ${type.toUpperCase()}. Tables preserved.`
+        `Executed master data reset for: ${type.toUpperCase()}. All tables and registries cleared and ready for new data.`
       )
 
       setShowResetModal(null)
       setResetConfirmInput("")
-      alert(`Master Data Reset Completed for [${type.toUpperCase()}]. All database tables remain intact and ready for new data!`)
+
+      setOpProgress({
+        isOpen: true,
+        title: "Data Reset Complete",
+        stepMessage: `Master Data Reset Completed for [${type.toUpperCase()}]. All tables are ready for new data!`,
+        percent: 100,
+        isComplete: true
+      })
 
       window.dispatchEvent(new Event("refresh_sales_data"))
+      window.dispatchEvent(new Event("pinv_sale_completed"))
       if (refreshAllData) await refreshAllData()
       await fetchAllAdminData()
     } catch (err: any) {
       alert(`Data reset error: ${err.message}`)
+      setOpProgress(p => ({ ...p, stepMessage: `Reset Error: ${err.message}`, isComplete: true }))
     }
     setIsLoading(false)
   }
@@ -439,48 +657,39 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
 
       try {
         const now = Date.now()
+        const userTabCounts = new Map<string, number>()
+
         for (let i = 0; i < localStorage.length; i++) {
           const key = localStorage.key(i)
           if (key && key.startsWith("pinv_active_heartbeat_")) {
-            const u = key.replace("pinv_active_heartbeat_", "").trim().toLowerCase()
+            const rawUser = key.replace("pinv_active_heartbeat_", "").split("_tab_")[0].trim().toLowerCase()
             const val = Number(localStorage.getItem(key))
             if (val && (now - val < HEARTBEAT_TIMEOUT)) {
-              activeSet.add(u)
+              const prevCount = userTabCounts.get(rawUser) || 0
+              userTabCounts.set(rawUser, prevCount + 1)
             } else {
               localStorage.removeItem(key)
             }
           }
         }
-      } catch (e) {}
 
-      if (data && data.length > 0) {
-        const logoutTypes = ["SESSION_LOGOUT", "FORCE_LOGOUT", "TARGET_SESSION_TERMINATED"]
-        const userLastAction = new Map<string, { time: number; actionType: string }>()
-
-        data.forEach((log) => {
-          const u = String(log.operator_username || "").trim().toLowerCase()
-          if (!u) return
-          const logTime = new Date(log.created_at).getTime()
-          const prev = userLastAction.get(u)
-          if (!prev || logTime > prev.time) {
-            userLastAction.set(u, { time: logTime, actionType: String(log.action_type || "") })
-          }
-        })
-
-        userLastAction.forEach(({ actionType }, username) => {
-          if (logoutTypes.includes(actionType)) {
-            if (username !== currentOperator?.username?.toLowerCase()) {
-              activeSet.delete(username)
+        const activeList: string[] = []
+        userTabCounts.forEach((count, u) => {
+          if (count > 1) {
+            for (let k = 1; k <= count; k++) {
+              activeList.push(`${u} ${k}`)
             }
+          } else {
+            activeList.push(u)
           }
         })
-      }
 
-      if (currentOperator?.username) {
-        activeSet.add(String(currentOperator.username).trim().toLowerCase())
-      }
+        if (activeList.length === 0 && currentOperator?.username) {
+          activeList.push(String(currentOperator.username).trim().toLowerCase())
+        }
 
-      setActiveUsernames(Array.from(activeSet))
+        setActiveUsernames(activeList)
+      } catch (e) {}
     }
   }
 
@@ -504,7 +713,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
       const formattedProfiles: AccountProfile[] = data.map((item: any) => ({
         id: item.id,
         username: String(item.username || "").trim().toLowerCase(),
-        password_text: String(item.password_text || "").trim(),
+        password_hash: String(item.password_hash || item.password_text || "").trim(),
         display_name: item.display_name || item.username || "Staff Member",
         system_role: item.system_role || "staff"
       }))
@@ -518,7 +727,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
 
     const { error } = await supabase.from("operator_profiles").insert({
       username: regUsername.trim().toLowerCase(),
-      password_text: regPin.trim(),
+      password_hash: hashPassword(regPin.trim()),
       display_name: regDisplayName.trim(),
       system_role: regRole
     })
@@ -579,7 +788,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
       .from("operator_profiles")
       .update({
         display_name: dName,
-        password_text: pin,
+        password_hash: hashPassword(pin),
         system_role: role
       })
       .eq("id", editingProfile.id)
@@ -815,13 +1024,12 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
   });
 
   const filteredAuditLogs = logs.filter(log => {
-    // Audit Confidentiality Rule: Hide superadmin logs from standard admin page
-    if (currentOperator.systemRole !== "superadmin") {
-      const opUser = (log.operator_username || "").toLowerCase().trim()
-      const isSuperAdminUser = opUser === "superadmin" || opUser.includes("superadmin") || opUser === "super admin" || opUser.includes("super admin")
-      const isSuperAdminModule = log.module_target?.toUpperCase() === "SUPER_ADMIN"
-      if (isSuperAdminUser || isSuperAdminModule) return false
-    }
+    // Audit Confidentiality Rule: Always hide superadmin logs from Admin Panel
+    const opUser = (log.operator_username || "").toLowerCase().trim()
+    const summary = (log.details_summary || "").toLowerCase().trim()
+    const isSuperAdminUser = opUser === "superadmin" || opUser.includes("superadmin") || opUser === "super admin" || opUser.includes("super admin")
+    const isSuperAdminModule = (log.module_target || "").toUpperCase() === "SUPER_ADMIN" || summary.includes("superadmin") || summary.includes("super admin")
+    if (isSuperAdminUser || isSuperAdminModule) return false
 
     const matchModule = auditModuleFilter === "ALL" || (log.module_target || "").toUpperCase().includes(auditModuleFilter.toUpperCase());
     const q = auditSearchQuery.toLowerCase().trim();
@@ -968,6 +1176,139 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
             </form>
           </div>
 
+          {/* Named Person & ID Registry Management Card */}
+          <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-5 shadow-xs space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="font-bold text-gray-900 dark:text-white text-sm flex items-center gap-2">
+                <Users className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                Named Person & ID Registry
+              </h3>
+              <span className="text-[10px] text-gray-400 font-mono font-bold">{namedPersons.length} Records</span>
+            </div>
+
+            {/* Form to Add or Edit a Person */}
+            <form onSubmit={handleSavePerson} className="p-3 bg-blue-50/50 dark:bg-slate-900 border dark:border-slate-700 rounded-xl space-y-2.5">
+              <h4 className="font-bold text-xs text-gray-800 dark:text-slate-200 flex items-center gap-1.5">
+                {editingPerson ? <Edit2 className="w-3.5 h-3.5 text-blue-600" /> : <Plus className="w-3.5 h-3.5 text-green-600" />}
+                {editingPerson ? `Editing ${editingPerson.name}` : "Register Named Person / ID"}
+              </h4>
+
+              <div className="space-y-2">
+                <div>
+                  <label className="block text-[9px] font-bold text-gray-500 dark:text-slate-400 uppercase mb-0.5">ID Number *</label>
+                  <input 
+                    type="text" 
+                    required
+                    placeholder="e.g. 10101"
+                    value={personForm.idNumber}
+                    onChange={e => setPersonForm({ ...personForm, idNumber: e.target.value })}
+                    className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-xs font-mono font-bold text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[9px] font-bold text-gray-500 dark:text-slate-400 uppercase mb-0.5">Customer Name *</label>
+                  <input 
+                    type="text" 
+                    required
+                    placeholder="e.g. Kervin"
+                    value={personForm.name}
+                    onChange={e => setPersonForm({ ...personForm, name: e.target.value })}
+                    className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-xs font-bold text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[9px] font-bold text-gray-500 dark:text-slate-400 uppercase mb-0.5">Privilege Discount Group</label>
+                  <select 
+                    value={personForm.discountType}
+                    onChange={e => setPersonForm({ ...personForm, discountType: e.target.value })}
+                    className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-xs uppercase font-bold text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+                  >
+                    <option value="none">Standard / None</option>
+                    <option value="senior">Senior Citizen (20%)</option>
+                    <option value="pwd">PWD (20%)</option>
+                    <option value="soloparent">Solo Parent (10%)</option>
+                    <option value="naac">NAAC</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                {editingPerson && (
+                  <button 
+                    type="button" 
+                    onClick={() => { setEditingPerson(null); setPersonForm({ idNumber: "", name: "", discountType: "none" }); }}
+                    className="px-3 py-1.5 bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-slate-200 font-bold rounded-lg text-xs"
+                  >
+                    Cancel
+                  </button>
+                )}
+                <button 
+                  type="submit" 
+                  className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-xs transition-colors shadow-2xs"
+                >
+                  {editingPerson ? "Save Person Record" : "Add Person to Registry"}
+                </button>
+              </div>
+            </form>
+
+            {/* Registry Search & Directory List */}
+            <div className="space-y-2">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search ID number or name..."
+                  value={personSearchQuery}
+                  onChange={e => setPersonSearchQuery(e.target.value)}
+                  className="w-full p-2 pl-8 border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900 rounded-lg text-xs text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-2.5" />
+              </div>
+
+              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                {filteredNamedPersons.length === 0 ? (
+                  <p className="text-gray-400 text-center py-3 text-[11px] italic">No matching registry records.</p>
+                ) : (
+                  filteredNamedPersons.map(person => (
+                    <div key={person.id} className="p-2.5 bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-700 rounded-xl flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono font-bold text-blue-600 dark:text-blue-400 text-xs">#{person.idNumber}</span>
+                          <span className="font-bold text-gray-900 dark:text-white text-xs">{person.name}</span>
+                        </div>
+                        {person.discountType && person.discountType !== "none" && (
+                          <span className="inline-block uppercase text-[8px] font-bold px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
+                            {person.discountType}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleStartEditPerson(person)}
+                          className="p-1 bg-blue-50 text-blue-600 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded hover:bg-blue-100"
+                          title="Edit Record"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePerson(person.id)}
+                          className="p-1 bg-red-50 text-red-600 dark:bg-red-950 dark:text-red-300 border border-red-200 dark:border-red-800 rounded hover:bg-red-100"
+                          title="Delete Record"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
           {/* Directory Listing (Hides Super Admin Account) */}
           <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-5 shadow-xs space-y-3">
             <div className="flex justify-between items-center">
@@ -1025,7 +1366,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                               onClick={() => {
                                 setEditingProfile(p)
                                 setEditDisplayName(p.display_name)
-                                setEditPin(p.password_text)
+                                setEditPin(p.password_hash || "")
                                 setEditRole(p.system_role)
                                 setOpenActionProfileId(null)
                               }}
@@ -1664,6 +2005,47 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Interactive Data Operation Progress Modal (Import / Restore / Reset) */}
+      {opProgress.isOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border dark:border-slate-700 font-sans">
+            <div className="flex items-center justify-between">
+              <h3 className="font-extrabold text-base text-gray-900 dark:text-white flex items-center gap-2">
+                <RefreshCw className={`w-5 h-5 text-blue-600 dark:text-blue-400 ${!opProgress.isComplete ? 'animate-spin' : ''}`} />
+                {opProgress.title}
+              </h3>
+              <span className="text-xs font-mono font-extrabold px-2.5 py-1 bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 rounded-full border border-blue-200 dark:border-blue-800">
+                {opProgress.percent}%
+              </span>
+            </div>
+
+            {/* Animated Progress Track */}
+            <div className="w-full bg-gray-100 dark:bg-slate-900 rounded-full h-3.5 overflow-hidden p-0.5 border dark:border-slate-700">
+              <div
+                style={{ width: `${opProgress.percent}%` }}
+                className="bg-gradient-to-r from-blue-600 to-indigo-600 h-full rounded-full transition-all duration-300 shadow-sm"
+              />
+            </div>
+
+            <p className="text-xs font-semibold text-gray-700 dark:text-slate-200 flex items-center gap-1.5 font-mono">
+              ⚡ {opProgress.stepMessage}
+            </p>
+
+            {opProgress.isComplete && (
+              <div className="pt-2 border-t dark:border-slate-700 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setOpProgress(p => ({ ...p, isOpen: false }))}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-md transition-all active:scale-95"
+                >
+                  Done & Close
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

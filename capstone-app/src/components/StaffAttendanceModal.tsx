@@ -43,6 +43,8 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
     setRecords(newRecords)
     try {
       localStorage.setItem("pinv_staff_attendance", JSON.stringify(newRecords))
+      window.dispatchEvent(new Event("storage"))
+      window.dispatchEvent(new Event("pinv_attendance_updated"))
     } catch (e) {}
   }
 

@@ -1,6 +1,14 @@
 import { useState, useEffect } from "react"
 import type { InventoryItem, Sale } from "../App"
-import { ArrowLeft, Printer, CreditCard, X } from "lucide-react"
+import { supabase } from "../utils/apiClient"
+import { ArrowLeft, Printer, CreditCard, X, Users, Edit2, Plus, Trash2, UserCheck, CheckCircle2 } from "lucide-react"
+
+export interface NamedPerson {
+  id: string
+  idNumber: string
+  name: string
+  discountType?: string
+}
 
 interface POSCheckoutProps {
   inventory: InventoryItem[]
@@ -29,8 +37,38 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
   
   const [discountType, setDiscountType] = useState<DiscountType>("none")
   const [customDiscountPercent, setCustomDiscountPercent] = useState<number>(0)
+  
+  // Named Person & ID Number state
+  const [customerIdNumber, setCustomerIdNumber] = useState<string>("")
   const [customerName, setCustomerName] = useState<string>("")
   const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false)
+
+  // Registry of known named persons with ID numbers
+  const [namedPersonsRegistry, setNamedPersonsRegistry] = useState<NamedPerson[]>(() => {
+    try {
+      const stored = localStorage.getItem("pinv_named_persons_registry")
+      if (stored !== null) return JSON.parse(stored)
+    } catch (e) {}
+    return []
+  })
+
+  useEffect(() => {
+    const syncRegistry = () => {
+      try {
+        const stored = localStorage.getItem("pinv_named_persons_registry")
+        setNamedPersonsRegistry(stored ? JSON.parse(stored) : [])
+      } catch (e) {
+        setNamedPersonsRegistry([])
+      }
+    }
+    window.addEventListener("storage", syncRegistry)
+    window.addEventListener("pinv_registry_updated", syncRegistry)
+    return () => {
+      window.removeEventListener("storage", syncRegistry)
+      window.removeEventListener("pinv_registry_updated", syncRegistry)
+    }
+  }, [])
+
   const [cashReceived, setCashReceived] = useState<string>("")
   const [selectedGenericGroup, setSelectedGenericGroup] = useState<string | null>(null)
   const [displayLimit, setDisplayLimit] = useState<number>(20)
@@ -112,7 +150,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
   })
 
   const uniqueGroups = Array.from(new Set(filteredItems.map(i => getGenericGroupName(i.name))))
-  const visibleGroups = uniqueGroups.slice(0, displayLimit)
+  const visibleGroups = uniqueGroups
 
   const getItemsInGroup = (groupName: string) => {
     return filteredItems.filter(i => getGenericGroupName(i.name) === groupName)
@@ -219,30 +257,68 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
 
   const isOthersActive = ["naac", "soloparent", "custom"].includes(discountType)
 
-  const knownCustomerNames = Array.from(
-    new Set([
-      "Regular Customer",
-      "Senior Citizen",
-      "PWD Customer",
-      "Solo Parent",
-      ...(sales || []).map(s => s.customerName).filter((n): n is string => Boolean(n && n.trim())),
-      ...(() => {
-        try { return JSON.parse(localStorage.getItem("pinv_customer_names") || "[]") } catch (e) { return [] }
-      })()
-    ])
-  )
+  // Bi-directional Auto-Fill Handlers
+  const handleIdNumberChange = (inputVal: string) => {
+    // Strictly accept digits 0-9 only
+    const sanitizedVal = inputVal.replace(/[^0-9]/g, "")
+    setCustomerIdNumber(sanitizedVal)
+    setShowCustomerSuggestions(true)
 
-  const matchingCustomerSuggestions = knownCustomerNames.filter(name => {
-    if (!customerName || !customerName.trim()) return true
-    return name.toLowerCase().includes(customerName.toLowerCase().trim())
+    const trimmedVal = sanitizedVal.trim()
+    if (!trimmedVal) return
+
+    // Search exact match by ID Number in registry
+    const match = namedPersonsRegistry.find(p => p.idNumber.trim() === trimmedVal)
+    if (match) {
+      setCustomerName(match.name)
+      if (match.discountType && match.discountType !== "none") {
+        setDiscountType(match.discountType as DiscountType)
+      }
+    }
+  }
+
+  const handleCustomerNameChange = (inputVal: string) => {
+    setCustomerName(inputVal)
+    setShowCustomerSuggestions(true)
+
+    const trimmedVal = inputVal.trim().toLowerCase()
+    if (!trimmedVal) return
+
+    // Search exact match by Name in registry
+    const match = namedPersonsRegistry.find(p => p.name.trim().toLowerCase() === trimmedVal)
+    if (match) {
+      setCustomerIdNumber(match.idNumber)
+      if (match.discountType && match.discountType !== "none") {
+        setDiscountType(match.discountType as DiscountType)
+      }
+    }
+  }
+
+  const selectNamedPerson = (person: NamedPerson) => {
+    setCustomerIdNumber(person.idNumber)
+    setCustomerName(person.name)
+    if (person.discountType && person.discountType !== "none") {
+      setDiscountType(person.discountType as DiscountType)
+    }
+    setShowCustomerSuggestions(false)
+  }
+
+  const matchingNamedPersons = namedPersonsRegistry.filter(person => {
+    const queryName = customerName.trim().toLowerCase()
+    const queryId = customerIdNumber.trim().toLowerCase()
+    if (!queryName && !queryId) return true
+    const matchId = queryId && person.idNumber.toLowerCase().includes(queryId)
+    const matchName = queryName && person.name.toLowerCase().includes(queryName)
+    return Boolean(matchId || matchName)
   })
 
   const customerPreviousSales = (sales || [])
     .filter(s => {
-      const q = customerName.trim().toLowerCase()
-      if (!q) return false
-      const cName = (s.customerName || (s.discountLabel && s.discountLabel.includes("(") ? s.discountLabel.split("(")[1]?.replace(")", "").trim() : "")).toLowerCase()
-      return cName === q
+      const qName = customerName.trim().toLowerCase()
+      const qId = customerIdNumber.trim().toLowerCase()
+      if (!qName && !qId) return false
+      const cName = (s.customerName || "").toLowerCase()
+      return (qName && cName.includes(qName)) || (qId && cName.includes(qId))
     })
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
 
@@ -251,16 +327,12 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
     const trimmed = customerName.trim().toLowerCase()
     if (!trimmed) return
 
-    // 1. Check local storage customer discount map
-    try {
-      const map = JSON.parse(localStorage.getItem("pinv_customer_discounts") || "{}")
-      if (map[trimmed] && map[trimmed] !== "none") {
-        setDiscountType(map[trimmed] as DiscountType)
-        return
-      }
-    } catch (e) {}
+    const matchedPerson = namedPersonsRegistry.find(p => p.name.trim().toLowerCase() === trimmed)
+    if (matchedPerson && matchedPerson.discountType && matchedPerson.discountType !== "none") {
+      setDiscountType(matchedPerson.discountType as DiscountType)
+      return
+    }
 
-    // 2. Check customer previous sales history
     if (customerPreviousSales.length > 0) {
       const lastDisc = customerPreviousSales[0].discountLabel || ""
       const lbl = lastDisc.toLowerCase()
@@ -270,7 +342,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
       else if (lbl.includes("naac")) setDiscountType("naac")
       else if (lbl.includes("custom")) setDiscountType("custom")
     }
-  }, [customerName])
+  }, [customerName, customerIdNumber])
 
   const readdPreviousItems = (saleItems: any[]) => {
     saleItems.forEach(si => {
@@ -285,23 +357,52 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
   }
 
   const completeSale = () => {
-    if (!cart.length || (paymentMethod === "cash" && parseFloat(cashReceived) < total)) return
-
+    const numericCash = parseFloat(cashReceived) || 0
     const trimmedCustomer = customerName.trim()
-    if (trimmedCustomer) {
-      try {
-        const stored: string[] = JSON.parse(localStorage.getItem("pinv_customer_names") || "[]")
-        if (!stored.map(s => s.toLowerCase()).includes(trimmedCustomer.toLowerCase())) {
-          localStorage.setItem("pinv_customer_names", JSON.stringify([trimmedCustomer, ...stored]))
-        }
-      } catch (e) {}
+    const trimmedIdNumber = customerIdNumber.trim()
 
-      if (discountType !== "none") {
+    // Validation Error: Required ONLY on discounted checkouts (Regular sale is optional)
+    if (discountType !== "none" && (!trimmedCustomer || !trimmedIdNumber)) {
+      alert("Validation Error: Customer Name and ID Number are required before completing a discounted checkout.")
+      return
+    }
+
+    if (!cart.length || (paymentMethod === "cash" && numericCash < total)) return
+
+    const fullCustomerName = trimmedCustomer
+      ? (trimmedIdNumber ? `${trimmedCustomer} (ID: ${trimmedIdNumber})` : trimmedCustomer)
+      : "Regular Customer"
+
+    if (trimmedCustomer && trimmedIdNumber) {
+      const existing = namedPersonsRegistry.find(p => p.idNumber.toLowerCase() === trimmedIdNumber.toLowerCase() || p.name.toLowerCase() === trimmedCustomer.toLowerCase())
+      if (!existing) {
+        const autoPerson: NamedPerson = {
+          id: Date.now().toString(),
+          idNumber: trimmedIdNumber,
+          name: trimmedCustomer,
+          discountType: discountType !== "none" ? discountType : undefined
+        }
+
+        const updated = [autoPerson, ...namedPersonsRegistry]
+        setNamedPersonsRegistry(updated)
         try {
-          const discMap = JSON.parse(localStorage.getItem("pinv_customer_discounts") || "{}")
-          discMap[trimmedCustomer.toLowerCase()] = discountType
-          localStorage.setItem("pinv_customer_discounts", JSON.stringify(discMap))
+          localStorage.setItem("pinv_named_persons_registry", JSON.stringify(updated))
+          window.dispatchEvent(new Event("pinv_registry_updated"))
         } catch (e) {}
+
+        // Persist new customer person directly into Supabase table named_persons
+        try {
+          supabase.from("named_persons").insert([{
+            id_number: trimmedIdNumber,
+            name: trimmedCustomer,
+            discount_type: discountType !== "none" ? discountType : "none"
+          }]).then(({ error }) => {
+            if (error) console.error("Error inserting named person:", error)
+            window.dispatchEvent(new Event("pinv_registry_updated"))
+          })
+        } catch (e) {
+          console.error("Supabase insert error:", e)
+        }
       }
     }
 
@@ -315,12 +416,12 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
       taxableBase: total / 1.12,
       vat,
       total,
-      cashReceived: paymentMethod === "cash" ? parseFloat(cashReceived) : total,
-      change: paymentMethod === "cash" ? parseFloat(cashReceived) - total : 0,
+      cashReceived: paymentMethod === "cash" ? numericCash : total,
+      change: paymentMethod === "cash" ? Math.max(0, numericCash - total) : 0,
       paymentMethod,
       onlineChannel: paymentMethod === "other" ? onlineChannel : null,
       discountLabel: getDiscountLabel(),
-      customerName: trimmedCustomer || undefined
+      customerName: fullCustomerName || undefined
     }
 
     onCompleteSale(saleRecord as any)
@@ -330,14 +431,16 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
     setDiscountType("none")
     setCustomDiscountPercent(0)
     setCustomerName("")
+    setCustomerIdNumber("")
     setShowCustomerSuggestions(false)
     setSelectedGenericGroup(null)
     setShowReceipt(true)
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 text-xs font-medium">
-      <div className="lg:col-span-2 space-y-3 flex flex-col">
+    <>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 text-xs font-medium">
+        <div className="lg:col-span-2 space-y-3 flex flex-col">
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border dark:border-slate-700 p-3.5 space-y-2.5 shrink-0">
           <input 
             type="text" 
@@ -487,18 +590,6 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                   )
                 })}
               </div>
-
-              {uniqueGroups.length > displayLimit && (
-                <div className="pt-3 text-center">
-                  <button
-                    type="button"
-                    onClick={() => setDisplayLimit(prev => prev + 20)}
-                    className="px-4 py-2 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 text-blue-600 dark:text-blue-400 rounded-xl text-xs font-bold transition-all border border-blue-200 dark:border-blue-900"
-                  >
-                    Load More Items ({uniqueGroups.length - displayLimit} remaining) ↓
-                  </button>
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -557,7 +648,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                           <div className="flex items-center gap-1">
                             <button type="button" onClick={() => updateQtyDelta(ci.item.id, -1, ci.item.stock)} className="w-5 h-5 border bg-gray-50 dark:bg-slate-700 rounded font-bold hover:bg-gray-100 flex items-center justify-center text-gray-700 dark:text-gray-200 text-xs">-</button>
                             <input
-                              type="text font-mono"
+                              type="text"
                               value={ci.quantity === 0 ? "" : ci.quantity}
                               onFocus={e => e.target.select()}
                               onChange={e => handleManualQtyChange(ci.item.id, e.target.value, ci.item.stock)}
@@ -653,126 +744,166 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                 )}
               </div>
 
-              <div className="grid grid-cols-4 gap-1">
+              <div className="grid grid-cols-3 gap-1.5">
                 <button 
                   type="button" 
-                  onClick={() => setDiscountType("senior")} 
-                  className={`p-1.5 border rounded text-[9px] font-bold uppercase transition-all ${discountType==='senior'?'bg-blue-600 text-white border-blue-600 shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
+                  onClick={() => setDiscountType(prev => prev === "senior" ? "none" : "senior")} 
+                  className={`p-1.5 border rounded-lg text-[9px] font-bold uppercase transition-all ${discountType==='senior'?'bg-blue-600 text-white border-blue-600 shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
                 >
                   SENIOR (20%)
                 </button>
                 <button 
                   type="button" 
-                  onClick={() => setDiscountType("pwd")} 
-                  className={`p-1.5 border rounded text-[9px] font-bold uppercase transition-all ${discountType==='pwd'?'bg-blue-600 text-white border-blue-600 shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
+                  onClick={() => setDiscountType(prev => prev === "pwd" ? "none" : "pwd")} 
+                  className={`p-1.5 border rounded-lg text-[9px] font-bold uppercase transition-all ${discountType==='pwd'?'bg-blue-600 text-white border-blue-600 shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
                 >
                   PWD (20%)
                 </button>
                 <button 
                   type="button" 
-                  onClick={() => setDiscountType("soloparent")} 
-                  className={`p-1.5 border rounded text-[9px] font-bold uppercase transition-all ${discountType==='soloparent'?'bg-blue-600 text-white border-blue-600 shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
+                  onClick={() => {
+                    if (["soloparent", "naac", "custom"].includes(discountType)) {
+                      setDiscountType("none")
+                      setCustomDiscountPercent(0)
+                    } else {
+                      setShowOthersModal(true)
+                    }
+                  }} 
+                  className={`p-1.5 border rounded-lg text-[9px] font-bold uppercase tracking-wide truncate transition-all ${isOthersActive?'bg-blue-600 text-white border-blue-600 shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
                 >
-                  SOLO (10%)
-                </button>
-                <button 
-                  type="button" 
-                  onClick={() => setShowOthersModal(true)} 
-                  className={`p-1.5 border rounded text-[9px] font-bold uppercase tracking-wide truncate transition-all ${isOthersActive?'bg-blue-600 text-white border-blue-600 shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
-                >
-                  {discountType === "naac" ? "NAAC" : discountType === "custom" ? `CUSTOM (${customDiscountPercent}%)` : "OTHERS..."}
+                  {discountType === "soloparent" ? "SOLO (10%)" : discountType === "naac" ? "NAAC (20%)" : discountType === "custom" ? `CUSTOM (${customDiscountPercent}%)` : "OTHERS..."}
                 </button>
               </div>
 
-              {/* Customer Name Entry */}
-              <div className="pt-2 border-t border-gray-200 dark:border-slate-800 space-y-1">
-                <div className="flex justify-between items-center">
-                  <label className="text-[9px] font-bold text-gray-600 dark:text-slate-400 uppercase">
-                    Customer Name:
-                  </label>
-                  {customerName && (
-                    <span className="text-[9px] text-blue-600 dark:text-blue-400 font-semibold truncate max-w-[120px]">
-                      {customerName}
-                    </span>
-                  )}
-                </div>
-
-                <div className="relative">
-                  <input
-                    type="text"
-                    placeholder="Type customer name (e.g. Kervin)..."
-                    value={customerName}
-                    onFocus={() => setShowCustomerSuggestions(true)}
-                    onBlur={() => setTimeout(() => setShowCustomerSuggestions(false), 200)}
-                    onChange={e => {
-                      setCustomerName(e.target.value)
-                      setShowCustomerSuggestions(true)
-                    }}
-                    className="w-full p-1.5 border bg-white dark:bg-slate-900 border-gray-300 dark:border-slate-700 rounded text-xs text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
-                  />
-                  {showCustomerSuggestions && customerName.trim().length > 0 && (
-                    <div className="absolute left-0 right-0 top-full mt-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-2xl z-40 max-h-40 overflow-y-auto">
-                      <div className="flex items-center justify-between p-1 px-2 border-b dark:border-slate-700 bg-gray-50 dark:bg-slate-900 text-[9px] text-gray-400 font-bold uppercase">
-                        <span>Customer Suggestions</span>
-                        <button
-                          type="button"
-                          onMouseDown={e => { e.preventDefault(); setShowCustomerSuggestions(false); }}
-                          className="text-red-500 hover:text-red-700 font-bold"
-                        >
-                          ✕ Close
-                        </button>
-                      </div>
-                      {matchingCustomerSuggestions.length === 0 ? (
-                        <div className="p-2 text-[10px] text-gray-400 italic">
-                          New customer name "{customerName.trim()}" (will be remembered)
-                        </div>
-                      ) : (
-                        matchingCustomerSuggestions.map((name, idx) => (
-                          <button
-                            key={idx}
-                            type="button"
-                            onMouseDown={e => {
-                              e.preventDefault()
-                              setCustomerName(name)
-                              setShowCustomerSuggestions(false)
-                            }}
-                            className="w-full text-left px-3 py-1.5 text-xs text-gray-800 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-blue-900/40 font-medium flex items-center justify-between border-b border-gray-100 dark:border-slate-700/50 last:border-0"
-                          >
-                            <span className="font-bold">{name}</span>
-                            <span className="text-[9px] text-blue-600 dark:text-blue-400 font-bold uppercase">Select</span>
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Customer Previous Purchases Card */}
-                {customerName.trim() && customerPreviousSales.length > 0 && (
-                  <div className="mt-2 p-2 bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 rounded-lg space-y-1 text-xs animate-in fade-in duration-150">
-                    <div className="flex justify-between items-center text-[9px] font-bold text-blue-800 dark:text-blue-300 uppercase">
-                      <span>Previous History for "{customerName.trim()}"</span>
-                      <span className="bg-blue-200 dark:bg-blue-900 px-1.5 py-0.5 rounded">{customerPreviousSales.length} Total Orders</span>
-                    </div>
-                    <div className="text-[10px] text-gray-700 dark:text-slate-300">
-                      <span className="font-semibold text-gray-500">Last Order: </span>
-                      <span className="font-mono text-gray-800 dark:text-slate-200">
-                        {customerPreviousSales[0].items.map((i: any) => `${i.quantity}x ${i.item?.name || i.name}`).join(", ")}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => readdPreviousItems(customerPreviousSales[0].items)}
-                      className="w-full mt-1 py-1 px-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-bold text-[10px] uppercase tracking-wide transition-colors flex items-center justify-center gap-1 shadow-2xs"
-                    >
-                      🛒 Re-add Previous Items to Cart
-                    </button>
+              {/* Customer / Named Person ID & Name Entry Card - Shown only when a discount is selected */}
+              {discountType !== "none" && (
+                <div className="p-2.5 bg-blue-50/40 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900/60 rounded-xl space-y-2 animate-in fade-in duration-150">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[10px] font-extrabold text-blue-900 dark:text-blue-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                      Named Person & ID Auto-Fill
+                    </label>
                   </div>
-                )}
-              </div>
-            </div>
 
-            <div className="space-y-1.5">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <label className="block text-[9px] font-bold text-gray-600 dark:text-slate-300 uppercase">
+                        ID Number:
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        placeholder="e.g. 10101"
+                        value={customerIdNumber}
+                        onKeyDown={(e) => {
+                          if (e.key === "-" || e.key === "+" || e.key.toLowerCase() === "e" || e.key === ".") {
+                            e.preventDefault()
+                          }
+                        }}
+                        onFocus={() => setShowCustomerSuggestions(true)}
+                        onBlur={() => setTimeout(() => setShowCustomerSuggestions(false), 200)}
+                        onChange={e => handleIdNumberChange(e.target.value)}
+                        className="w-full p-1.5 border bg-white dark:bg-slate-900 border-gray-300 dark:border-slate-700 rounded-lg text-xs text-gray-900 dark:text-white font-mono font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="block text-[9px] font-bold text-gray-600 dark:text-slate-300 uppercase">
+                        Customer Name:
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Kervin"
+                        value={customerName}
+                        onFocus={() => setShowCustomerSuggestions(true)}
+                        onBlur={() => setTimeout(() => setShowCustomerSuggestions(false), 200)}
+                        onChange={e => handleCustomerNameChange(e.target.value)}
+                        className="w-full p-1.5 border bg-white dark:bg-slate-900 border-gray-300 dark:border-slate-700 rounded-lg text-xs text-gray-900 dark:text-white font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <p className="text-[9px] text-blue-700 dark:text-blue-300 font-medium italic">
+                    💡 Type ID <span className="font-mono font-bold">10101</span> to auto-fill <span className="font-bold">Kervin</span>, or type name to auto-fill ID.
+                  </p>
+
+                  {/* Suggestions dropdown matching both ID & Name */}
+                  {showCustomerSuggestions && (customerName.trim().length > 0 || customerIdNumber.trim().length > 0) && (
+                    <div className="relative z-40">
+                      <div className="absolute left-0 right-0 top-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl max-h-48 overflow-y-auto font-sans">
+                        <div className="flex items-center justify-between p-1.5 px-2.5 border-b dark:border-slate-700 bg-gray-50 dark:bg-slate-900 text-[9px] text-gray-500 dark:text-slate-400 font-bold uppercase">
+                          <span>Matching ID & Person Registry</span>
+                          <button
+                            type="button"
+                            onMouseDown={e => { e.preventDefault(); setShowCustomerSuggestions(false); }}
+                            className="text-red-500 hover:text-red-700 font-bold text-xs"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        {matchingNamedPersons.length === 0 ? (
+                          <div className="p-2.5 text-[10px] text-gray-400 italic">
+                            No exact match. New person record will be saved automatically upon sale completion.
+                          </div>
+                        ) : (
+                          matchingNamedPersons.map((person) => (
+                            <button
+                              key={person.id}
+                              type="button"
+                              onMouseDown={e => {
+                                e.preventDefault()
+                                selectNamedPerson(person)
+                              }}
+                              className="w-full text-left px-3 py-2 text-xs text-gray-800 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-blue-900/40 font-medium flex items-center justify-between border-b border-gray-100 dark:border-slate-700/50 last:border-0"
+                            >
+                              <div>
+                                <span className="font-bold text-blue-600 dark:text-blue-400 font-mono mr-1">#{person.idNumber}</span>
+                                <span className="font-bold text-gray-900 dark:text-white">{person.name}</span>
+                                {person.discountType && person.discountType !== "none" && (
+                                  <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 uppercase font-bold">
+                                    {person.discountType}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[9px] bg-blue-600 text-white px-2 py-0.5 rounded font-bold uppercase">
+                                Auto-Fill
+                              </span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Customer Previous Purchases Card */}
+                  {customerName.trim() && customerPreviousSales.length > 0 && (
+                    <div className="mt-2 p-2 bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 rounded-lg space-y-1 text-xs animate-in fade-in duration-150">
+                      <div className="flex justify-between items-center text-[9px] font-bold text-blue-800 dark:text-blue-300 uppercase">
+                        <span>Previous History for "{customerName.trim()}"</span>
+                        <span className="bg-blue-200 dark:bg-blue-900 px-1.5 py-0.5 rounded">{customerPreviousSales.length} Total Orders</span>
+                      </div>
+                      <div className="text-[10px] text-gray-700 dark:text-slate-300">
+                        <span className="font-semibold text-gray-500">Last Order: </span>
+                        <span className="font-mono text-gray-800 dark:text-slate-200">
+                          {customerPreviousSales[0].items.map((i: any) => `${i.quantity}x ${i.item?.name || i.name}`).join(", ")}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => readdPreviousItems(customerPreviousSales[0].items)}
+                        className="w-full mt-1 py-1 px-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-bold text-[10px] uppercase tracking-wide transition-colors flex items-center justify-center gap-1 shadow-2xs"
+                      >
+                        🛒 Re-add Previous Items to Cart
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
               <div className="grid grid-cols-2 gap-1.5">
                 <button 
                   type="button" 
@@ -808,8 +939,6 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                   </div>
                 </div>
               )}
-            </div>
-
             <button 
               type="button" 
               onClick={completeSale} 
@@ -821,15 +950,16 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
           </div>
         </div>
       </div>
+    </div>
 
       {showOthersModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl p-5 max-w-sm w-full border space-y-4">
             <h3 className="text-blue-600 font-bold text-sm mb-1 border-b pb-1">Other Privileges</h3>
             <div className="grid grid-cols-3 gap-2">
-              <button type="button" onClick={()=>{setDiscountType("naac"); setCustomDiscountPercent(0); setShowOthersModal(false);}} className={`p-2 border rounded font-bold text-center transition-all ${discountType === 'naac' ? 'border-blue-500 bg-blue-50 text-blue-700':'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'}`}>NAAC</button>
-              <button type="button" onClick={()=>{setDiscountType("soloparent"); setCustomDiscountPercent(0); setShowOthersModal(false);}} className={`p-2 border rounded font-bold text-center transition-all ${discountType === 'soloparent' ? 'border-blue-500 bg-blue-50 text-blue-700':'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'}`}>SOLO PARENT</button>
-              <button type="button" onClick={()=>{setDiscountType("custom");}} className={`p-2 border rounded font-bold text-center transition-all ${discountType === 'custom' ? 'border-yellow-500 bg-yellow-50 text-yellow-700':'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'}`}>CUSTOM</button>
+              <button type="button" onClick={()=>{setDiscountType(prev => prev === "soloparent" ? "none" : "soloparent"); setCustomDiscountPercent(0); setShowOthersModal(false);}} className={`p-2 border rounded-xl font-bold text-center text-xs transition-all ${discountType === 'soloparent' ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300':'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100'}`}>SOLO PARENT</button>
+              <button type="button" onClick={()=>{setDiscountType(prev => prev === "naac" ? "none" : "naac"); setCustomDiscountPercent(0); setShowOthersModal(false);}} className={`p-2 border rounded-xl font-bold text-center text-xs transition-all ${discountType === 'naac' ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300':'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100'}`}>NAAC</button>
+              <button type="button" onClick={()=>{setDiscountType("custom");}} className={`p-2 border rounded-xl font-bold text-center text-xs transition-all ${discountType === 'custom' ? 'border-yellow-500 bg-yellow-50 text-yellow-700 dark:bg-amber-950 dark:text-amber-300':'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100'}`}>CUSTOM</button>
             </div>
 
             {discountType === "custom" && (
@@ -949,7 +1079,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
           </div>
         </div>
       )}
-    </div>
+    </>
   )
 }
 

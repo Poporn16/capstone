@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react"
-import { Home, ShoppingCart, Package, Clock, ShieldAlert, LogOut, ClipboardList, Menu, X, Bell, AlertTriangle, Sun, Moon, ChevronLeft, ChevronRight, Flame, UserCheck } from "lucide-react"
+import { Home, ShoppingCart, Package, Clock, ShieldAlert, LogOut, ClipboardList, Menu, X, Bell, AlertTriangle, Sun, Moon, ChevronLeft, ChevronRight, Flame, UserCheck, TrendingUp } from "lucide-react"
 import { Dashboard } from "./components/Dashboard"
 import { POSCheckout } from "./components/POSCheckout"
 import { InventoryManager } from "./components/InventoryManager"
 import { StockAdjustment } from "./components/StockAdjustment"
 import { SalesHistory } from "./components/SalesHistory"
+import { SalesReport } from "./components/SalesReport"
 import { AdminPanel } from "./components/AdminPanel"
 import { SuperAdminPanel } from "./components/SuperAdminPanel"
 import { LoginScreen } from "./components/LoginScreen"
@@ -52,7 +53,21 @@ export interface Sale {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<string>("dashboard")
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    try {
+      const savedTab = sessionStorage.getItem("pinv_active_tab")
+      if (savedTab) return savedTab
+    } catch (e) {}
+    return "dashboard"
+  })
+
+  useEffect(() => {
+    try {
+      if (activeTab) {
+        sessionStorage.setItem("pinv_active_tab", activeTab)
+      }
+    } catch (e) {}
+  }, [activeTab])
   const [inventory, setInventory] = useState<InventoryItem[]>([])
   const [sales, setSales] = useState<Sale[]>([])
   const [categoriesList, setCategoriesList] = useState<string[]>([])
@@ -107,9 +122,15 @@ export default function App() {
     if (!currentOperator?.username) return
     const uName = String(currentOperator.username).trim().toLowerCase()
 
+    let tabId = sessionStorage.getItem("pinv_tab_session_id")
+    if (!tabId) {
+      tabId = Math.random().toString(36).substring(2, 7)
+      sessionStorage.setItem("pinv_tab_session_id", tabId)
+    }
+
     const updateHeartbeat = () => {
       try {
-        localStorage.setItem(`pinv_active_heartbeat_${uName}`, Date.now().toString())
+        localStorage.setItem(`pinv_active_heartbeat_${uName}_tab_${tabId}`, Date.now().toString())
       } catch (e) {}
     }
 
@@ -118,7 +139,8 @@ export default function App() {
 
     const handleUnload = () => {
       try {
-        localStorage.removeItem(`pinv_active_heartbeat_${uName}`)
+        localStorage.removeItem(`pinv_active_heartbeat_${uName}_tab_${tabId}`)
+        clockOutUser(uName)
       } catch (e) {}
     }
     window.addEventListener("beforeunload", handleUnload)
@@ -129,14 +151,66 @@ export default function App() {
     }
   }, [currentOperator])
 
+  // Global Mouse Wheel Horizontal Scroll Listener for all overflow-x-auto containers
+  useEffect(() => {
+    const handleWheelHorizontalScroll = (e: WheelEvent) => {
+      const target = (e.target as HTMLElement)?.closest(".overflow-x-auto") as HTMLElement
+      if (target && e.deltaY && !e.shiftKey) {
+        if (target.scrollWidth > target.clientWidth) {
+          target.scrollLeft += e.deltaY * 0.8
+        }
+      }
+    }
+    window.addEventListener("wheel", handleWheelHorizontalScroll, { passive: true })
+    return () => window.removeEventListener("wheel", handleWheelHorizontalScroll)
+  }, [])
+
+  const clockOutUser = (uName: string) => {
+    if (!uName) return
+    const target = uName.trim().toLowerCase()
+    try {
+      const stored = localStorage.getItem("pinv_staff_attendance")
+      if (stored) {
+        const attendanceList = JSON.parse(stored)
+        const nowIso = new Date().toISOString()
+        let updated = false
+        const nextAttendanceList = attendanceList.map((r: any) => {
+          if (r.username && String(r.username).trim().toLowerCase() === target && !r.timeOut) {
+            updated = true
+            const inTime = new Date(r.timeIn).getTime()
+            const outTime = new Date(nowIso).getTime()
+            const durationMinutes = Math.max(1, Math.round((outTime - inTime) / (1000 * 60)))
+            return {
+              ...r,
+              timeOut: nowIso,
+              durationMinutes
+            }
+          }
+          return r
+        })
+        if (updated) {
+          localStorage.setItem("pinv_staff_attendance", JSON.stringify(nextAttendanceList))
+          window.dispatchEvent(new Event("storage"))
+          window.dispatchEvent(new Event("pinv_attendance_updated"))
+        }
+      }
+    } catch (e) {}
+  }
+
   const handleLogout = () => {
     sessionStorage.removeItem("pinv_session")
+    sessionStorage.removeItem("pinv_active_tab")
     const op = currentOperator
     if (op?.username) {
       const uName = String(op.username).trim().toLowerCase()
       try {
+        let tabId = sessionStorage.getItem("pinv_tab_session_id")
+        if (tabId) {
+          localStorage.removeItem(`pinv_active_heartbeat_${uName}_tab_${tabId}`)
+        }
         localStorage.removeItem(`pinv_active_heartbeat_${uName}`)
       } catch (e) {}
+      clockOutUser(uName)
       logSystemAction("SESSION_LOGOUT", "AUTHENTICATION Portal", `Terminated station session for @${op.username}`).catch(() => {})
     }
     setCurrentOperator(null)
@@ -740,12 +814,13 @@ export default function App() {
     { id: "pos", label: "Pos–Checkout", icon: ShoppingCart },
   ]
   if (isAdminUser) {
-    navigationTabs.push({ id: "inventory", label: "Item specs", icon: Package })
-    navigationTabs.push({ id: "stock_adjust", label: "Inventory", icon: ClipboardList })
+    navigationTabs.push({ id: "inventory", label: "Item specs", icon: ClipboardList })
+    navigationTabs.push({ id: "stock_adjust", label: "Inventory", icon: Package })
   }
   navigationTabs.push({ id: "history", label: "Sales History", icon: Clock })
 
   if (isAdminUser) {
+    navigationTabs.push({ id: "reports", label: "Sales Report", icon: TrendingUp })
     navigationTabs.push({ id: "attendance", label: "Staff Attendance", icon: UserCheck })
     navigationTabs.push({ id: "admin_control", label: "Admin Panel", icon: ShieldAlert })
   }
@@ -803,10 +878,10 @@ export default function App() {
               const Icon = tab.icon
               const isActive = activeTab === tab.id
               return (
-                <button key={tab.id} onClick={() => { setActiveTab(tab.id); setIsSidebarOpen(false) }} title={isSidebarCollapsed ? tab.label : undefined} className={`w-full flex items-center ${isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-4"} py-2.5 rounded-full text-xs font-semibold transition-all duration-150 ${
-                    isActive ? "bg-white dark:bg-slate-100 text-[#111827] shadow-sm" : "text-[#1c2d2c] dark:text-slate-200 hover:bg-white/20 dark:hover:bg-slate-700 hover:text-black dark:hover:text-white"
+                <button key={tab.id} onClick={() => { setActiveTab(tab.id); setIsSidebarOpen(false) }} title={isSidebarCollapsed ? tab.label : undefined} className={`w-full flex items-center ${isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-4"} py-2.5 rounded-full text-xs font-semibold tracking-wide antialiased transition-all duration-150 ${
+                    isActive ? "bg-white text-gray-900 dark:bg-blue-600 dark:text-white shadow-md font-bold" : "text-[#1c2d2c] dark:text-slate-200 hover:bg-white/20 dark:hover:bg-slate-700/80 hover:text-black dark:hover:text-white"
                   }`}>
-                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? "text-[#111827]" : "text-[#1c2d2c] dark:text-slate-200"}`} />
+                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? "text-gray-900 dark:text-white" : "text-[#1c2d2c] dark:text-slate-300"}`} />
                   {!isSidebarCollapsed && <span>{tab.label}</span>}
                 </button>
               )
@@ -841,6 +916,7 @@ export default function App() {
               {activeTab === "inventory" && "Item specs"}
               {activeTab === "stock_adjust" && "Inventory"}
               {activeTab === "history" && "Sales History"}
+              {activeTab === "reports" && "Sales Report"}
               {activeTab === "attendance" && "Staff Attendance"}
               {activeTab === "admin_control" && "Admin Panel"}
               {activeTab === "super_admin" && "Super Admin"}
@@ -904,6 +980,7 @@ export default function App() {
           {activeTab === "inventory" && <InventoryManager currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} refreshCategories={fetchCategories} refreshInventory={fetchInventory} onUpdateInventory={updateInventoryItem} onDeleteProduct={deleteInventoryItem} onLogAction={logSystemAction} />}
           {activeTab === "stock_adjust" && <StockAdjustment currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} fetchInventory={fetchInventory} onLogAction={logSystemAction} />}
           {activeTab === "history" && <SalesHistory currentOperator={currentOperator} sales={sales} onToggleRefund={handleToggleRefund} />}
+          {activeTab === "reports" && isAdminUser && <SalesReport sales={sales} inventory={inventory} categoriesList={categoriesList} />}
           {activeTab === "attendance" && isAdminUser && <StaffAttendancePage currentOperator={currentOperator} />}
           {activeTab === "admin_control" && (currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin") && (
             <AdminPanel

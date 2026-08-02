@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { supabase } from "../utils/apiClient"
+import { verifyAndMigratePassword, hashPassword } from "../utils/passwordUtils"
 import { Lock, User, KeyRound, Eye, EyeOff, ShieldCheck } from "lucide-react"
 
 interface LoginScreenProps {
@@ -24,25 +25,56 @@ export function LoginScreen({ onAuthSuccess, theme }: LoginScreenProps) {
     const cleanUsername = username.trim().toLowerCase()
     const cleanPassword = password.trim()
 
-    const { data, error } = await supabase
+    // Check if account is currently active on another tab/device
+    const HEARTBEAT_TIMEOUT = 10000
+    const now = Date.now()
+    let isAlreadyLoggedInElsewhere = false
+
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i)
+        if (key && key.startsWith(`pinv_active_heartbeat_${cleanUsername}`)) {
+          const val = Number(localStorage.getItem(key))
+          if (val && (now - val < HEARTBEAT_TIMEOUT)) {
+            isAlreadyLoggedInElsewhere = true
+            break
+          }
+        }
+      }
+    } catch (err) {}
+
+    if (isAlreadyLoggedInElsewhere) {
+      setIsLoading(false)
+      setErrorMsg(`⚠️ Access Denied: Account "@${cleanUsername}" is currently logged in on another active session. Please log out from that session first.`)
+      return
+    }
+
+    const { data: userProfile, error } = await supabase
       .from("operator_profiles")
       .select("*")
       .eq("username", cleanUsername)
-      .eq("password_text", cleanPassword)
       .single()
 
     setIsLoading(false)
 
-    if (error || !data) {
+    if (error || !userProfile) {
+      setErrorMsg("Invalid username or password access code.")
+      return
+    }
+
+    const storedPassword = userProfile.password_hash || userProfile.password_text || ""
+    const isValidPassword = await verifyAndMigratePassword(cleanPassword, storedPassword, userProfile.id)
+
+    if (!isValidPassword) {
       setErrorMsg("Invalid username or password access code.")
       return
     }
 
     // Save actual operator object to sessionStorage
     const sessionData = {
-      username: String(data.username).toLowerCase().trim(),
-      displayName: data.display_name || data.username,
-      systemRole: data.system_role || "staff"
+      username: String(userProfile.username).toLowerCase().trim(),
+      displayName: userProfile.display_name || userProfile.username,
+      systemRole: userProfile.system_role || "staff"
     }
 
     sessionStorage.setItem("current_terminal_operator", JSON.stringify(sessionData))

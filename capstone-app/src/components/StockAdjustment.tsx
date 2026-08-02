@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react"
 import type { InventoryItem } from "../App"
 import { supabase } from "../utils/apiClient"
 import { downloadExcelWithAutoFit, parseSpreadsheetFile } from "../utils/excelUtils"
-import { Plus, Minus, Layers, AlertCircle, Trash2, Calendar, Download, Upload, FileSpreadsheet, Clock, CheckCircle2, X } from "lucide-react"
+import { Plus, Minus, Layers, AlertCircle, Trash2, Calendar, Download, Upload, FileSpreadsheet, Clock, CheckCircle2, X, Edit2 } from "lucide-react"
 
 interface StockAdjustmentProps {
   currentOperator?: { username: string; displayName: string; systemRole: string } | null
@@ -595,8 +595,8 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 text-xs font-medium">
         
-        <div className="lg:col-span-1 bg-white p-4 rounded-xl border shadow-sm space-y-4 flex flex-col h-[520px]">
-          <h3 className="font-bold text-gray-800 text-sm tracking-wide">Stock Registry Directory</h3>
+        <div className="lg:col-span-1 bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700 shadow-xs space-y-4 flex flex-col h-[560px]">
+          <h3 className="font-bold text-gray-800 dark:text-white text-sm tracking-wide">Stock Registry Directory</h3>
           
           <div className="space-y-2">
             <input 
@@ -604,12 +604,12 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
               placeholder="Search matching barcode or name..." 
               value={query} 
               onChange={e => setQuery(e.target.value)} 
-              className="w-full p-2 border rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-blue-500" 
+              className="w-full p-2 border rounded-lg text-xs bg-white dark:bg-slate-900 dark:border-slate-700 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500" 
             />
             <select 
               value={catFilter} 
               onChange={e => setCatFilter(e.target.value)} 
-              className="w-full p-2 border rounded-lg uppercase bg-white text-xs font-bold"
+              className="w-full p-2 border rounded-lg uppercase bg-white dark:bg-slate-900 dark:border-slate-700 dark:text-white text-xs font-bold"
             >
               <option value="all">All Categories</option>
               <option value="unmarked category">UNMARKED CATEGORY</option>
@@ -619,23 +619,36 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
 
           <div className="flex-1 overflow-y-auto space-y-2 pr-1">
             {filtered.length === 0 ? (
-              <p className="text-gray-400 text-center py-8">No system products match current filters.</p>
+              <p className="text-gray-400 dark:text-slate-500 text-center py-8">No system products match current filters.</p>
             ) : (
               filtered.map(item => {
                 const isLow = item.stock <= item.minStock
+                const isSelected = selectedItem?.id === item.id
                 return (
                   <button
                     key={item.id}
                     type="button"
                     onClick={() => setSelectedItem(item)}
-                    className={`w-full text-left p-3 border rounded-xl transition-all flex justify-between items-center bg-white ${selectedItem?.id === item.id ? 'border-blue-500 bg-blue-50/10 shadow-xs' : 'border-gray-100 hover:bg-gray-50/80'}`}
+                    className={`w-full text-left p-3 border rounded-xl transition-all flex justify-between items-start gap-2 ${
+                      isSelected 
+                        ? 'border-blue-500 bg-blue-50/60 dark:bg-blue-950/40 dark:border-blue-500 shadow-xs' 
+                        : 'border-gray-100 dark:border-slate-700/80 bg-white dark:bg-slate-900/50 hover:bg-gray-50 dark:hover:bg-slate-700/50'
+                    }`}
                   >
-                    <div className="min-w-0 pr-2">
-                      <p className="font-bold text-gray-900 truncate">{item.name}</p>
-                      <p className="text-[10px] text-gray-400 font-mono mt-0.5">{item.barcode} • {item.category.toUpperCase()}</p>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-bold text-gray-900 dark:text-white leading-snug break-words">{item.name}</p>
+                      <p className="text-[10px] text-gray-400 dark:text-slate-400 font-mono mt-1 flex items-center gap-1.5 flex-wrap">
+                        <span>#{item.barcode}</span>
+                        <span>•</span>
+                        <span className="uppercase font-semibold text-blue-600 dark:text-blue-400">{item.category}</span>
+                      </p>
                     </div>
                     <div className="text-right flex-shrink-0">
-                      <span className={`font-mono font-bold text-xs px-2 py-0.5 rounded ${isLow ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                      <span className={`font-mono font-bold text-xs px-2.5 py-1 rounded-lg inline-block ${
+                        isLow 
+                          ? 'bg-red-100 dark:bg-red-950/80 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800' 
+                          : 'bg-green-100 dark:bg-green-950/80 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800'
+                      }`}>
                         {item.stock} units
                       </span>
                     </div>
@@ -648,32 +661,38 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
 
         <div className="lg:col-span-2 space-y-4 flex flex-col">
           {!selectedItem ? (
-            <div className="bg-white rounded-xl border border-dashed border-gray-300 p-8 text-center text-gray-400 flex flex-col items-center justify-center flex-1 min-h-[400px]">
-              <Layers className="w-8 h-8 text-gray-300 mb-2" />
-              <p className="font-semibold text-sm">No Active Selection Made</p>
+            <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 border-dashed p-8 text-center text-gray-400 dark:text-slate-400 flex flex-col items-center justify-center flex-1 min-h-[400px]">
+              <Layers className="w-8 h-8 text-gray-300 dark:text-slate-600 mb-2" />
+              <p className="font-semibold text-sm text-gray-700 dark:text-slate-300">No Active Selection Made</p>
               <p className="text-[11px] mt-0.5">Please click on any product profile row template from the side panel to adjust batch counts.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 flex-1 items-start">
               
-              <div className="md:col-span-2 bg-white rounded-xl border shadow-sm p-4 space-y-4 min-h-[520px] flex flex-col">
-                <div className="border-b pb-3 flex justify-between items-start">
-                  <div>
-                    <h2 className="text-sm font-bold text-gray-900 leading-tight">{selectedItem.name}</h2>
-                    <p className="text-[10px] text-gray-500 font-mono mt-0.5">Barcode reference token: #{selectedItem.barcode}</p>
+              <div className="md:col-span-2 bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 shadow-xs p-4 space-y-4 min-h-[520px] flex flex-col">
+                <div className="border-b dark:border-slate-700 pb-3 flex flex-wrap justify-between items-start gap-2">
+                  <div className="space-y-1 max-w-full">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h2 className="text-base font-bold text-gray-900 dark:text-white leading-tight">{selectedItem.name}</h2>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap text-[10px] text-gray-500 dark:text-slate-400 font-mono">
+                      <span>Barcode Token: #{selectedItem.barcode || "N/A"}</span>
+                      <span>•</span>
+                      <span>Manufacturer: {selectedItem.manufacturer || "Unspecified"}</span>
+                    </div>
                   </div>
                   <div className="text-right">
-                    <span className="text-[10px] uppercase font-bold tracking-wide px-2 py-0.5 bg-gray-100 rounded-md text-gray-600">
+                    <span className="text-[10px] uppercase font-bold tracking-wide px-2.5 py-1 bg-gray-100 dark:bg-slate-700 rounded-md text-gray-700 dark:text-slate-200 border dark:border-slate-600">
                       Min Safe Level: {selectedItem.minStock}
                     </span>
                   </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-3 pr-1">
-                  <h4 className="font-bold text-gray-700 text-xs tracking-wide">Active Batch Assignments</h4>
+                  <h4 className="font-bold text-gray-700 dark:text-slate-200 text-xs tracking-wide">Active Batch Assignments</h4>
                   
                   {selectedItem.batches.length === 0 ? (
-                    <p className="text-gray-400 text-center py-12 bg-gray-50/50 border border-dashed rounded-xl">No active batches assigned. Create a batch on the right to add stock quantities.</p>
+                    <p className="text-gray-400 dark:text-slate-500 text-center py-12 bg-gray-50/50 dark:bg-slate-900/40 border border-dashed dark:border-slate-700 rounded-xl">No active batches assigned. Create a batch on the right to add stock quantities.</p>
                   ) : (
                     selectedItem.batches.map(batch => {
                       const isExpired = batch.expiryDate && new Date(batch.expiryDate).getTime() < new Date().getTime()
@@ -682,13 +701,35 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                       const displayPrice = localPrices[batch.id] !== undefined ? localPrices[batch.id] : String(batch.price || 0)
 
                       return (
-                        <div key={batch.id} className="p-3 bg-gray-50 border border-gray-100 rounded-xl flex items-center justify-between transition-colors hover:bg-gray-50/80 gap-3">
-                          <div className="min-w-0 flex-1 space-y-1.5">
-                            <p className="font-bold text-gray-900 font-mono text-xs truncate">{batch.batchLabel}</p>
+                        <div key={batch.id} className="p-3.5 bg-gray-50 dark:bg-slate-900/60 border border-gray-100 dark:border-slate-700 rounded-xl space-y-2.5 transition-colors hover:bg-gray-100/60 dark:hover:bg-slate-900">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <p className="font-bold text-gray-900 dark:text-white font-mono text-xs truncate">{batch.batchLabel}</p>
                             
-                            <div className="flex items-center gap-2 font-mono text-[10px] text-gray-600">
+                            <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-1 text-gray-500 dark:text-slate-400 text-[10px]">
+                                <Calendar className="w-3 h-3 text-gray-400" />
+                                <input 
+                                  type="date"
+                                  value={batch.expiryDate || ""}
+                                  onChange={e => handleUpdateBatchExpiry(batch.id, batch.expiryDate, e.target.value, batch.batchLabel)}
+                                  className={`p-1 border rounded-lg font-mono text-[10px] bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 ${isExpired ? 'text-red-600 dark:text-red-400 border-red-300 dark:border-red-800 font-bold bg-red-50 dark:bg-red-950/40' : ''}`}
+                                />
+                              </div>
+                              <button 
+                                type="button" 
+                                onClick={() => setDeleteConfirmBatch({ id: batch.id, label: batch.batchLabel })}
+                                className="p-1.5 border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/50 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900 active:scale-95 transition-all cursor-pointer"
+                                title="Delete Batch record"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-3 flex-wrap pt-1 border-t border-gray-200/60 dark:border-slate-800">
+                            <div className="flex items-center gap-3 font-mono text-[11px] text-gray-600 dark:text-slate-300">
                               <div className="flex items-center gap-1">
-                                <span>Cost: ₱</span>
+                                <span className="text-gray-400 dark:text-slate-400 text-[10px]">Cost: ₱</span>
                                 <input 
                                   type="text"
                                   value={displayCost}
@@ -702,14 +743,12 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                                       setLocalCosts(prev => { const n = { ...prev }; delete n[batch.id]; return n })
                                     }
                                   }}
-                                  className="w-14 px-1 border rounded bg-white font-mono text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                  className="w-16 px-1.5 py-0.5 border rounded-lg bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white font-mono text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-500"
                                 />
                               </div>
 
-                              <span>•</span>
-
                               <div className="flex items-center gap-1">
-                                <span>Price: ₱</span>
+                                <span className="text-gray-400 dark:text-slate-400 text-[10px]">Price: ₱</span>
                                 <input 
                                   type="text"
                                   value={displayPrice}
@@ -723,54 +762,30 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                                       setLocalPrices(prev => { const n = { ...prev }; delete n[batch.id]; return n })
                                     }
                                   }}
-                                  className="w-14 px-1 border rounded bg-white font-mono font-bold text-gray-900 text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                  className="w-16 px-1.5 py-0.5 border rounded-lg bg-white dark:bg-slate-800 dark:border-slate-700 font-bold text-gray-900 dark:text-white text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-500"
                                 />
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-1.5 text-gray-500">
-                              <Calendar className="w-3 h-3 flex-shrink-0 text-gray-400" />
-                              <input 
-                                type="date"
-                                value={batch.expiryDate || ""}
-                                onChange={e => handleUpdateBatchExpiry(batch.id, batch.expiryDate, e.target.value, batch.batchLabel)}
-                                className={`p-0.5 border rounded font-mono text-[10px] bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 ${isExpired ? 'text-red-600 border-red-200 font-bold bg-red-50/30' : ''}`}
-                              />
-                              {!batch.expiryDate && <span className="text-[9px] text-gray-400 italic">No Expiry Track Date</span>}
-                            </div>
-                          </div>
-                          
-                          <div className="flex items-center gap-1.5 flex-shrink-0">
-                            <button 
-                              type="button" 
-                              onClick={() => handleModifyBatchStock(batch.id, batch.stock, -1, batch.batchLabel)}
-                              className="w-6 h-6 border bg-white text-gray-600 font-bold rounded-lg flex items-center justify-center hover:bg-red-50 hover:text-red-600 transition-colors shadow-xs"
-                              title="Minus 1 Unit"
-                            >
-                              <Minus className="w-2.5 h-2.5" />
-                            </button>
-                            
-                            <input
-                              type="text"
-                              value={displayQty}
-                              onChange={e => {
-                                const inputVal = e.target.value
-                                const cleanVal = inputVal.replace(/[^0-9]/g, "")
-                                setLocalQuantities(prev => ({ ...prev, [batch.id]: cleanVal }))
-                              }}
-                              onBlur={() => {
-                                const finalVal = localQuantities[batch.id]
-                                if (finalVal !== undefined) {
-                                  handleDirectInputChange(batch.id, batch.stock, finalVal, batch.batchLabel)
-                                  setLocalQuantities(prev => {
-                                    const next = { ...prev }
-                                    delete next[batch.id]
-                                    return next
-                                  })
-                                }
-                              }}
-                              onKeyDown={e => {
-                                if (e.key === "Enter") {
+                            <div className="flex items-center gap-1.5">
+                              <button 
+                                type="button" 
+                                onClick={() => handleModifyBatchStock(batch.id, batch.stock, -1, batch.batchLabel)}
+                                className="w-7 h-7 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 font-bold rounded-lg flex items-center justify-center hover:bg-red-50 dark:hover:bg-red-950 hover:text-red-600 transition-colors shadow-2xs"
+                                title="Minus 1 Unit"
+                              >
+                                <Minus className="w-3 h-3" />
+                              </button>
+                              
+                              <input
+                                type="text"
+                                value={displayQty}
+                                onChange={e => {
+                                  const inputVal = e.target.value
+                                  const cleanVal = inputVal.replace(/[^0-9]/g, "")
+                                  setLocalQuantities(prev => ({ ...prev, [batch.id]: cleanVal }))
+                                }}
+                                onBlur={() => {
                                   const finalVal = localQuantities[batch.id]
                                   if (finalVal !== undefined) {
                                     handleDirectInputChange(batch.id, batch.stock, finalVal, batch.batchLabel)
@@ -780,29 +795,33 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                                       return next
                                     })
                                   }
-                                  ;(e.target as HTMLInputElement).blur()
-                                }
-                              }}
-                              className="w-12 text-center font-mono font-bold text-xs text-gray-900 bg-white border h-6 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            />
-                            
-                            <button 
-                              type="button" 
-                              onClick={() => handleModifyBatchStock(batch.id, batch.stock, 1, batch.batchLabel)}
-                              className="w-6 h-6 border bg-white text-gray-600 font-bold rounded-lg flex items-center justify-center hover:bg-blue-50 hover:text-blue-600 transition-colors shadow-xs"
-                              title="Add 1 Unit"
-                            >
-                              <Plus className="w-2.5 h-2.5" />
-                            </button>
-
-                            <button 
-                              type="button" 
-                              onClick={() => setDeleteConfirmBatch({ id: batch.id, label: batch.batchLabel })}
-                              className="w-8 h-8 min-w-[32px] min-h-[32px] border border-red-200 bg-red-50 text-red-600 rounded-lg flex items-center justify-center hover:bg-red-100 hover:text-red-700 active:scale-95 transition-all shadow-2xs ml-1 cursor-pointer"
-                              title="Remove Batch completely"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                                }}
+                                onKeyDown={e => {
+                                  if (e.key === "Enter") {
+                                    const finalVal = localQuantities[batch.id]
+                                    if (finalVal !== undefined) {
+                                      handleDirectInputChange(batch.id, batch.stock, finalVal, batch.batchLabel)
+                                      setLocalQuantities(prev => {
+                                        const next = { ...prev }
+                                        delete next[batch.id]
+                                        return next
+                                      })
+                                    }
+                                    ;(e.target as HTMLInputElement).blur()
+                                  }
+                                }}
+                                className="w-14 text-center font-mono font-bold text-xs text-gray-900 dark:text-white bg-white dark:bg-slate-800 border dark:border-slate-700 h-7 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                              
+                              <button 
+                                type="button" 
+                                onClick={() => handleModifyBatchStock(batch.id, batch.stock, 1, batch.batchLabel)}
+                                className="w-7 h-7 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 font-bold rounded-lg flex items-center justify-center hover:bg-blue-50 dark:hover:bg-blue-950 hover:text-blue-600 transition-colors shadow-2xs"
+                                title="Add 1 Unit"
+                              >
+                                <Plus className="w-3 h-3" />
+                              </button>
+                            </div>
                           </div>
                         </div>
                       )
@@ -859,14 +878,14 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                 </div>
               )}
 
-              <div className="bg-white p-4 rounded-xl border shadow-sm space-y-4 h-fit">
-                <h4 className="font-bold text-gray-800 text-xs tracking-wide flex items-center gap-1.5 border-b pb-2">
-                  <Plus className="w-3.5 h-3.5 text-blue-600" />
+              <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700 shadow-xs space-y-4 h-fit">
+                <h4 className="font-bold text-gray-800 dark:text-white text-xs tracking-wide flex items-center gap-1.5 border-b dark:border-slate-700 pb-2">
+                  <Plus className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                   Provision New Batch
                 </h4>
 
                 {errorMessage && (
-                  <div className="p-2.5 bg-red-50 border border-red-100 rounded-lg text-red-600 flex items-center gap-1.5 font-bold">
+                  <div className="p-2.5 bg-red-50 dark:bg-red-950/60 border border-red-100 dark:border-red-900 rounded-lg text-red-600 dark:text-red-300 flex items-center gap-1.5 font-bold">
                     <AlertCircle className="w-4 h-4 flex-shrink-0" />
                     <span>{errorMessage}</span>
                   </div>
@@ -874,7 +893,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
 
                 <form onSubmit={handleCreateBatch} className="space-y-3">
                   <div className="space-y-1">
-                    <label className="block text-gray-500 font-bold uppercase text-[9px] tracking-wider">Batch Lot Code Label *</label>
+                    <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] tracking-wider">Batch Lot Code Label *</label>
                     <input 
                       type="text" 
                       required 
@@ -882,12 +901,12 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                       placeholder="Auto generated lot name..." 
                       value={batchLabel}
                       onChange={e => setBatchLabel(e.target.value)}
-                      className="w-full p-2 border border-gray-200 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono font-bold" 
+                      className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono font-bold" 
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-gray-500 font-bold uppercase text-[9px] tracking-wider">Initial Stock Units Quantity *</label>
+                    <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] tracking-wider">Initial Stock Units Quantity *</label>
                     <input 
                       type="text" 
                       required 
@@ -899,56 +918,56 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                         const cleanVal = inputVal.replace(/[^0-9]/g, "")
                         setBatchQty(cleanVal)
                       }}
-                      className="w-full p-2 border border-gray-200 rounded-lg text-xs bg-white font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500" 
+                      className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-900 dark:text-white font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500" 
                     />
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1">
-                      <label className="block text-gray-500 font-bold uppercase text-[9px] tracking-wider">Supply Cost (₱)</label>
+                      <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] tracking-wider">Supply Cost (₱)</label>
                       <input 
                         type="number" 
                         step="0.01"
                         placeholder="0.00" 
                         value={batchCost}
                         onChange={e => setBatchCost(e.target.value)}
-                        className="w-full p-2 border border-gray-200 rounded-lg text-xs bg-white font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500" 
+                        className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-900 dark:text-white font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500" 
                       />
                     </div>
 
                     <div className="space-y-1">
-                      <label className="block text-gray-500 font-bold uppercase text-[9px] tracking-wider">Selling Price (₱)</label>
+                      <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] tracking-wider">Selling Price (₱)</label>
                       <input 
                         type="number" 
                         step="0.01"
                         placeholder="0.00" 
                         value={batchPrice}
                         onChange={e => setBatchPrice(e.target.value)}
-                        className="w-full p-2 border border-gray-200 rounded-lg text-xs bg-white font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500" 
+                        className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-900 dark:text-white font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500" 
                       />
                     </div>
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-gray-500 font-bold uppercase text-[9px] tracking-wider">Product Expiration Date</label>
+                    <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] tracking-wider">Product Expiration Date</label>
                     <input 
                       type="date" 
                       disabled={isProcessing}
                       value={expiryDate}
                       onChange={e => setExpiryDate(e.target.value)}
-                      className="w-full p-2 border border-gray-200 rounded-lg text-xs bg-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500" 
+                      className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-900 dark:text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500" 
                     />
                   </div>
 
                   <button 
                     type="submit" 
                     disabled={isProcessing || !batchLabel.trim() || !batchQty || parseInt(batchQty) <= 0}
-                    className="w-full py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold rounded-lg shadow-sm text-xs tracking-wide transition-opacity disabled:opacity-50"
+                    className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-xs text-xs tracking-wide transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer active:scale-95"
                   >
                     {isProcessing ? "Adding Lot Record..." : "Register Batch Inventory"}
                   </button>
                 </form>
-            </div>
+              </div>
 
             </div>
           )}
