@@ -61,6 +61,23 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
   }, [inventory])
 
   useEffect(() => {
+    const handleSelectProduct = (e: any) => {
+      const pName = e.detail?.name || e.detail
+      const pId = e.detail?.id
+      if (!inventory || !Array.isArray(inventory)) return
+      const matched = inventory.find(i => (pId && String(i.id) === String(pId)) || (pName && String(i.name || "").toLowerCase().trim() === String(pName).toLowerCase().trim()))
+      if (matched) {
+        setSelectedItem(matched)
+      } else if (pName) {
+        setSearchQuery(String(pName))
+      }
+    }
+
+    window.addEventListener("pinv_select_product", handleSelectProduct)
+    return () => window.removeEventListener("pinv_select_product", handleSelectProduct)
+  }, [inventory])
+
+  useEffect(() => {
     if (selectedItem) {
       const cleanedName = selectedItem.name.replace(/\s+/g, "").substring(0, 5).toUpperCase()
       const timestampString = Date.now().toString().slice(-4)
@@ -695,7 +712,17 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                     <p className="text-gray-400 dark:text-slate-500 text-center py-12 bg-gray-50/50 dark:bg-slate-900/40 border border-dashed dark:border-slate-700 rounded-xl">No active batches assigned. Create a batch on the right to add stock quantities.</p>
                   ) : (
                     selectedItem.batches.map(batch => {
-                      const isExpired = batch.expiryDate && new Date(batch.expiryDate).getTime() < new Date().getTime()
+                      const diffDays = batch.expiryDate ? Math.ceil((new Date(batch.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : 999
+                      const isRed = diffDays <= 0
+                      const isOrange = diffDays > 0 && diffDays <= 90
+                      const isYellow = diffDays > 90 && diffDays <= 180
+                      const expiryClass = isRed
+                        ? 'text-red-600 dark:text-red-400 border-red-400 font-bold bg-red-50 dark:bg-red-950/40'
+                        : isOrange
+                        ? 'text-orange-600 dark:text-orange-400 border-orange-400 font-bold bg-orange-50 dark:bg-orange-950/40'
+                        : isYellow
+                        ? 'text-yellow-700 dark:text-yellow-400 border-yellow-400 font-bold bg-yellow-50 dark:bg-yellow-950/40'
+                        : ''
                       const displayQty = localQuantities[batch.id] !== undefined ? localQuantities[batch.id] : batch.stock
                       const displayCost = localCosts[batch.id] !== undefined ? localCosts[batch.id] : String(batch.cost || 0)
                       const displayPrice = localPrices[batch.id] !== undefined ? localPrices[batch.id] : String(batch.price || 0)
@@ -712,7 +739,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                                   type="date"
                                   value={batch.expiryDate || ""}
                                   onChange={e => handleUpdateBatchExpiry(batch.id, batch.expiryDate, e.target.value, batch.batchLabel)}
-                                  className={`p-1 border rounded-lg font-mono text-[10px] bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 ${isExpired ? 'text-red-600 dark:text-red-400 border-red-300 dark:border-red-800 font-bold bg-red-50 dark:bg-red-950/40' : ''}`}
+                                  className={`p-1 border rounded-lg font-mono text-[10px] bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 ${expiryClass}`}
                                 />
                               </div>
                               <button 

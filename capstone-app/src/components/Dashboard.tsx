@@ -1,32 +1,38 @@
 import type { InventoryItem, Sale } from "../App";
-import { Package, AlertTriangle, TrendingUp, Award } from "lucide-react";
 
 interface DashboardProps {
   inventory: InventoryItem[];
   sales: Sale[];
   categoriesList?: string[];
+  onSelectProduct?: (productName: string, productId?: string) => void
+  isAdminUser?: boolean
 }
 
-export function Dashboard({ inventory, sales, categoriesList = [] }: DashboardProps) {
-  const activeSales = sales.filter(s => !s.isRefunded);
+export function Dashboard({ inventory = [], sales = [], categoriesList = [], onSelectProduct, isAdminUser = false }: DashboardProps) {
+  const safeInventory = Array.isArray(inventory) ? inventory : []
+  const safeSales = Array.isArray(sales) ? sales : []
+
+  const activeSales = safeSales.filter(s => s && !s.isRefunded);
 
   const todayRevenue = activeSales
-    .filter(s => new Date(s.date).toDateString() === new Date().toDateString())
-    .reduce((sum, s) => sum + s.total, 0);
+    .filter(s => s.date && new Date(s.date).toDateString() === new Date().toDateString())
+    .reduce((sum, s) => sum + (Number(s.total) || 0), 0);
 
-  const totalRevenue = activeSales.reduce((sum, s) => sum + s.total, 0);
+  const totalRevenue = activeSales.reduce((sum, s) => sum + (Number(s.total) || 0), 0);
   const totalTransactions = activeSales.length;
-  const totalUniqueItems = inventory.length;
+  const totalUniqueItems = safeInventory.length;
 
-  const totalInventoryValue = inventory.reduce((sum, item) => {
-    const itemStock = item.stock || 0;
-    const itemPrice = item.price || 0;
+  const totalInventoryValue = safeInventory.reduce((sum, item) => {
+    const itemStock = Number(item.stock) || 0;
+    const itemPrice = Number(item.price) || 0;
     return sum + (itemPrice * itemStock);
   }, 0);
 
   const costOfGoods = activeSales.reduce((totalCogs, sale) => {
-    const saleCogs = sale.items.reduce((sum, si) => {
-      const matchedInv = inventory.find(inv => String(inv.id) === String(si.item.id));
+    const saleItems = Array.isArray(sale.items) ? sale.items : []
+    const saleCogs = saleItems.reduce((sum, si) => {
+      if (!si || !si.item) return sum;
+      const matchedInv = safeInventory.find(inv => String(inv.id) === String(si.item.id));
       const costPerUnit = Number(si.item.cost) || Number(matchedInv?.cost) || 0;
       return sum + (costPerUnit * (Number(si.quantity) || 0));
     }, 0);
@@ -34,38 +40,39 @@ export function Dashboard({ inventory, sales, categoriesList = [] }: DashboardPr
   }, 0);
 
   const profit = totalRevenue - costOfGoods;
-  const totalUnitsInStock = inventory.reduce((sum, i) => sum + (i.stock || 0), 0);
+  const totalUnitsInStock = safeInventory.reduce((sum, i) => sum + (Number(i.stock) || 0), 0);
 
-  const lowStockAlerts = inventory
-    .filter(item => (item.stock || 0) <= (item.minStock || 10))
-    .sort((a, b) => (a.stock || 0) - (b.stock || 0));
+  const lowStockAlerts = safeInventory
+    .filter(item => item && (Number(item.stock) || 0) <= (Number(item.minStock) || 10))
+    .sort((a, b) => (Number(a.stock) || 0) - (Number(b.stock) || 0));
 
   // Merge categoriesList prop and existing inventory categories to show all categories
+  const safeCategoriesList = Array.isArray(categoriesList) ? categoriesList : []
   const allCategoryNames = Array.from(
     new Set([
-      ...categoriesList.map(c => c.trim()),
-      ...inventory.map(item => (item.category || "unmarked category").trim())
+      ...safeCategoriesList.map(c => String(c || "").trim()),
+      ...safeInventory.map(item => (item.category || "unmarked category").trim())
     ])
   );
 
   const categoryData = allCategoryNames
     .map(catName => {
-      const matchingItems = inventory.filter(
+      const matchingItems = safeInventory.filter(
         item => (item.category || "unmarked category").trim().toLowerCase() === catName.toLowerCase()
       );
       return {
         name: catName,
-        units: matchingItems.reduce((sum, item) => sum + (item.stock || 0), 0),
-        value: matchingItems.reduce((sum, item) => sum + ((item.price || 0) * (item.stock || 0)), 0)
+        units: matchingItems.reduce((sum, item) => sum + (Number(item.stock) || 0), 0),
+        value: matchingItems.reduce((sum, item) => sum + ((Number(item.price) || 0) * (Number(item.stock) || 0)), 0)
       };
     })
     .filter(c => c.units > 0 && c.name.toLowerCase() !== "unmarked category")
     .sort((a, b) => b.value - a.value);
 
   // All nearly expired and expired products display
-  const nearlyExpiredProducts = inventory
+  const nearlyExpiredProducts = safeInventory
     .flatMap(item => 
-      (item.batches || []).map(batch => ({
+      (Array.isArray(item.batches) ? item.batches : []).map(batch => ({
         name: item.name,
         category: item.category,
         expiryDate: batch.expiryDate,
@@ -77,23 +84,30 @@ export function Dashboard({ inventory, sales, categoriesList = [] }: DashboardPr
       const diffTime = new Date(b.expiryDate).getTime() - new Date().getTime();
       return { ...b, daysLeft: Math.ceil(diffTime / (1000 * 60 * 60 * 24)) };
     })
-    .filter(b => b.daysLeft <= 90)
+    .filter(b => b.daysLeft <= 180)
     .sort((a, b) => a.daysLeft - b.daysLeft);
 
   const productSalesMap: Record<string, { name: string, quantity: number, revenue: number }> = {};
   
   activeSales.forEach(sale => {
-    sale.items.forEach(si => {
-      const itemId = si.item.id;
+    const saleItems = Array.isArray(sale?.items) ? sale.items : [];
+    saleItems.forEach(si => {
+      if (!si || !si.item) return;
+      const itemId = si.item.id || si.item.name || Math.random().toString();
       const qty = Number(si.quantity) || 0;
 
-      const matchedInventory = inventory.find(inv => String(inv.id) === String(itemId));
+      const matchedInventory = safeInventory.find(inv => String(inv.id) === String(itemId));
       const activePrice = Number(si.item.price) || Number(matchedInventory?.price) || 0;
       const lineRevenue = qty * activePrice;
 
       if (!productSalesMap[itemId]) {
-        productSalesMap[itemId] = { name: si.item.name, quantity: 0, revenue: 0 };
+        productSalesMap[itemId] = {
+          name: si.item.name || matchedInventory?.name || "Unknown Product",
+          quantity: 0,
+          revenue: 0
+        };
       }
+
       productSalesMap[itemId].quantity += qty;
       productSalesMap[itemId].revenue += lineRevenue;
     });
@@ -102,7 +116,7 @@ export function Dashboard({ inventory, sales, categoriesList = [] }: DashboardPr
   const mostSoldItems = Object.values(productSalesMap).sort((a, b) => b.quantity - a.quantity);
 
   const getCategoryStyle = (cat: string) => {
-    const normalized = cat.toLowerCase();
+    const normalized = (cat || "").toLowerCase();
     if (normalized.includes("prescription")) return "bg-red-50 text-red-700 border-red-200";
     if (normalized.includes("otc") || normalized.includes("counter")) return "bg-blue-50 text-blue-700 border-blue-200";
     if (normalized.includes("supply") || normalized.includes("supplies")) return "bg-green-50 text-green-700 border-green-200";
@@ -121,7 +135,7 @@ export function Dashboard({ inventory, sales, categoriesList = [] }: DashboardPr
             <div className="flex items-baseline gap-2 mt-0.5">
               <span className="text-xl font-black text-black dark:text-white">₱ {todayRevenue.toFixed(2)}</span>
               <span className="text-gray-400 dark:text-gray-400 text-[10px] font-medium">
-                {activeSales.filter(s => new Date(s.date).toDateString() === new Date().toDateString()).length} sales
+                {activeSales.filter(s => s?.date && !isNaN(new Date(s.date).getTime()) && new Date(s.date).toDateString() === new Date().toDateString()).length} sales
               </span>
             </div>
           </div>
@@ -205,7 +219,11 @@ export function Dashboard({ inventory, sales, categoriesList = [] }: DashboardPr
               lowStockAlerts.map(item => (
                 <div 
                   key={item.id} 
-                  className="bg-white dark:bg-slate-900 rounded-full border-2 border-[#f97316]/70 px-6 py-2.5 flex items-center justify-between shadow-2xs hover:border-orange-500 transition-colors"
+                  onClick={() => isAdminUser && onSelectProduct?.(item.name, item.id)}
+                  className={`bg-white dark:bg-slate-900 rounded-full border-2 border-[#f97316]/70 px-6 py-2.5 flex items-center justify-between shadow-2xs transition-all ${
+                    isAdminUser ? 'cursor-pointer hover:border-orange-500 hover:scale-[1.01] active:scale-98' : ''
+                  }`}
+                  title={isAdminUser ? "Click to view & adjust stock for this product" : undefined}
                 >
                   <span className="font-bold text-gray-900 dark:text-white text-sm">{item.name}</span>
                   <div className="flex items-center gap-6 text-xs">
@@ -233,22 +251,43 @@ export function Dashboard({ inventory, sales, categoriesList = [] }: DashboardPr
 
           <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
             {nearlyExpiredProducts.length === 0 ? (
-              <p className="text-gray-400 dark:text-gray-400 text-center py-6">No incoming batches expiring within 90 days.</p>
+              <p className="text-gray-400 dark:text-gray-400 text-center py-6">No incoming batches expiring within 6 months.</p>
             ) : (
-              nearlyExpiredProducts.map((b, index) => (
-                <div 
-                  key={index} 
-                  className={`bg-white dark:bg-slate-900 rounded-full border-2 px-6 py-2.5 flex items-center justify-between shadow-2xs transition-colors ${b.daysLeft <= 0 ? 'border-red-500 hover:border-red-600' : 'border-[#f97316]/70 hover:border-orange-500'}`}
-                >
-                  <span className="font-bold text-gray-900 dark:text-white text-sm">{b.name}</span>
-                  <div className="flex items-center gap-6 text-xs">
-                    <span className={`font-bold text-sm ${b.daysLeft <= 0 ? 'text-red-600 dark:text-red-400' : 'text-[#c2410c] dark:text-orange-400'}`}>
-                      {b.daysLeft <= 0 ? "EXPIRED" : `${b.daysLeft} days left`}
-                    </span>
-                    <span className="text-gray-400 dark:text-gray-400 font-mono font-medium">{b.expiryDate}</span>
+              nearlyExpiredProducts.map((b, index) => {
+                const isRed = b.daysLeft <= 0
+                const isOrange = b.daysLeft > 0 && b.daysLeft <= 90
+
+                const borderClass = isRed
+                  ? 'border-red-500 bg-red-50/40 dark:bg-red-950/20'
+                  : isOrange
+                  ? 'border-orange-500 bg-orange-50/40 dark:bg-orange-950/20'
+                  : 'border-yellow-400 bg-yellow-50/40 dark:bg-yellow-950/20'
+
+                const textClass = isRed
+                  ? 'text-red-600 dark:text-red-400'
+                  : isOrange
+                  ? 'text-orange-600 dark:text-orange-400'
+                  : 'text-yellow-700 dark:text-yellow-400'
+
+                return (
+                  <div 
+                    key={index} 
+                    onClick={() => isAdminUser && onSelectProduct?.(b.name)}
+                    className={`bg-white dark:bg-slate-900 rounded-full border-2 px-6 py-2.5 flex items-center justify-between shadow-2xs transition-all ${borderClass} ${
+                      isAdminUser ? 'cursor-pointer hover:scale-[1.01] active:scale-98' : ''
+                    }`}
+                    title={isAdminUser ? "Click to view & adjust stock for this product" : undefined}
+                  >
+                    <span className="font-bold text-gray-900 dark:text-white text-sm">{b.name}</span>
+                    <div className="flex items-center gap-6 text-xs">
+                      <span className={`font-bold text-sm ${textClass}`}>
+                        {isRed ? "EXPIRED" : `${b.daysLeft} days left`}
+                      </span>
+                      <span className="text-gray-400 dark:text-gray-400 font-mono font-medium">{b.expiryDate}</span>
+                    </div>
                   </div>
-                </div>
-              ))
+                )
+              })
             )}
           </div>
         </div>

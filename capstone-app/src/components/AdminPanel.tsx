@@ -128,6 +128,16 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     const cleanName = personForm.name.trim()
     const cleanDiscount = personForm.discountType
 
+    // Duplicate ID validation
+    const duplicateId = namedPersons.find(p => 
+      p.idNumber.toLowerCase() === cleanIdNumber.toLowerCase() && 
+      (!editingPerson || p.id !== editingPerson.id)
+    )
+    if (duplicateId) {
+      alert(`⚠️ Duplicate ID Error: ID Number "${cleanIdNumber}" is already registered to "${duplicateId.name}". You cannot reuse the same ID number for another person.`)
+      return
+    }
+
     try {
       if (editingPerson) {
         const numId = Number(editingPerson.id)
@@ -202,20 +212,37 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     return p.name.toLowerCase().includes(q) || p.idNumber.toLowerCase().includes(q) || (p.discountType || "").toLowerCase().includes(q)
   })
 
-  const loadAttendanceLogs = () => {
+  const loadAttendanceLogs = async () => {
     try {
-      const stored = localStorage.getItem("pinv_staff_attendance")
-      if (stored) setAttendanceLogs(JSON.parse(stored))
-    } catch (e) {}
+      const { data } = await supabase.from("staff_attendance").select("*").order("id", { ascending: false })
+      if (data) {
+        const formatted = data.map((d: any) => ({
+          id: String(d.id),
+          username: d.username || "",
+          displayName: d.display_name || d.username || "",
+          systemRole: d.system_role || "staff",
+          timeIn: d.time_in,
+          timeOut: d.time_out || undefined,
+          durationMinutes: d.duration_minutes || undefined
+        }))
+        setAttendanceLogs(formatted)
+      }
+    } catch (e) {
+      console.error("Failed to load attendance logs in AdminPanel", e)
+    }
   }
 
   useEffect(() => {
     loadAttendanceLogs()
-    window.addEventListener("storage", loadAttendanceLogs)
     window.addEventListener("pinv_attendance_updated", loadAttendanceLogs)
+    const channel = supabase
+      .channel("admin-attendance-realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "staff_attendance" }, loadAttendanceLogs)
+      .subscribe()
+
     return () => {
-      window.removeEventListener("storage", loadAttendanceLogs)
       window.removeEventListener("pinv_attendance_updated", loadAttendanceLogs)
+      supabase.removeChannel(channel)
     }
   }, [])
 
@@ -287,18 +314,26 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     return JSON.stringify(container, null, 2)
   }
 
-  const decryptBackupPayload = async (encryptedJsonStr: string): Promise<any> => {
-    let container: any
-    try {
-      container = JSON.parse(encryptedJsonStr)
-    } catch (e) {
-      throw new Error("Invalid file format: File is not valid JSON ciphertext.")
+  const decryptBackupPayload = async (fileText: string) => {
+    const trimmed = fileText.trim()
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        return JSON.parse(trimmed)
+      } catch (e) {}
     }
 
-    if (container.signature !== "MALABON_PHARMACY_ENCRYPTED_BACKUP_V1" || !container.iv || !container.data) {
-      if (container.metadata && container.inventory) {
-        return container
-      }
+    let container: any
+    try {
+      container = JSON.parse(trimmed)
+    } catch (e) {
+      throw new Error("Invalid backup file format.")
+    }
+
+    if (container && (container.inventory || container.sales || container.operator_profiles)) {
+      return container
+    }
+
+    if (!container || !container.iv || !container.data) {
       throw new Error("Invalid or corrupted encrypted backup file structure.")
     }
 
@@ -326,7 +361,8 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
         { data: sales },
         { data: saleItems },
         { data: saleItemBatches },
-        { data: auditLogs }
+        { data: auditLogs },
+        { data: namedPersonsData }
       ] = await Promise.all([
         supabase.from("operator_profiles").select("*").range(0, 99999),
         supabase.from("product_categories").select("*").range(0, 99999),
@@ -335,8 +371,15 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
         supabase.from("sales").select("*").range(0, 99999),
         supabase.from("sale_items").select("*").range(0, 99999),
         supabase.from("sale_item_batches").select("*").range(0, 99999),
-        supabase.from("system_audit_logs").select("*").range(0, 99999)
+        supabase.from("system_audit_logs").select("*").range(0, 99999),
+        supabase.from("named_persons").select("*").range(0, 99999)
       ])
+
+      let attendanceLogsData: any[] = []
+      try {
+        const { data: attData } = await supabase.from("staff_attendance").select("*").range(0, 99999)
+        if (attData) attendanceLogsData = attData
+      } catch (e) {}
 
       const backupData = {
         metadata: {
@@ -353,7 +396,9 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
         sales: sales || [],
         sale_items: saleItems || [],
         sale_item_batches: saleItemBatches || [],
-        system_audit_logs: auditLogs || []
+        system_audit_logs: auditLogs || [],
+        named_persons: namedPersonsData || [],
+        staff_attendance: attendanceLogsData || []
       }
 
       const encryptedContent = await encryptBackupPayload(backupData)
@@ -465,6 +510,19 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
         }
       }
 
+      if (Array.isArray(payload.named_persons) && payload.named_persons.length > 0) {
+        for (const np of payload.named_persons) {
+          await supabase.from("named_persons").upsert(np)
+        }
+        localStorage.setItem("pinv_named_persons_registry", JSON.stringify(payload.named_persons))
+        window.dispatchEvent(new Event("pinv_registry_updated"))
+      }
+
+      if (Array.isArray(payload.staff_attendance) && payload.staff_attendance.length > 0) {
+        localStorage.setItem("pinv_staff_attendance", JSON.stringify(payload.staff_attendance))
+        window.dispatchEvent(new Event("pinv_attendance_updated"))
+      }
+
       await onLogAction(
         "RESTORE_DATABASE",
         "SUPER_ADMIN",
@@ -494,9 +552,9 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     }
   }
 
-  const executeDataReset = async (type: "inventory" | "sales" | "audit" | "all") => {
-    if (resetConfirmInput.trim() !== "RESET DATA") {
-      alert('Confirmation string does not match. Please type "RESET DATA" to execute reset.')
+  const handleExecuteMasterReset = async (type: "inventory" | "sales" | "audit" | "all") => {
+    if (resetConfirmInput.trim().toUpperCase() !== "CONFIRM") {
+      alert("Please type 'CONFIRM' in uppercase to execute master data reset.")
       return
     }
 
@@ -550,9 +608,15 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
 
       if (type === "all") {
         try {
-          localStorage.setItem("pinv_named_persons_registry", JSON.stringify([]))
-          localStorage.setItem("pinv_customer_sales_map", JSON.stringify({}))
-          localStorage.setItem("pinv_staff_attendance", JSON.stringify([]))
+          await supabase.from("named_persons").delete().neq("id", 0)
+          try {
+            await supabase.rpc("reset_named_persons_sequence")
+            await supabase.rpc("reset_all_database_sequences")
+          } catch (e) {}
+
+          localStorage.removeItem("pinv_named_persons_registry")
+          localStorage.removeItem("pinv_customer_sales_map")
+          localStorage.removeItem("pinv_staff_attendance")
           setNamedPersons([])
           window.dispatchEvent(new Event("pinv_registry_updated"))
           window.dispatchEvent(new Event("pinv_attendance_updated"))
@@ -753,7 +817,17 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     }
 
     try {
-      localStorage.removeItem(`pinv_active_heartbeat_${normUser}`)
+      const keysToRemove: string[] = []
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i)
+        if (key && key.startsWith("pinv_active_heartbeat_")) {
+          const u = key.replace("pinv_active_heartbeat_", "").split("_tab_")[0].trim().toLowerCase()
+          if (u === normUser) {
+            keysToRemove.push(key)
+          }
+        }
+      }
+      keysToRemove.forEach(k => localStorage.removeItem(k))
     } catch (e) {}
 
     await supabase.from("system_audit_logs").insert({
@@ -1319,16 +1393,16 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
               <span className="text-[10px] text-gray-400 font-mono">{displayProfiles.length} Accounts</span>
             </div>
 
-            <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+            <div className={`space-y-2 max-h-72 ${openActionProfileId !== null ? 'overflow-visible' : 'overflow-y-auto'} pr-1 pb-2`}>
               {displayProfiles.length === 0 ? (
                 <p className="text-gray-400 text-center py-4 text-[11px]">No operator accounts created.</p>
               ) : (
-                displayProfiles.map(p => {
+                displayProfiles.map((p, pIdx) => {
                   const profileUsername = String(p.username || "").trim().toLowerCase()
                   const isActiveUser = activeUsernames.includes(profileUsername)
 
                   return (
-                    <div key={p.id} className="p-3 bg-gray-50/80 dark:bg-slate-900/80 border border-gray-100 dark:border-slate-700 rounded-xl flex justify-between items-center">
+                    <div key={p.id} className="p-3 bg-gray-50/80 dark:bg-slate-900/80 border border-gray-100 dark:border-slate-700 rounded-xl flex justify-between items-center relative">
                       <div className="flex items-center gap-2.5">
                         <div className="relative flex items-center justify-center">
                           <span className={`w-2.5 h-2.5 rounded-full ${isActiveUser ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}`} />
@@ -1360,7 +1434,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                         </button>
 
                         {openActionProfileId === p.id && (
-                          <div className="absolute right-0 mt-1 w-44 bg-white dark:bg-slate-800 rounded-xl shadow-lg border border-gray-200 dark:border-slate-700 p-1.5 z-50 space-y-1 text-xs font-sans">
+                          <div className={`absolute right-0 ${pIdx === 0 && displayProfiles.length > 1 ? 'top-full mt-1' : 'bottom-full mb-1'} w-48 bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-gray-200 dark:border-slate-700 p-1.5 z-50 space-y-1 text-xs font-sans`}>
                             <button
                               type="button"
                               onClick={() => {
@@ -1415,12 +1489,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
               </h3>
               <button
                 type="button"
-                onClick={() => {
-                  try {
-                    const stored = localStorage.getItem("pinv_staff_attendance")
-                    if (stored) setAttendanceLogs(JSON.parse(stored))
-                  } catch (e) {}
-                }}
+                onClick={loadAttendanceLogs}
                 className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-bold"
               >
                 Refresh Attendance

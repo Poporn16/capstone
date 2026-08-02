@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react"
 import { Clock, Search, Download, Calendar, UserCheck, RefreshCw } from "lucide-react"
 import { downloadExcelWithAutoFit } from "../utils/excelUtils"
+import { supabase } from "../utils/apiClient"
 
 export interface AttendanceRecord {
   id: string
@@ -24,11 +25,20 @@ export function StaffAttendancePage({ currentOperator }: StaffAttendancePageProp
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
 
-  const loadAttendance = () => {
+  const loadAttendance = async () => {
     try {
-      const stored = localStorage.getItem("pinv_staff_attendance")
-      if (stored) {
-        setRecords(JSON.parse(stored))
+      const { data } = await supabase.from("staff_attendance").select("*").order("id", { ascending: false })
+      if (data) {
+        const formatted: AttendanceRecord[] = data.map((d: any) => ({
+          id: String(d.id),
+          username: d.username || "",
+          displayName: d.display_name || d.username || "",
+          systemRole: d.system_role || "staff",
+          timeIn: d.time_in,
+          timeOut: d.time_out || undefined,
+          durationMinutes: d.duration_minutes || undefined
+        }))
+        setRecords(formatted)
       }
     } catch (e) {
       console.error("Failed to load attendance", e)
@@ -39,12 +49,16 @@ export function StaffAttendancePage({ currentOperator }: StaffAttendancePageProp
     loadAttendance()
 
     const handleSync = () => loadAttendance()
-    window.addEventListener("storage", handleSync)
     window.addEventListener("pinv_attendance_updated", handleSync)
 
+    const channel = supabase
+      .channel("staff-attendance-page-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "staff_attendance" }, loadAttendance)
+      .subscribe()
+
     return () => {
-      window.removeEventListener("storage", handleSync)
       window.removeEventListener("pinv_attendance_updated", handleSync)
+      supabase.removeChannel(channel)
     }
   }, [])
 

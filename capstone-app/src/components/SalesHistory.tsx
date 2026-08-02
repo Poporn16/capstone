@@ -50,7 +50,14 @@ export function SalesHistory({ currentOperator, sales, onToggleRefund }: SalesHi
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
+      const isSearchWalkIn = ["walk-in", "walk-in customer", "regular customer", "walkin"].includes(q);
       result = result.filter(sale => {
+        if (isSearchWalkIn) {
+          const cName = (sale.customerName || "").toLowerCase().trim();
+          if (!cName || ["walk-in", "walk-in customer", "regular customer", "walkin"].includes(cName)) {
+            return true;
+          }
+        }
         const matchId = sale.id.toLowerCase().includes(q) || `#${sale.id}`.toLowerCase().includes(q);
         const matchItems = sale.items.some(si => si.item.name.toLowerCase().includes(q));
         const matchOperator = (sale.processedBy || "").toLowerCase().includes(q);
@@ -63,12 +70,14 @@ export function SalesHistory({ currentOperator, sales, onToggleRefund }: SalesHi
     if (customerFilter === "named") {
       result = result.filter(sale => {
         const cName = sale.customerName || (sale.discountLabel && sale.discountLabel.includes("(") ? sale.discountLabel.split("(")[1]?.replace(")", "").trim() : "");
-        return Boolean(cName && cName.trim());
+        if (!cName || !cName.trim()) return false;
+        return !["walk-in", "walk-in customer", "regular customer", "walkin"].includes(cName.trim().toLowerCase());
       });
     } else if (customerFilter === "walkin") {
       result = result.filter(sale => {
         const cName = sale.customerName || (sale.discountLabel && sale.discountLabel.includes("(") ? sale.discountLabel.split("(")[1]?.replace(")", "").trim() : "");
-        return !cName || !cName.trim();
+        if (!cName || !cName.trim()) return true;
+        return ["walk-in", "walk-in customer", "regular customer", "walkin"].includes(cName.trim().toLowerCase());
       });
     } else if (customerFilter === "senior") {
       result = result.filter(sale => (sale.discountLabel || "").toLowerCase().includes("senior"));
@@ -216,7 +225,11 @@ export function SalesHistory({ currentOperator, sales, onToggleRefund }: SalesHi
   const isAdmin = !currentOperator || currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin";
 
   const uniqueCustomerNames = Array.from(
-    new Set(sales.map(s => s.customerName).filter((n): n is string => Boolean(n && n.trim())))
+    new Set(
+      sales
+        .map(s => s.customerName)
+        .filter((n): n is string => Boolean(n && n.trim() && !["walk-in", "walk-in customer", "regular customer", "walkin"].includes(n.trim().toLowerCase())))
+    )
   )
 
   return (
@@ -487,21 +500,24 @@ export function SalesHistory({ currentOperator, sales, onToggleRefund }: SalesHi
                     <td className="p-4 text-gray-600 dark:text-slate-300 font-medium whitespace-nowrap">{formatReceiptDate(sale.date)}</td>
                     <td className="p-4">
                       {(() => {
-                        const displayCustomer = sale.customerName || (sale.discountLabel && sale.discountLabel.includes("(") ? sale.discountLabel.split("(")[1]?.replace(")", "").trim() : null)
-                        if (displayCustomer) {
+                        const rawCustomer = sale.customerName || (sale.discountLabel && sale.discountLabel.includes("(") ? sale.discountLabel.split("(")[1]?.replace(")", "").trim() : null)
+                        const isWalkIn = !rawCustomer || 
+                          ["walk-in", "walk-in customer", "regular customer", "walkin"].includes(rawCustomer.trim().toLowerCase())
+
+                        if (!isWalkIn && rawCustomer) {
                           return (
                             <button
                               type="button"
-                              onClick={() => setSearchQuery(displayCustomer)}
+                              onClick={() => setSearchQuery(rawCustomer)}
                               className="px-2 py-0.5 rounded font-bold text-[10px] bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/40 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 transition-colors inline-flex items-center gap-1"
                               title="Click to search all orders by this customer"
                             >
                               <User className="w-3 h-3 text-blue-500" />
-                              <span>{displayCustomer}</span>
+                              <span>{rawCustomer}</span>
                             </button>
                           )
                         }
-                        return <span className="text-[10px] text-gray-400 italic">Walk-in</span>
+                        return <span className="text-[10px] text-gray-400 dark:text-slate-500 font-semibold italic">Walk-in</span>
                       })()}
                     </td>
                     <td className="p-4">

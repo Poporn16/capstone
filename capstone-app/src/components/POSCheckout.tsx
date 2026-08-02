@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react"
 import type { InventoryItem, Sale } from "../App"
 import { supabase } from "../utils/apiClient"
-import { ArrowLeft, Printer, CreditCard, X, Users, Edit2, Plus, Trash2, UserCheck, CheckCircle2 } from "lucide-react"
+import { ArrowLeft, Printer, CreditCard, X, Users } from "lucide-react"
 
 export interface NamedPerson {
   id: string
@@ -44,28 +44,33 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
   const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false)
 
   // Registry of known named persons with ID numbers
-  const [namedPersonsRegistry, setNamedPersonsRegistry] = useState<NamedPerson[]>(() => {
-    try {
-      const stored = localStorage.getItem("pinv_named_persons_registry")
-      if (stored !== null) return JSON.parse(stored)
-    } catch (e) {}
-    return []
-  })
+  const [namedPersonsRegistry, setNamedPersonsRegistry] = useState<NamedPerson[]>([])
 
   useEffect(() => {
-    const syncRegistry = () => {
-      try {
-        const stored = localStorage.getItem("pinv_named_persons_registry")
-        setNamedPersonsRegistry(stored ? JSON.parse(stored) : [])
-      } catch (e) {
-        setNamedPersonsRegistry([])
+    const fetchNamedPersonsFromDb = async () => {
+      const { data } = await supabase.from("named_persons").select("*").order("id", { ascending: false })
+      if (data) {
+        const formatted = data.map((d: any) => ({
+          id: String(d.id),
+          idNumber: d.id_number || "",
+          name: d.name || "",
+          discountType: d.id_type || d.discount_type || undefined
+        }))
+        setNamedPersonsRegistry(formatted)
       }
     }
-    window.addEventListener("storage", syncRegistry)
-    window.addEventListener("pinv_registry_updated", syncRegistry)
+
+    fetchNamedPersonsFromDb()
+    window.addEventListener("pinv_registry_updated", fetchNamedPersonsFromDb)
+
+    const channel = supabase
+      .channel("named-persons-pos-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "named_persons" }, fetchNamedPersonsFromDb)
+      .subscribe()
+
     return () => {
-      window.removeEventListener("storage", syncRegistry)
-      window.removeEventListener("pinv_registry_updated", syncRegistry)
+      window.removeEventListener("pinv_registry_updated", fetchNamedPersonsFromDb)
+      supabase.removeChannel(channel)
     }
   }, [])
 
@@ -93,19 +98,6 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
         setDisplayLimit(prev => prev + 20)
       }
     }
-  }
-
-  const getCategoryBadgeStyle = (catName: string) => {
-    const normalized = (catName || "").toLowerCase().trim()
-    if (normalized.includes("prescription") || normalized.includes("rx")) return "bg-pink-100 text-pink-800 border-pink-300"
-    if (normalized.includes("otc") || normalized.includes("counter")) return "bg-blue-100 text-blue-800 border-blue-300"
-    if (normalized.includes("supply") || normalized.includes("supplies")) return "bg-emerald-100 text-emerald-800 border-emerald-300"
-    if (normalized.includes("wellness") || normalized.includes("vitamin")) return "bg-purple-100 text-purple-800 border-purple-300"
-    if (normalized.includes("first aid")) return "bg-amber-100 text-amber-800 border-amber-300"
-    if (normalized.includes("cardiovascular")) return "bg-[#e0f2fe] text-[#0369a1] border-[#7dd3fc]"
-    if (normalized.includes("respiratory")) return "bg-[#e0e7ff] text-[#3730a3] border-[#a5b4fc]"
-    if (normalized.includes("gastrointestinal")) return "bg-[#ccfbf1] text-[#0f766e] border-[#5eead4]"
-    return "bg-slate-100 text-slate-800 border-slate-300"
   }
 
   const getCategoryCardBorder = (catName: string) => {
@@ -356,7 +348,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
     })
   }
 
-  const completeSale = () => {
+  const completeSale = async () => {
     const numericCash = parseFloat(cashReceived) || 0
     const trimmedCustomer = customerName.trim()
     const trimmedIdNumber = customerIdNumber.trim()
@@ -367,41 +359,55 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
       return
     }
 
+    // Strict Duplicate ID & Name Conflict Validation
+    if (trimmedIdNumber) {
+      const conflictById = namedPersonsRegistry.find(p => 
+        p.idNumber.toLowerCase() === trimmedIdNumber.toLowerCase() && 
+        p.name.toLowerCase() !== trimmedCustomer.toLowerCase()
+      )
+      if (conflictById) {
+        alert(`⚠️ ID Conflict Error: ID Number "${trimmedIdNumber}" is already registered to "${conflictById.name}" in the system. You cannot reuse this ID number for a different customer ("${trimmedCustomer}"). Please correct the ID Number or select "${conflictById.name}".`)
+        return
+      }
+    }
+
+    if (trimmedCustomer && trimmedIdNumber) {
+      const conflictByName = namedPersonsRegistry.find(p => 
+        p.name.toLowerCase() === trimmedCustomer.toLowerCase() && 
+        p.idNumber.toLowerCase() !== trimmedIdNumber.toLowerCase()
+      )
+      if (conflictByName) {
+        alert(`⚠️ ID Conflict Error: Customer "${conflictByName.name}" is already registered under ID Number "${conflictByName.idNumber}". You entered a conflicting ID Number ("${trimmedIdNumber}"). Please use ID Number "${conflictByName.idNumber}".`)
+        return
+      }
+    }
+
     if (!cart.length || (paymentMethod === "cash" && numericCash < total)) return
 
     const fullCustomerName = trimmedCustomer
       ? (trimmedIdNumber ? `${trimmedCustomer} (ID: ${trimmedIdNumber})` : trimmedCustomer)
-      : "Regular Customer"
+      : "Walk-In Customer"
 
-    if (trimmedCustomer && trimmedIdNumber) {
-      const existing = namedPersonsRegistry.find(p => p.idNumber.toLowerCase() === trimmedIdNumber.toLowerCase() || p.name.toLowerCase() === trimmedCustomer.toLowerCase())
+    if (trimmedCustomer) {
+      const activeIdNumber = trimmedIdNumber || `REG-${Date.now().toString().slice(-6)}`
+      const existing = namedPersonsRegistry.find(p => 
+        (trimmedIdNumber && p.idNumber.toLowerCase() === trimmedIdNumber.toLowerCase()) || 
+        p.name.toLowerCase() === trimmedCustomer.toLowerCase()
+      )
       if (!existing) {
-        const autoPerson: NamedPerson = {
-          id: Date.now().toString(),
-          idNumber: trimmedIdNumber,
-          name: trimmedCustomer,
-          discountType: discountType !== "none" ? discountType : undefined
-        }
-
-        const updated = [autoPerson, ...namedPersonsRegistry]
-        setNamedPersonsRegistry(updated)
         try {
-          localStorage.setItem("pinv_named_persons_registry", JSON.stringify(updated))
-          window.dispatchEvent(new Event("pinv_registry_updated"))
-        } catch (e) {}
-
-        // Persist new customer person directly into Supabase table named_persons
-        try {
-          supabase.from("named_persons").insert([{
-            id_number: trimmedIdNumber,
+          const { error } = await supabase.from("named_persons").insert([{
+            id_number: activeIdNumber,
             name: trimmedCustomer,
             discount_type: discountType !== "none" ? discountType : "none"
-          }]).then(({ error }) => {
-            if (error) console.error("Error inserting named person:", error)
+          }])
+          if (error) {
+            console.error("Supabase insert error into named_persons:", error)
+          } else {
             window.dispatchEvent(new Event("pinv_registry_updated"))
-          })
+          }
         } catch (e) {
-          console.error("Supabase insert error:", e)
+          console.error("Supabase insert error into named_persons:", e)
         }
       }
     }

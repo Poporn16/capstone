@@ -1,6 +1,6 @@
 import { useState } from "react"
-import { supabase } from "../utils/apiClient"
-import { verifyAndMigratePassword, hashPassword } from "../utils/passwordUtils"
+import { supabase, triggerForceLogout } from "../utils/apiClient"
+import { verifyAndMigratePassword } from "../utils/passwordUtils"
 import { Lock, User, KeyRound, Eye, EyeOff, ShieldCheck } from "lucide-react"
 
 interface LoginScreenProps {
@@ -25,27 +25,9 @@ export function LoginScreen({ onAuthSuccess, theme }: LoginScreenProps) {
     const cleanUsername = username.trim().toLowerCase()
     const cleanPassword = password.trim()
 
-    // Check if account is currently active on another tab/device
-    const HEARTBEAT_TIMEOUT = 10000
-    const now = Date.now()
-    let isAlreadyLoggedInElsewhere = false
-
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i)
-        if (key && key.startsWith(`pinv_active_heartbeat_${cleanUsername}`)) {
-          const val = Number(localStorage.getItem(key))
-          if (val && (now - val < HEARTBEAT_TIMEOUT)) {
-            isAlreadyLoggedInElsewhere = true
-            break
-          }
-        }
-      }
-    } catch (err) {}
-
-    if (isAlreadyLoggedInElsewhere) {
+    if (!cleanUsername || !cleanPassword) {
       setIsLoading(false)
-      setErrorMsg(`⚠️ Access Denied: Account "@${cleanUsername}" is currently logged in on another active session. Please log out from that session first.`)
+      setErrorMsg("Please enter both username and password.")
       return
     }
 
@@ -55,9 +37,8 @@ export function LoginScreen({ onAuthSuccess, theme }: LoginScreenProps) {
       .eq("username", cleanUsername)
       .single()
 
-    setIsLoading(false)
-
     if (error || !userProfile) {
+      setIsLoading(false)
       setErrorMsg("Invalid username or password access code.")
       return
     }
@@ -66,9 +47,13 @@ export function LoginScreen({ onAuthSuccess, theme }: LoginScreenProps) {
     const isValidPassword = await verifyAndMigratePassword(cleanPassword, storedPassword, userProfile.id)
 
     if (!isValidPassword) {
+      setIsLoading(false)
       setErrorMsg("Invalid username or password access code.")
       return
     }
+
+    // Terminate any previous/lingering active heartbeat for this account
+    triggerForceLogout(cleanUsername, cleanUsername)
 
     // Save actual operator object to sessionStorage
     const sessionData = {
@@ -77,7 +62,10 @@ export function LoginScreen({ onAuthSuccess, theme }: LoginScreenProps) {
       systemRole: userProfile.system_role || "staff"
     }
 
+    sessionStorage.setItem("pinv_session", JSON.stringify({ operator: sessionData, timestamp: Date.now() }))
     sessionStorage.setItem("current_terminal_operator", JSON.stringify(sessionData))
+
+    setIsLoading(false)
     onAuthSuccess(sessionData)
   }
 

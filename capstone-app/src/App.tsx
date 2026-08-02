@@ -83,13 +83,16 @@ export default function App() {
 
   const [currentOperator, setCurrentOperator] = useState<{ username: string; displayName: string; systemRole: string } | null>(() => {
     try {
-      // sessionStorage keeps each browser tab's login independent
-      const stored = sessionStorage.getItem("pinv_session")
+      const stored = sessionStorage.getItem("pinv_session") || sessionStorage.getItem("current_terminal_operator")
       if (stored) {
         const parsed = JSON.parse(stored)
-        const twelveHours = 12 * 60 * 60 * 1000
-        if (parsed.timestamp && (Date.now() - parsed.timestamp < twelveHours)) {
-          return parsed.operator
+        const targetObj = parsed.operator || parsed
+        if (targetObj && (targetObj.username || targetObj.displayName)) {
+          return {
+            username: String(targetObj.username || targetObj.displayName || "user").toLowerCase().trim(),
+            displayName: targetObj.displayName || targetObj.display_name || targetObj.username || "User",
+            systemRole: targetObj.systemRole || targetObj.system_role || "staff"
+          }
         }
       }
     } catch (e) {
@@ -110,11 +113,11 @@ export default function App() {
   const saveSession = (operator: any) => {
     setCurrentOperator(operator)
     try {
-      // sessionStorage: each tab has its own session
       sessionStorage.setItem("pinv_session", JSON.stringify({
         operator,
         timestamp: Date.now()
       }))
+      sessionStorage.setItem("current_terminal_operator", JSON.stringify(operator))
     } catch (e) {}
   }
 
@@ -165,54 +168,75 @@ export default function App() {
     return () => window.removeEventListener("wheel", handleWheelHorizontalScroll)
   }, [])
 
-  const clockOutUser = (uName: string) => {
+  const clockOutUser = async (uName: string) => {
     if (!uName) return
     const target = uName.trim().toLowerCase()
     try {
-      const stored = localStorage.getItem("pinv_staff_attendance")
-      if (stored) {
-        const attendanceList = JSON.parse(stored)
+      const { data } = await supabase
+        .from("staff_attendance")
+        .select("*")
+        .ilike("username", target)
+        .is("time_out", null)
+
+      if (data && data.length > 0) {
         const nowIso = new Date().toISOString()
-        let updated = false
-        const nextAttendanceList = attendanceList.map((r: any) => {
-          if (r.username && String(r.username).trim().toLowerCase() === target && !r.timeOut) {
-            updated = true
-            const inTime = new Date(r.timeIn).getTime()
-            const outTime = new Date(nowIso).getTime()
-            const durationMinutes = Math.max(1, Math.round((outTime - inTime) / (1000 * 60)))
-            return {
-              ...r,
-              timeOut: nowIso,
-              durationMinutes
-            }
+        for (const record of data) {
+          const inTime = new Date(record.time_in).getTime()
+          const outTime = new Date(nowIso).getTime()
+          const durationMinutes = Math.max(1, Math.round((outTime - inTime) / (1000 * 60)))
+
+          await supabase
+            .from("staff_attendance")
+            .update({
+              time_out: nowIso,
+              duration_minutes: durationMinutes
+            })
+            .eq("id", record.id)
+        }
+        window.dispatchEvent(new Event("pinv_attendance_updated"))
+      }
+    } catch (e) {
+      console.error("Error clocking out user from Supabase", e)
+    }
+  }
+
+  const clearAllUserHeartbeats = (uName: string) => {
+    if (!uName) return
+    const target = uName.trim().toLowerCase()
+    try {
+      const keysToRemove: string[] = []
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i)
+        if (key && key.startsWith("pinv_active_heartbeat_")) {
+          const keyUser = key.replace("pinv_active_heartbeat_", "").split("_tab_")[0].trim().toLowerCase()
+          if (keyUser === target) {
+            keysToRemove.push(key)
           }
-          return r
-        })
-        if (updated) {
-          localStorage.setItem("pinv_staff_attendance", JSON.stringify(nextAttendanceList))
-          window.dispatchEvent(new Event("storage"))
-          window.dispatchEvent(new Event("pinv_attendance_updated"))
         }
       }
+      keysToRemove.forEach(k => localStorage.removeItem(k))
+    } catch (e) {}
+  }
+
+  const clearSessionData = () => {
+    try {
+      sessionStorage.removeItem("pinv_session")
+      sessionStorage.removeItem("current_terminal_operator")
+      sessionStorage.removeItem("pinv_active_tab")
+      localStorage.removeItem("pinv_session")
+      localStorage.removeItem("current_terminal_operator")
     } catch (e) {}
   }
 
   const handleLogout = () => {
-    sessionStorage.removeItem("pinv_session")
-    sessionStorage.removeItem("pinv_active_tab")
     const op = currentOperator
     if (op?.username) {
       const uName = String(op.username).trim().toLowerCase()
-      try {
-        let tabId = sessionStorage.getItem("pinv_tab_session_id")
-        if (tabId) {
-          localStorage.removeItem(`pinv_active_heartbeat_${uName}_tab_${tabId}`)
-        }
-        localStorage.removeItem(`pinv_active_heartbeat_${uName}`)
-      } catch (e) {}
+      clearAllUserHeartbeats(uName)
       clockOutUser(uName)
       logSystemAction("SESSION_LOGOUT", "AUTHENTICATION Portal", `Terminated station session for @${op.username}`).catch(() => {})
     }
+    clearSessionData()
     setCurrentOperator(null)
     setActiveTab("dashboard")
   }
@@ -297,7 +321,9 @@ export default function App() {
           if (act === "TARGET_SESSION_TERMINATED") {
             const targetUser = String(logData.details_summary || "").trim().toLowerCase()
             if (targetUser === currentUser) {
-              sessionStorage.removeItem("pinv_session")
+              clockOutUser(currentUser)
+              clearAllUserHeartbeats(currentUser)
+              clearSessionData()
               setCurrentOperator(null)
               setActiveTab("dashboard")
               alert("Your session has been terminated by an administrator.")
@@ -322,10 +348,9 @@ export default function App() {
           const curr = String(currentOperator.username).trim().toLowerCase()
           const initiator = String(data.initiatedBy || "").trim().toLowerCase()
           if (target === curr && (initiator === "" || initiator !== curr)) {
-            try {
-              localStorage.removeItem(`pinv_active_heartbeat_${curr}`)
-            } catch (e) {}
-            sessionStorage.removeItem("pinv_session")
+            clockOutUser(curr)
+            clearAllUserHeartbeats(curr)
+            clearSessionData()
             setCurrentOperator(null)
             setActiveTab("dashboard")
             alert("Your session has been terminated by an administrator.")
@@ -333,10 +358,9 @@ export default function App() {
         } else if (data.type === 'FORCE_LOGOUT_BELOW_SUPER_ADMIN') {
           if (String(currentOperator.systemRole).toLowerCase() !== 'superadmin') {
             const curr = String(currentOperator.username).trim().toLowerCase()
-            try {
-              localStorage.removeItem(`pinv_active_heartbeat_${curr}`)
-            } catch (e) {}
-            sessionStorage.removeItem("pinv_session")
+            clockOutUser(curr)
+            clearAllUserHeartbeats(curr)
+            clearSessionData()
             setCurrentOperator(null)
             setActiveTab("dashboard")
             alert("System master data was reset by Super Admin. Your session has been terminated.")
@@ -360,7 +384,12 @@ export default function App() {
 
     const handleForceLogoutBelowSAEvent = () => {
       if (currentOperator && String(currentOperator.systemRole).toLowerCase() !== 'superadmin') {
-        sessionStorage.removeItem("pinv_session")
+        const curr = String(currentOperator.username || "").trim().toLowerCase()
+        if (curr) {
+          clockOutUser(curr)
+          clearAllUserHeartbeats(curr)
+        }
+        clearSessionData()
         setCurrentOperator(null)
         setActiveTab("dashboard")
         alert("System master data was reset by Super Admin. Your session has been terminated.")
@@ -807,7 +836,7 @@ export default function App() {
     )
   }
 
-  const isAdminUser = currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin"
+  const isAdminUser = currentOperator?.systemRole === "admin" || currentOperator?.systemRole === "superadmin"
 
   const navigationTabs = [
     { id: "dashboard", label: "Dashboard", icon: Home },
@@ -824,7 +853,7 @@ export default function App() {
     navigationTabs.push({ id: "attendance", label: "Staff Attendance", icon: UserCheck })
     navigationTabs.push({ id: "admin_control", label: "Admin Panel", icon: ShieldAlert })
   }
-  if (currentOperator.systemRole === "superadmin") {
+  if (currentOperator?.systemRole === "superadmin") {
     navigationTabs.push({ id: "super_admin", label: "Super Admin", icon: Flame })
   }
 
@@ -836,13 +865,28 @@ export default function App() {
     .filter(b => {
       if (!b.expiryDate || b.stock <= 0) return false
       const diffDays = Math.ceil((new Date(b.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-      return diffDays <= 90
+      return diffDays <= 180
     })
     .map(b => {
       const diffDays = Math.ceil((new Date(b.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
       return { ...b, daysLeft: diffDays }
     })
     .sort((a, b) => a.daysLeft - b.daysLeft)
+
+  const handleSelectStockProduct = (productName: string, productId?: string) => {
+    if (isAdminUser) {
+      setActiveTab("stock_adjust")
+      setShowNotifications(false)
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("pinv_select_product", {
+          detail: { name: productName, id: productId }
+        }))
+      }, 100)
+    } else {
+      setActiveTab("dashboard")
+      setShowNotifications(false)
+    }
+  }
 
   const totalNotificationCount = lowStockItems.length + expiringItems.length
 
@@ -891,8 +935,8 @@ export default function App() {
         <div className="pt-3 border-t border-black/10 dark:border-slate-700 flex flex-col gap-2 shrink-0">
           {!isSidebarCollapsed && (
             <div className="text-xs text-[#1c2d2c] dark:text-slate-200">
-              <p className="font-bold truncate max-w-[180px]">{currentOperator.displayName}</p>
-              <p className="text-[10px] opacity-75 font-mono uppercase">{currentOperator.systemRole}</p>
+              <p className="font-bold truncate max-w-[180px]">{currentOperator?.displayName}</p>
+              <p className="text-[10px] opacity-75 font-mono uppercase">{currentOperator?.systemRole}</p>
             </div>
           )}
           <button 
@@ -949,7 +993,7 @@ export default function App() {
                   <div className="max-h-72 overflow-y-auto space-y-3 text-xs">
                     <div>
                       <p className="font-bold text-orange-600 dark:text-orange-400 uppercase text-[10px] tracking-wider mb-1">Low Stock Alerts ({lowStockItems.length})</p>
-                      {lowStockItems.length === 0 ? <p className="text-gray-400 py-1">No low stock alerts.</p> : lowStockItems.map(item => <div key={item.id} onClick={() => { setActiveTab("dashboard"); setShowNotifications(false); }} className="p-2 bg-orange-50/60 dark:bg-orange-950/40 rounded-lg border border-orange-100 dark:border-orange-900/50 mb-1 flex justify-between cursor-pointer hover:bg-orange-100/60 dark:hover:bg-orange-900/60 transition-colors"><span className="font-medium text-gray-900 dark:text-gray-100">{item.name}</span><span className="font-bold text-orange-700 dark:text-orange-300">{item.stock} left</span></div>)}
+                      {lowStockItems.length === 0 ? <p className="text-gray-400 py-1">No low stock alerts.</p> : lowStockItems.map(item => <div key={item.id} onClick={() => handleSelectStockProduct(item.name, item.id)} className="p-2 bg-orange-50/60 dark:bg-orange-950/40 rounded-lg border border-orange-100 dark:border-orange-900/50 mb-1 flex justify-between cursor-pointer hover:bg-orange-100/60 dark:hover:bg-orange-900/60 transition-colors"><span className="font-medium text-gray-900 dark:text-gray-100">{item.name}</span><span className="font-bold text-orange-700 dark:text-orange-300">{item.stock} left</span></div>)}
                     </div>
                     <div>
                       <p className="font-bold text-red-600 dark:text-red-400 uppercase text-[10px] tracking-wider mb-1">Expiring Batch Alerts ({expiringItems.length})</p>
@@ -959,7 +1003,7 @@ export default function App() {
                         expiringItems.map((item, idx) => (
                           <div 
                             key={idx} 
-                            onClick={() => { setActiveTab("dashboard"); setShowNotifications(false); }} 
+                            onClick={() => handleSelectStockProduct(item.name)} 
                             className="p-2 bg-red-50/60 dark:bg-red-950/40 rounded-lg border border-red-100 dark:border-red-900/50 mb-1 flex justify-between items-center cursor-pointer hover:bg-red-100/60 dark:hover:bg-red-900/60 transition-colors"
                           >
                             <span className="font-medium text-gray-900 dark:text-gray-100">{item.name}</span>
@@ -975,14 +1019,14 @@ export default function App() {
           </div>
         </header>
         <main className="flex-1 px-4 sm:px-8 pb-8 overflow-y-auto">
-          {activeTab === "dashboard" && <Dashboard inventory={inventory} sales={sales} categoriesList={categoriesList} />}
+          {activeTab === "dashboard" && <Dashboard inventory={inventory} sales={sales} categoriesList={categoriesList} isAdminUser={isAdminUser} onSelectProduct={handleSelectStockProduct} />}
           {activeTab === "pos" && <POSCheckout inventory={inventory} sales={sales} categoriesList={categoriesList} onCompleteSale={addSale} />}
-          {activeTab === "inventory" && <InventoryManager currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} refreshCategories={fetchCategories} refreshInventory={fetchInventory} onUpdateInventory={updateInventoryItem} onDeleteProduct={deleteInventoryItem} onLogAction={logSystemAction} />}
-          {activeTab === "stock_adjust" && <StockAdjustment currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} fetchInventory={fetchInventory} onLogAction={logSystemAction} />}
-          {activeTab === "history" && <SalesHistory currentOperator={currentOperator} sales={sales} onToggleRefund={handleToggleRefund} />}
+          {activeTab === "inventory" && currentOperator && <InventoryManager currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} refreshCategories={fetchCategories} refreshInventory={fetchInventory} onUpdateInventory={updateInventoryItem} onDeleteProduct={deleteInventoryItem} onLogAction={logSystemAction} />}
+          {activeTab === "stock_adjust" && currentOperator && <StockAdjustment currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} fetchInventory={fetchInventory} onLogAction={logSystemAction} />}
+          {activeTab === "history" && currentOperator && <SalesHistory currentOperator={currentOperator} sales={sales} onToggleRefund={handleToggleRefund} />}
           {activeTab === "reports" && isAdminUser && <SalesReport sales={sales} inventory={inventory} categoriesList={categoriesList} />}
-          {activeTab === "attendance" && isAdminUser && <StaffAttendancePage currentOperator={currentOperator} />}
-          {activeTab === "admin_control" && (currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin") && (
+          {activeTab === "attendance" && isAdminUser && currentOperator && <StaffAttendancePage currentOperator={currentOperator} />}
+          {activeTab === "admin_control" && (currentOperator?.systemRole === "admin" || currentOperator?.systemRole === "superadmin") && currentOperator && (
             <AdminPanel
               currentOperator={currentOperator}
               onLogAction={logSystemAction}
@@ -992,7 +1036,7 @@ export default function App() {
               }}
             />
           )}
-          {activeTab === "super_admin" && currentOperator.systemRole === "superadmin" && (
+          {activeTab === "super_admin" && currentOperator?.systemRole === "superadmin" && currentOperator && (
             <SuperAdminPanel
               currentOperator={currentOperator}
               onLogAction={logSystemAction}

@@ -398,6 +398,19 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
         }
       }
 
+      if (Array.isArray(payload.named_persons) && payload.named_persons.length > 0) {
+        for (const np of payload.named_persons) {
+          await supabase.from("named_persons").upsert(np)
+        }
+        localStorage.setItem("pinv_named_persons_registry", JSON.stringify(payload.named_persons))
+        window.dispatchEvent(new Event("pinv_registry_updated"))
+      }
+
+      if (Array.isArray(payload.staff_attendance) && payload.staff_attendance.length > 0) {
+        localStorage.setItem("pinv_staff_attendance", JSON.stringify(payload.staff_attendance))
+        window.dispatchEvent(new Event("pinv_attendance_updated"))
+      }
+
       await onLogAction(
         "RESTORE_DATABASE",
         "SUPER_ADMIN",
@@ -524,9 +537,23 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
       }
 
       if (type === "all") {
+        setResetProgress(prev => ({ ...prev, step: "Purging named person registry & staff attendance..." }))
         try {
+          await supabase.from("named_persons").delete().neq("id", 0)
+          await supabase.from("named_persons").delete().neq("name", "")
+          await supabase.rpc("reset_named_persons_sequence").catch(() => {})
+          await supabase.rpc("reset_all_database_sequences").catch(() => {})
+        } catch (e) {}
+
+        try {
+          await supabase.from("staff_attendance").delete().neq("id", 0).catch(() => {})
+        } catch (e) {}
+
+        try {
+          localStorage.removeItem("pinv_named_persons_registry")
           localStorage.setItem("pinv_named_persons_registry", JSON.stringify([]))
           localStorage.setItem("pinv_customer_sales_map", JSON.stringify({}))
+          localStorage.removeItem("pinv_staff_attendance")
           localStorage.setItem("pinv_staff_attendance", JSON.stringify([]))
           window.dispatchEvent(new Event("pinv_registry_updated"))
           window.dispatchEvent(new Event("pinv_attendance_updated"))
@@ -937,7 +964,17 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
     }
 
     try {
-      localStorage.removeItem(`pinv_active_heartbeat_${targetUser}`)
+      const keysToRemove: string[] = []
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i)
+        if (key && key.startsWith("pinv_active_heartbeat_")) {
+          const u = key.replace("pinv_active_heartbeat_", "").split("_tab_")[0].trim().toLowerCase()
+          if (u === targetUser) {
+            keysToRemove.push(key)
+          }
+        }
+      }
+      keysToRemove.forEach(k => localStorage.removeItem(k))
     } catch (e) {}
 
     await supabase.from("system_audit_logs").insert({
@@ -1099,16 +1136,16 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
               <span className="text-[10px] text-gray-400 font-mono">{profiles.length} Accounts</span>
             </div>
 
-            <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+            <div className={`space-y-2 max-h-72 ${openActionProfileId !== null ? 'overflow-visible' : 'overflow-y-auto'} pr-1 pb-2`}>
               {profiles.length === 0 ? (
                 <p className="text-gray-400 text-center py-4 text-[11px]">No operator accounts created.</p>
               ) : (
-                profiles.map(p => {
+                profiles.map((p, pIdx) => {
                   const profileUsername = String(p.username || "").trim().toLowerCase()
                   const isActiveUser = activeUsernames.includes(profileUsername)
 
                   return (
-                    <div key={p.id} className="p-3 bg-gray-50/80 dark:bg-slate-900/80 border border-gray-100 dark:border-slate-700 rounded-xl flex justify-between items-center">
+                    <div key={p.id} className="p-3 bg-gray-50/80 dark:bg-slate-900/80 border border-gray-100 dark:border-slate-700 rounded-xl flex justify-between items-center relative">
                       <div className="flex items-center gap-2.5">
                         <div className="relative flex items-center justify-center">
                           <span className={`w-2.5 h-2.5 rounded-full ${isActiveUser ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}`} />
@@ -1140,7 +1177,7 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
                         </button>
 
                         {openActionProfileId === p.id && (
-                          <div className="absolute right-0 mt-1 w-44 bg-white dark:bg-slate-800 rounded-xl shadow-lg border border-gray-200 dark:border-slate-700 p-1.5 z-50 space-y-1 text-xs font-sans">
+                          <div className={`absolute right-0 ${pIdx === 0 && profiles.length > 1 ? 'top-full mt-1' : 'bottom-full mb-1'} w-48 bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-gray-200 dark:border-slate-700 p-1.5 z-50 space-y-1 text-xs font-sans`}>
                             <button
                               type="button"
                               onClick={() => {

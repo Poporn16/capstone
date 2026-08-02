@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from "react"
 import type { Sale, InventoryItem } from "../App"
 import { downloadExcelWithAutoFit } from "../utils/excelUtils"
 import { supabase } from "../utils/apiClient"
-import { TrendingUp, BarChart3, DollarSign, ShoppingBag, Download, Filter, Users, CreditCard, Layers, UserCheck, PackageCheck } from "lucide-react"
+import { TrendingUp, BarChart3, DollarSign, ShoppingBag, Download, Filter, Users, CreditCard, Layers, UserCheck, PackageCheck, Search } from "lucide-react"
 
 interface SalesReportProps {
   sales: Sale[]
@@ -15,6 +15,8 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
   const [startDate, setStartDate] = useState<string>("")
   const [endDate, setEndDate] = useState<string>("")
   const [activeReportTab, setActiveReportTab] = useState<"all" | "payment" | "cogs" | "category" | "cashier">("all")
+  const [report1SearchQuery, setReport1SearchQuery] = useState("")
+  const [report1CategoryFilter, setReport1CategoryFilter] = useState("all")
   const [, setForceTick] = useState(0)
 
   useEffect(() => {
@@ -199,10 +201,27 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
       })
     })
 
-    const list = Array.from(itemMap.values()).sort((a, b) => b.profit - a.profit)
+    const list = Array.from(itemMap.values()).sort((a, b) => b.unitsSold - a.unitsSold || b.profit - a.profit)
     const maxProfit = Math.max(...list.map(i => i.profit), 100)
     return { list, maxProfit }
   }, [filteredSales, invLookupMap])
+
+  const report1Categories = useMemo(() => {
+    const set = new Set<string>()
+    profitAndCogsByItem.list.forEach(i => {
+      if (i.category) set.add(i.category)
+    })
+    return Array.from(set).sort()
+  }, [profitAndCogsByItem.list])
+
+  const filteredReport1List = useMemo(() => {
+    return profitAndCogsByItem.list.filter(item => {
+      const q = report1SearchQuery.toLowerCase().trim()
+      const matchName = !q || item.name.toLowerCase().includes(q)
+      const matchCat = report1CategoryFilter === "all" || item.category.toLowerCase().trim() === report1CategoryFilter.toLowerCase().trim()
+      return matchName && matchCat
+    })
+  }, [profitAndCogsByItem.list, report1SearchQuery, report1CategoryFilter])
 
   // REPORT 2: No. of Items Sold by Category
   const itemsSoldByCategory = useMemo(() => {
@@ -382,7 +401,7 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
       `#${s.id}`,
       s.date ? new Date(s.date).toLocaleString() : "N/A",
       s.processedBy || "admin",
-      s.customerName || "Regular Customer",
+      s.customerName || "Walk-In Customer",
       String(s.paymentMethod || "CASH").toUpperCase(),
       s.paymentMethod === "cash" ? "Cash" : (s.onlineChannel || "GCash"),
       (Number(s.subtotal || s.total) || 0).toFixed(2),
@@ -549,7 +568,7 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
       {/* REPORT 1: Profit and COGS by Item */}
       {(activeReportTab === "all" || activeReportTab === "cogs") && (
         <div className="bg-white dark:bg-slate-800 rounded-2xl border border-gray-200 dark:border-slate-700 p-5 space-y-4 shadow-sm">
-          <div className="flex justify-between items-center border-b dark:border-slate-700 pb-3">
+          <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3 border-b dark:border-slate-700 pb-3">
             <div>
               <h3 className="font-extrabold text-sm text-gray-900 dark:text-white flex items-center gap-2">
                 <TrendingUp className="w-4.5 h-4.5 text-blue-600 dark:text-blue-400" />
@@ -559,9 +578,45 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
                 Detailed breakdown of product revenue, item cost basis, net profit, and profit margin percentage
               </p>
             </div>
-            <span className="text-[10px] font-bold px-2.5 py-1 bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 rounded-full border border-blue-200 dark:border-blue-800 font-mono">
-              {profitAndCogsByItem.list.length} Items Sold
-            </span>
+
+            {/* Filter controls: Search by Product Name & Category */}
+            <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+              <div className="relative flex-1 min-w-[160px] sm:w-48">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search item name..."
+                  value={report1SearchQuery}
+                  onChange={e => setReport1SearchQuery(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl text-xs text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              <select
+                value={report1CategoryFilter}
+                onChange={e => setReport1CategoryFilter(e.target.value)}
+                className="px-3 py-1.5 bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl text-xs text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+              >
+                <option value="all">All Categories</option>
+                {report1Categories.map(cat => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+
+              {(report1SearchQuery || report1CategoryFilter !== "all") && (
+                <button
+                  type="button"
+                  onClick={() => { setReport1SearchQuery(""); setReport1CategoryFilter("all"); }}
+                  className="px-2 py-1 text-xs text-red-600 dark:text-red-400 hover:underline font-bold"
+                >
+                  Clear
+                </button>
+              )}
+
+              <span className="text-[10px] font-bold px-2.5 py-1.5 bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 rounded-xl border border-blue-200 dark:border-blue-800 font-mono whitespace-nowrap">
+                {filteredReport1List.length} / {profitAndCogsByItem.list.length} Items
+              </span>
+            </div>
           </div>
 
           <div className="overflow-x-auto max-h-[580px] overflow-y-auto rounded-xl border border-gray-100 dark:border-slate-700">
@@ -578,14 +633,14 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-slate-700/60">
-                {profitAndCogsByItem.list.length === 0 ? (
+                {filteredReport1List.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="p-6 text-center text-gray-400 italic">
-                      No item sales recorded in this date frame.
+                      No item sales recorded matching search query or category filter.
                     </td>
                   </tr>
                 ) : (
-                  profitAndCogsByItem.list.map((item, idx) => (
+                  filteredReport1List.map((item, idx) => (
                     <tr key={idx} className="hover:bg-gray-50/80 dark:hover:bg-slate-700/50 transition-colors">
                       <td className="p-3 font-bold text-gray-900 dark:text-white">{item.name}</td>
                       <td className="p-3">

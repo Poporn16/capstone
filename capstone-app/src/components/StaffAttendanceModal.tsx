@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react"
-import { Clock, LogIn, LogOut, X, CheckCircle2, UserCheck, Calendar } from "lucide-react"
+import { Clock, LogIn, LogOut, X, CheckCircle2, Calendar } from "lucide-react"
+import { supabase } from "../utils/apiClient"
 
 export interface AttendanceRecord {
   id: string
@@ -22,14 +23,21 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
   const [activeSession, setActiveSession] = useState<AttendanceRecord | null>(null)
   const [notification, setNotification] = useState<string | null>(null)
 
-  useEffect(() => {
+  const fetchAttendanceFromDb = async () => {
     try {
-      const stored = localStorage.getItem("pinv_staff_attendance")
-      if (stored) {
-        const parsed: AttendanceRecord[] = JSON.parse(stored)
-        setRecords(parsed)
-        // Find current user's active session without timeOut
-        const currentActive = parsed.find(
+      const { data } = await supabase.from("staff_attendance").select("*").order("id", { ascending: false })
+      if (data) {
+        const formatted: AttendanceRecord[] = data.map((d: any) => ({
+          id: String(d.id),
+          username: d.username || "",
+          displayName: d.display_name || d.username || "",
+          systemRole: d.system_role || "staff",
+          timeIn: d.time_in,
+          timeOut: d.time_out || undefined,
+          durationMinutes: d.duration_minutes || undefined
+        }))
+        setRecords(formatted)
+        const currentActive = formatted.find(
           r => r.username.toLowerCase() === currentOperator.username.toLowerCase() && !r.timeOut
         )
         setActiveSession(currentActive || null)
@@ -37,30 +45,34 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
     } catch (e) {
       console.error("Failed to load attendance records", e)
     }
-  }, [currentOperator.username])
-
-  const saveRecords = (newRecords: AttendanceRecord[]) => {
-    setRecords(newRecords)
-    try {
-      localStorage.setItem("pinv_staff_attendance", JSON.stringify(newRecords))
-      window.dispatchEvent(new Event("storage"))
-      window.dispatchEvent(new Event("pinv_attendance_updated"))
-    } catch (e) {}
   }
+
+  useEffect(() => {
+    fetchAttendanceFromDb()
+    window.addEventListener("pinv_attendance_updated", fetchAttendanceFromDb)
+    const channel = supabase
+      .channel("attendance-modal-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "staff_attendance" }, fetchAttendanceFromDb)
+      .subscribe()
+
+    return () => {
+      window.removeEventListener("pinv_attendance_updated", fetchAttendanceFromDb)
+      supabase.removeChannel(channel)
+    }
+  }, [currentOperator.username])
 
   const handleTimeIn = async () => {
     const nowIso = new Date().toISOString()
-    const newRecord: AttendanceRecord = {
-      id: Date.now().toString(),
+    const { error } = await supabase.from("staff_attendance").insert([{
       username: currentOperator.username,
-      displayName: currentOperator.displayName,
-      systemRole: currentOperator.systemRole,
-      timeIn: nowIso
-    }
+      display_name: currentOperator.displayName,
+      time_in: nowIso
+    }])
 
-    const updated = [newRecord, ...records]
-    saveRecords(updated)
-    setActiveSession(newRecord)
+    if (error) console.error("Time in DB error:", error)
+
+    await fetchAttendanceFromDb()
+    window.dispatchEvent(new Event("pinv_attendance_updated"))
 
     const formattedTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     setNotification(`Successfully Timed In at ${formattedTime}!`)
@@ -84,19 +96,16 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
     const outTime = new Date(timeOutIso).getTime()
     const durationMinutes = Math.max(1, Math.round((outTime - inTime) / (1000 * 60)))
 
-    const updated = records.map(r => {
-      if (r.id === activeSession.id) {
-        return {
-          ...r,
-          timeOut: timeOutIso,
-          durationMinutes
-        }
-      }
-      return r
-    })
+    const numId = Number(activeSession.id)
+    if (!isNaN(numId)) {
+      await supabase.from("staff_attendance").update({
+        time_out: timeOutIso,
+        duration_minutes: durationMinutes
+      }).eq("id", numId)
+    }
 
-    saveRecords(updated)
-    setActiveSession(null)
+    await fetchAttendanceFromDb()
+    window.dispatchEvent(new Event("pinv_attendance_updated"))
 
     const formattedTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     const hours = Math.floor(durationMinutes / 60)
