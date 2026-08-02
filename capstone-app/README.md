@@ -85,6 +85,184 @@ npm run dev
 
 The application will be available at `http://localhost:5173` (or another port if 5173 is in use).
 
+### Supabase Database Setup
+
+After creating your Supabase project, open the SQL Editor and run the following script to enable Row Level Security for the app’s public tables and expose them to Supabase Realtime:
+
+```sql
+-- ============================================================
+-- RLS ENABLE + OPEN "FOR ALL" POLICIES (all your public tables)
+-- ============================================================
+
+-- public.product_categories
+CREATE TABLE IF NOT EXISTS public.product_categories (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name text NOT NULL UNIQUE
+);
+ALTER TABLE public.product_categories ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow public full access on product_categories"
+ON public.product_categories
+FOR ALL
+USING (true)
+WITH CHECK (true);
+
+-- public.inventory
+CREATE TABLE IF NOT EXISTS public.inventory (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name text NOT NULL,
+    category text DEFAULT 'unmarked category',
+    barcode text NOT NULL UNIQUE,
+    manufacturer text,
+    min_stock integer DEFAULT 10,
+    created_at timestamptz DEFAULT now()
+);
+ALTER TABLE public.inventory ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow public full access on inventory"
+ON public.inventory
+FOR ALL
+USING (true)
+WITH CHECK (true);
+
+-- public.inventory_batches
+CREATE TABLE IF NOT EXISTS public.inventory_batches (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    item_id bigint NOT NULL REFERENCES public.inventory(id) ON DELETE CASCADE,
+    batch_label text NOT NULL,
+    stock integer NOT NULL DEFAULT 0,
+    cost numeric(10,2) DEFAULT 0.00,
+    price numeric(10,2) DEFAULT 0.00,
+    expiry_date date,
+    created_at timestamptz DEFAULT now()
+);
+ALTER TABLE public.inventory_batches ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow public full access on inventory_batches"
+ON public.inventory_batches
+FOR ALL
+USING (true)
+WITH CHECK (true);
+
+-- public.operator_profiles
+CREATE TABLE IF NOT EXISTS public.operator_profiles (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    username text NOT NULL UNIQUE,
+    password_text text NOT NULL,
+    display_name text NOT NULL,
+    system_role text DEFAULT 'staff'::text
+        CHECK (system_role = ANY (ARRAY['staff'::text, 'admin'::text, 'superadmin'::text])),
+    created_at timestamptz DEFAULT now()
+);
+ALTER TABLE public.operator_profiles ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow public full access on operator_profiles"
+ON public.operator_profiles
+FOR ALL
+USING (true)
+WITH CHECK (true);
+
+-- public.system_audit_logs
+CREATE TABLE IF NOT EXISTS public.system_audit_logs (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    operator_username text NOT NULL,
+    action_type text NOT NULL,
+    module_target text NOT NULL,
+    details_summary text NOT NULL,
+    created_at timestamptz DEFAULT now()
+);
+ALTER TABLE public.system_audit_logs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow public full access on system_audit_logs"
+ON public.system_audit_logs
+FOR ALL
+USING (true)
+WITH CHECK (true);
+
+-- public.sales
+CREATE TABLE IF NOT EXISTS public.sales (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    date timestamptz DEFAULT now(),
+    gross_total numeric NOT NULL,
+    subtotal numeric NOT NULL,
+    discount numeric DEFAULT 0.00,
+    taxable_base numeric NOT NULL,
+    vat numeric DEFAULT 0.00,
+    total numeric NOT NULL,
+    cash_received numeric DEFAULT 0.00,
+    change numeric DEFAULT 0.00,
+    payment_method text DEFAULT 'cash'::text,
+    discount_label text DEFAULT 'NONE'::text,
+    senior_discount boolean DEFAULT false,
+    processed_by text NOT NULL,
+    is_refunded boolean DEFAULT false,
+    online_channel text,
+    customer_name varchar(255)
+);
+ALTER TABLE public.sales ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow public full access on sales"
+ON public.sales
+FOR ALL
+USING (true)
+WITH CHECK (true);
+
+-- public.sale_items
+CREATE TABLE IF NOT EXISTS public.sale_items (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    sale_id bigint NOT NULL REFERENCES public.sales(id) ON DELETE CASCADE,
+    item_id bigint NOT NULL REFERENCES public.inventory(id) ON DELETE CASCADE,
+    quantity integer NOT NULL,
+    unit_price numeric DEFAULT 0
+);
+ALTER TABLE public.sale_items ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow public full access on sale_items"
+ON public.sale_items
+FOR ALL
+USING (true)
+WITH CHECK (true);
+
+-- public.sale_item_batches
+CREATE TABLE IF NOT EXISTS public.sale_item_batches (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    sale_id bigint NOT NULL REFERENCES public.sales(id) ON DELETE CASCADE,
+    item_name text NOT NULL,
+    batch_label text NOT NULL,
+    quantity_deducted integer NOT NULL,
+    unit_price numeric NOT NULL,
+    created_at timestamptz DEFAULT now()
+);
+ALTER TABLE public.sale_item_batches ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow public full access on sale_item_batches"
+ON public.sale_item_batches
+FOR ALL
+USING (true)
+WITH CHECK (true);
+
+-- public.monthly_backup_archives
+CREATE TABLE IF NOT EXISTS public.monthly_backup_archives (
+    id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    month_tag text UNIQUE,
+    date_label text,
+    created_at timestamptz DEFAULT now(),
+    created_by text DEFAULT 'super admin'::text
+);
+ALTER TABLE public.monthly_backup_archives ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow public full access on monthly_backup_archives"
+ON public.monthly_backup_archives
+FOR ALL
+USING (true)
+WITH CHECK (true);
+
+-- ============================================================
+-- Realtime: add all tables to the supabase_realtime publication
+-- ============================================================
+
+ALTER PUBLICATION supabase_realtime ADD TABLE public.product_categories;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.inventory;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.inventory_batches;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.operator_profiles;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.system_audit_logs;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.sales;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.sale_items;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.sale_item_batches;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.monthly_backup_archives;
+```
+
 ### Production Build
 
 Build for production:
@@ -214,4 +392,4 @@ For issues or questions, please create an issue in the GitHub repository.
 
 ---
 
-**Last Updated**: 2026-07-25
+**Last Updated**: 2026-08-02
