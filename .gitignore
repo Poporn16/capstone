@@ -1,0 +1,6 @@
+# Editor directories and secrets
+.vscode/mcp.json
+.env
+.env*.local
+node_modules/
+dist/

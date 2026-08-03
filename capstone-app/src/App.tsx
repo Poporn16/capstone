@@ -234,7 +234,9 @@ export default function App() {
       const uName = String(op.username).trim().toLowerCase()
       clearAllUserHeartbeats(uName)
       clockOutUser(uName)
-      logSystemAction("SESSION_LOGOUT", "AUTHENTICATION Portal", `Terminated station session for @${op.username}`).catch(() => {})
+      try {
+        logSystemAction("SESSION_LOGOUT", "AUTHENTICATION Portal", `Terminated station session for @${op.username}`)
+      } catch (e) {}
     }
     clearSessionData()
     setCurrentOperator(null)
@@ -823,7 +825,9 @@ export default function App() {
         theme={theme}
         onAuthSuccess={async (operator: any) => {
           saveSession(operator)
-          await logSystemAction("SESSION_LOGIN", "AUTHENTICATION Portal", `Authorized station session for @${operator.username}`, operator.username).catch(() => {})
+          try {
+            await logSystemAction("SESSION_LOGIN", "AUTHENTICATION Portal", `Authorized station session for @${operator.username}`, operator.username)
+          } catch (e) {}
           if (operator.systemRole === "superadmin") {
             setActiveTab("super_admin")
           } else if (operator.systemRole === "admin") {

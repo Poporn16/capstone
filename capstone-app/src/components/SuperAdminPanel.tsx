@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import { supabase, triggerForceLogout, triggerForceLogoutBelowSuperAdmin } from "../utils/apiClient"
 import { hashPassword } from "../utils/passwordUtils"
-import { ShieldAlert, UserPlus, Trash2, History, RefreshCw, Eye, X, Flame, Database, AlertOctagon, RotateCcw, LogOut, Download, Edit, Plus, Calendar, HardDrive } from "lucide-react"
+import { ShieldAlert, UserPlus, Trash2, History, RefreshCw, Eye, X, Flame, Database, AlertOctagon, RotateCcw, LogOut, Download, Edit, Plus, Calendar, HardDrive, Clock, CheckCircle2 } from "lucide-react"
 
 interface SuperAdminPanelProps {
   currentOperator: { username: string; displayName: string; systemRole: string }
@@ -69,6 +69,49 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
   
   const restoreFileInputRef = useRef<HTMLInputElement>(null)
   const [isRestoring, setIsRestoring] = useState(false)
+
+  const [opProgress, setOpProgress] = useState<{
+    isOpen: boolean
+    title: string
+    stepMessage: string
+    percent: number
+    isComplete: boolean
+    processedRows?: number
+    totalRows?: number
+    startTime?: number
+    isCancellable?: boolean
+    currentItemName?: string
+  }>({
+    isOpen: false,
+    title: "",
+    stepMessage: "",
+    percent: 0,
+    isComplete: false
+  })
+
+  const isRestoreCancelledRef = useRef(false)
+
+  const calculateEta = (processed: number, total: number, startTime: number) => {
+    if (processed === 0 || total === 0) return "Calculating..."
+    const elapsedMs = Date.now() - startTime
+    const msPerRecord = elapsedMs / processed
+    const remainingRecords = total - processed
+    const remainingMs = remainingRecords * msPerRecord
+    const seconds = Math.ceil(remainingMs / 1000)
+    if (seconds < 60) return `~${seconds}s remaining`
+    const minutes = Math.floor(seconds / 60)
+    const remSec = seconds % 60
+    return `~${minutes}m ${remSec}s remaining`
+  }
+
+  const handleCancelRestore = () => {
+    isRestoreCancelledRef.current = true
+    setOpProgress(p => ({
+      ...p,
+      stepMessage: "Cancelling restore operation...",
+      isCancellable: false
+    }))
+  }
 
   // AES-GCM 256-bit Encryption Helpers
   const SYSTEM_BACKUP_SECRET = import.meta.env.VITE_SYSTEM_BACKUP_SECRET || "MALABON_PHARMACY_CLINIC_SECURE_BACKUP_KEY_2026_V1"
@@ -342,6 +385,8 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
 
     setIsLoading(true)
     setIsRestoring(true)
+    isRestoreCancelledRef.current = false
+
     try {
       const text = await file.text()
       const payload = await decryptBackupPayload(text)
@@ -350,81 +395,164 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
         throw new Error("Failed to parse decrypted backup contents.")
       }
 
-      if (Array.isArray(payload.product_categories) && payload.product_categories.length > 0) {
-        for (const cat of payload.product_categories) {
-          await supabase.from("product_categories").upsert(cat)
+      const totalRecords =
+        (Array.isArray(payload.product_categories) ? payload.product_categories.length : 0) +
+        (Array.isArray(payload.inventory) ? payload.inventory.length : 0) +
+        (Array.isArray(payload.inventory_batches) ? payload.inventory_batches.length : 0) +
+        (Array.isArray(payload.sales) ? payload.sales.length : 0) +
+        (Array.isArray(payload.sale_items) ? payload.sale_items.length : 0) +
+        (Array.isArray(payload.sale_item_batches) ? payload.sale_item_batches.length : 0) +
+        (Array.isArray(payload.operator_profiles) ? payload.operator_profiles.length : 0) +
+        (Array.isArray(payload.system_audit_logs) ? payload.system_audit_logs.length : 0) +
+        (Array.isArray(payload.named_persons) ? payload.named_persons.length : 0) +
+        (Array.isArray(payload.staff_attendance) ? payload.staff_attendance.length : 0)
+
+      const startTime = Date.now()
+      let processedCount = 0
+
+      setOpProgress({
+        isOpen: true,
+        title: "Restoring Database Archive",
+        stepMessage: "Reading and decrypting AES-256 backup payload...",
+        percent: 5,
+        isComplete: false,
+        processedRows: 0,
+        totalRows: totalRecords,
+        startTime,
+        isCancellable: true,
+        currentItemName: `Prepared ${totalRecords} records for database sync...`
+      })
+
+      const batchRestoreTable = async (tableName: string, records: any[], chunkSize = 50) => {
+        if (!records || records.length === 0 || isRestoreCancelledRef.current) return
+
+        const count = records.length
+        for (let i = 0; i < count; i += chunkSize) {
+          if (isRestoreCancelledRef.current) break
+
+          const chunk = records.slice(i, i + chunkSize)
+          const currentChunkLength = chunk.length
+
+          setOpProgress(p => ({
+            ...p,
+            currentItemName: `Restoring ${tableName.replace(/_/g, " ")} (${processedCount + currentChunkLength}/${totalRecords})...`,
+            stepMessage: `Syncing ${tableName} batch...`
+          }))
+
+          const { error: upsertErr } = await supabase.from(tableName).upsert(chunk)
+
+          if (upsertErr) {
+            const isIdentityError =
+              upsertErr.message?.toLowerCase().includes("non-default value into column") ||
+              upsertErr.message?.toLowerCase().includes("identity column") ||
+              upsertErr.code === "428C9" ||
+              upsertErr.details?.toLowerCase().includes("identity")
+
+            if (isIdentityError) {
+              const chunkWithoutId = chunk.map(({ id, ...rest }: any) => rest)
+              const { error: insertErr } = await supabase.from(tableName).insert(chunkWithoutId)
+
+              if (insertErr) {
+                console.warn(`Fallback insert for ${tableName} chunk failed:`, insertErr)
+                for (const item of chunkWithoutId) {
+                  if (isRestoreCancelledRef.current) break
+                  try {
+                    await supabase.from(tableName).insert([item])
+                  } catch (e) {
+                    console.error(`Row restore error ${tableName}:`, e)
+                  }
+                }
+              }
+            } else {
+              for (const item of chunk) {
+                if (isRestoreCancelledRef.current) break
+                const { error: singleErr } = await supabase.from(tableName).upsert(item)
+                if (singleErr) {
+                  const { id, ...itemNoId } = item
+                  try {
+                    await supabase.from(tableName).insert([itemNoId])
+                  } catch (e) {}
+                }
+              }
+            }
+          }
+
+          processedCount += currentChunkLength
+          const currentPercent = totalRecords > 0 ? Math.min(99, Math.round((processedCount / totalRecords) * 100)) : 90
+
+          setOpProgress(p => ({
+            ...p,
+            processedRows: processedCount,
+            percent: currentPercent
+          }))
+
+          await new Promise(r => setTimeout(r, 15))
         }
       }
 
-      if (Array.isArray(payload.inventory) && payload.inventory.length > 0) {
-        for (const item of payload.inventory) {
-          await supabase.from("inventory").upsert(item)
-        }
-      }
-
-      if (Array.isArray(payload.inventory_batches) && payload.inventory_batches.length > 0) {
-        for (const batch of payload.inventory_batches) {
-          await supabase.from("inventory_batches").upsert(batch)
-        }
-      }
-
-      if (Array.isArray(payload.sales) && payload.sales.length > 0) {
-        for (const sale of payload.sales) {
-          await supabase.from("sales").upsert(sale)
-        }
-      }
-
-      if (Array.isArray(payload.sale_items) && payload.sale_items.length > 0) {
-        for (const si of payload.sale_items) {
-          await supabase.from("sale_items").upsert(si)
-        }
-      }
-
-      if (Array.isArray(payload.sale_item_batches) && payload.sale_item_batches.length > 0) {
-        for (const sib of payload.sale_item_batches) {
-          await supabase.from("sale_item_batches").upsert(sib)
-        }
-      }
-
-      if (Array.isArray(payload.operator_profiles) && payload.operator_profiles.length > 0) {
-        for (const p of payload.operator_profiles) {
-          await supabase.from("operator_profiles").upsert(p)
-        }
-      }
-
-      if (Array.isArray(payload.system_audit_logs) && payload.system_audit_logs.length > 0) {
-        for (const log of payload.system_audit_logs) {
-          await supabase.from("system_audit_logs").upsert(log)
-        }
-      }
-
-      if (Array.isArray(payload.named_persons) && payload.named_persons.length > 0) {
-        for (const np of payload.named_persons) {
-          await supabase.from("named_persons").upsert(np)
-        }
+      if (Array.isArray(payload.product_categories)) await batchRestoreTable("product_categories", payload.product_categories)
+      if (Array.isArray(payload.inventory)) await batchRestoreTable("inventory", payload.inventory)
+      if (Array.isArray(payload.inventory_batches)) await batchRestoreTable("inventory_batches", payload.inventory_batches)
+      if (Array.isArray(payload.sales)) await batchRestoreTable("sales", payload.sales)
+      if (Array.isArray(payload.sale_items)) await batchRestoreTable("sale_items", payload.sale_items)
+      if (Array.isArray(payload.sale_item_batches)) await batchRestoreTable("sale_item_batches", payload.sale_item_batches)
+      if (Array.isArray(payload.operator_profiles)) await batchRestoreTable("operator_profiles", payload.operator_profiles)
+      if (Array.isArray(payload.system_audit_logs)) await batchRestoreTable("system_audit_logs", payload.system_audit_logs)
+      if (Array.isArray(payload.named_persons)) {
+        await batchRestoreTable("named_persons", payload.named_persons)
         localStorage.setItem("pinv_named_persons_registry", JSON.stringify(payload.named_persons))
         window.dispatchEvent(new Event("pinv_registry_updated"))
       }
-
-      if (Array.isArray(payload.staff_attendance) && payload.staff_attendance.length > 0) {
+      if (Array.isArray(payload.staff_attendance)) {
+        await batchRestoreTable("staff_attendance", payload.staff_attendance)
         localStorage.setItem("pinv_staff_attendance", JSON.stringify(payload.staff_attendance))
         window.dispatchEvent(new Event("pinv_attendance_updated"))
+      }
+
+      if (isRestoreCancelledRef.current) {
+        setOpProgress({
+          isOpen: true,
+          title: "Restore Cancelled",
+          stepMessage: "Database restoration was cancelled by user.",
+          percent: Math.round((processedCount / (totalRecords || 1)) * 100),
+          isComplete: true,
+          processedRows: processedCount,
+          totalRows: totalRecords,
+          isCancellable: false,
+          currentItemName: "Restoration halted."
+        })
+        return
       }
 
       await onLogAction(
         "RESTORE_DATABASE",
         "SUPER_ADMIN",
-        `Successfully decrypted and restored database backup file: ${file.name}`
+        `Successfully decrypted and restored database backup file: ${file.name} (${processedCount} records synced)`
       )
 
-      alert(`✅ Database successfully restored from encrypted backup "${file.name}"!`)
+      setOpProgress({
+        isOpen: true,
+        title: "Restoration Complete",
+        stepMessage: `Database successfully restored from "${file.name}"! (${processedCount} records synced)`,
+        percent: 100,
+        isComplete: true,
+        processedRows: processedCount,
+        totalRows: totalRecords,
+        isCancellable: false
+      })
 
       window.dispatchEvent(new Event("refresh_sales_data"))
       if (refreshAllData) await refreshAllData()
       await fetchAllSuperAdminData()
     } catch (err: any) {
       console.error("Backup restoration error:", err)
-      alert(`⚠️ Restoration Failed: ${err.message}`)
+      setOpProgress(p => ({
+        ...p,
+        title: "Restoration Failed",
+        stepMessage: `Error: ${err.message}`,
+        isComplete: true,
+        isCancellable: false
+      }))
     } finally {
       setIsLoading(false)
       setIsRestoring(false)
@@ -541,12 +669,17 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
         try {
           await supabase.from("named_persons").delete().neq("id", 0)
           await supabase.from("named_persons").delete().neq("name", "")
-          await supabase.rpc("reset_named_persons_sequence").catch(() => {})
-          await supabase.rpc("reset_all_database_sequences").catch(() => {})
+          try {
+            await supabase.rpc("reset_named_persons_sequence")
+          } catch (e) {}
+          try {
+            await supabase.rpc("reset_all_database_sequences")
+          } catch (e) {}
         } catch (e) {}
 
         try {
-          await supabase.from("staff_attendance").delete().neq("id", 0).catch(() => {})
+          await supabase.from("staff_attendance").delete().not("id", "is", null)
+          await supabase.from("staff_attendance").delete().neq("id", 0)
         } catch (e) {}
 
         try {
@@ -1768,6 +1901,87 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Interactive Data Operation Progress Modal (Import / Restore / Reset) */}
+      {opProgress.isOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200 font-sans">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border dark:border-slate-700 font-sans">
+            <div className="flex items-center justify-between">
+              <h3 className="font-extrabold text-base text-gray-900 dark:text-white flex items-center gap-2">
+                <RefreshCw className={`w-5 h-5 text-blue-600 dark:text-blue-400 ${!opProgress.isComplete ? 'animate-spin' : ''}`} />
+                {opProgress.title}
+              </h3>
+              <span className="text-xs font-mono font-extrabold px-2.5 py-1 bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 rounded-full border border-blue-200 dark:border-blue-800">
+                {opProgress.percent}%
+              </span>
+            </div>
+
+            {/* Animated Progress Track */}
+            <div className="w-full bg-gray-100 dark:bg-slate-900 rounded-full h-3.5 overflow-hidden p-0.5 border dark:border-slate-700">
+              <div
+                style={{ width: `${opProgress.percent}%` }}
+                className="bg-gradient-to-r from-blue-600 to-indigo-600 h-full rounded-full transition-all duration-300 shadow-sm"
+              />
+            </div>
+
+            {/* Record Counters & ETA (if available) */}
+            {opProgress.totalRows !== undefined && opProgress.totalRows > 0 && (
+              <div className="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400 font-sans">
+                <span>{opProgress.processedRows || 0} of {opProgress.totalRows} records</span>
+                {opProgress.startTime && !opProgress.isComplete && (
+                  <span className="font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5 font-mono">
+                    <Clock className="w-3.5 h-3.5 text-blue-500 animate-spin" />
+                    {calculateEta(opProgress.processedRows || 0, opProgress.totalRows, opProgress.startTime)}
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Current Item status banner */}
+            <div className="p-3 bg-gray-50 dark:bg-slate-900 rounded-xl border dark:border-slate-700 text-xs space-y-1">
+              <div className="text-gray-400 dark:text-gray-400 text-[10px] uppercase tracking-wider font-bold">
+                Current Record Processing
+              </div>
+              <div className="font-semibold text-gray-800 dark:text-gray-200 truncate flex items-center gap-2">
+                {opProgress.isComplete ? (
+                  <div className="flex items-center gap-2 text-green-600 dark:text-green-400 font-bold">
+                    <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />
+                    <span>{opProgress.stepMessage}</span>
+                  </div>
+                ) : (
+                  <span>{opProgress.currentItemName || opProgress.stepMessage}</span>
+                )}
+              </div>
+            </div>
+
+            {/* Cancel Button */}
+            {!opProgress.isComplete && opProgress.isCancellable && (
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={handleCancelRestore}
+                  className="px-4 py-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-xs cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                  Cancel Restore
+                </button>
+              </div>
+            )}
+
+            {opProgress.isComplete && (
+              <div className="pt-2 border-t dark:border-slate-700 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setOpProgress(p => ({ ...p, isOpen: false }))}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-md transition-all active:scale-95 cursor-pointer"
+                >
+                  Done & Close
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

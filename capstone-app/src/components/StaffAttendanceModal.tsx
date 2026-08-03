@@ -78,11 +78,13 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
     setNotification(`Successfully Timed In at ${formattedTime}!`)
 
     if (onLogAction) {
-      await onLogAction(
-        "STAFF_TIME_IN",
-        "ATTENDANCE_STATION",
-        `Staff @${currentOperator.username} (${currentOperator.displayName}) recorded TIME IN at ${formattedTime}`
-      ).catch(() => {})
+      try {
+        await onLogAction(
+          "STAFF_TIME_IN",
+          "ATTENDANCE_STATION",
+          `Staff @${currentOperator.username} (${currentOperator.displayName}) recorded TIME IN at ${formattedTime}`
+        )
+      } catch (e) {}
     }
 
     setTimeout(() => setNotification(null), 3000)
@@ -115,11 +117,13 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
     setNotification(`Successfully Timed Out at ${formattedTime}! Shift duration: ${durationStr}`)
 
     if (onLogAction) {
-      await onLogAction(
-        "STAFF_TIME_OUT",
-        "ATTENDANCE_STATION",
-        `Staff @${currentOperator.username} (${currentOperator.displayName}) recorded TIME OUT at ${formattedTime} (Shift: ${durationStr})`
-      ).catch(() => {})
+      try {
+        await onLogAction(
+          "STAFF_TIME_OUT",
+          "ATTENDANCE_STATION",
+          `Staff @${currentOperator.username} (${currentOperator.displayName}) recorded TIME OUT at ${formattedTime} (Shift: ${durationStr})`
+        )
+      } catch (e) {}
     }
 
     setTimeout(() => setNotification(null), 3000)
