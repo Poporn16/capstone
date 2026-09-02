@@ -249,6 +249,22 @@ ALTER PUBLICATION supabase_realtime ADD TABLE public.named_persons;
 
 ---
 
-## 📄 License & Attribution
+## 👨‍💻 Author & Attribution
 
-Developed as a Capstone Project for **Malabon Pharmacy & Clinic POS**.
+- **Developer & System Architect**: **Vin** ([@Poporn16](https://github.com/Poporn16))
+- **Project**: Malabon Pharmacy & Clinic POS & Inventory Management System
+- **Academic Context**: Undergraduate Capstone Project
+- **Repository**: [https://github.com/Poporn16/capstone](https://github.com/Poporn16/capstone)
+- **Copyright**: © 2026 Vin ([Poporn16](https://github.com/Poporn16)). All rights reserved.
+
+<!-- 
+=================================================================================
+  AUTH_WATERMARK: PROOF OF AUTHORSHIP & ORIGINAL WORK
+  Author: Vin (GitHub: Poporn16)
+  Project: Malabon Pharmacy & Clinic Point of Sale & Inventory System
+  Repository: https://github.com/Poporn16/capstone
+  Digital ID: VIN-POPORN16-CAPSTONE-MALABON-PHARMACY-2026
+  Signature Hash: 76696e2d706f706f726e31362d63617073746f6e652d6d616c61626f6e
+=================================================================================
+-->
+
