@@ -1,348 +1,254 @@
-# Capstone POS & Inventory Management System
+# 🏥 Malabon Pharmacy POS & Inventory Management System
 
-A modern, full-featured Point of Sale (POS) and inventory management system built with React, TypeScript, and Supabase. Designed for retail operations including batch tracking, multi-channel sales, tax/VAT management, and real-time inventory synchronization.
+A modern, full-featured **Point of Sale (POS)**, **Inventory**, and **Batch Management System** built with **React 19**, **TypeScript**, **Tailwind CSS**, and **Supabase (PostgreSQL & Realtime)**. Specifically designed for pharmacy and retail operations with batch expiration tracking, multi-manufacturer management, printable scannable barcodes, statutory discount handling, and multi-channel sales analytics.
 
-## 🎯 Features
+---
 
-### Core POS System
-- **Point of Sale Checkout** - Fast, intuitive checkout interface with barcode scanning support
-- **Real-time Inventory Management** - Track stock levels with automatic low-stock alerts
-- **Batch Tracking** - Manage product batches with expiry dates, costs, and pricing
-- **Sales Processing** - Complete sales workflow with multiple payment methods (cash, other)
-- **Tax & Discount Management** - Built-in VAT/tax calculation and flexible discount options
+## 🎯 Key Features
 
-### Inventory Management
-- **Product Categories** - Organize inventory by categories
-- **Stock Adjustment** - Manual stock adjustments with audit trails
-- **Manufacturer Tracking** - Track product manufacturers
-- **Low Stock Alerts** - Real-time notifications for items below minimum stock levels
-- **Batch Expiry Management** - Monitor and manage product batch expiration dates
+### 🛒 Core POS & Checkout System
+- **Wedge & Hardware Barcode Scanner Support**: Seamlessly listens for hardware barcode scanners (such as Clabel C986) globally in the background without needing to focus input fields.
+- **Camera Barcode Scanner**: Built-in fallback camera scanner utilizing standard `BarcodeDetector` APIs.
+- **Smart Manufacturer Chooser**: Automatically prompts a *"Choose Manufacturer"* modal only when a scanned or selected product has multiple active batches from different manufacturers; adds immediately to cart if all batches share the same manufacturer.
+- **Statutory & Custom Discounts**: Automated discount engine supporting Senior Citizen (20%), PWD (20%), Solo Parent (10%), NAAC, and custom percentage discounts with VAT exemption breakdown.
+- **Customer ID & Named Registry**: Automated lookup and synchronization with the `named_persons` database table for discount eligibility validation and historical audit trails.
+- **Multi-Channel Payments**: Supports Cash (with automated change calculator) and Digital/Online channels (GCash, PayMaya, Bank Transfer, Card).
+- **Printable Receipts**: Live thermal receipt preview with single-click browser printing.
 
-### Sales & Analytics
-- **Sales History** - Comprehensive sales records with filtering and search
-- **Multi-Channel Support** - Track sales from different sales channels
-- **Refund Management** - Process refunds and maintain transaction integrity
-- **Sales Reporting** - View sales trends and performance metrics
+### 🏷️ Barcode Generation & Label Printing
+- **Built-in Code-128 Barcode Engine**: Zero-dependency pure TypeScript barcode generator (`barcodeGenerator.ts`) that produces crystal-clear, scannable Code-128 SVG barcode graphics.
+- **Printable Label Sheets**: Built-in modal with selectable layouts (Standard A4 / 3-Column, Compact Roll, or Large Display) for physical sticker label printing.
+- **Excel Barcode Font Codes**: Automatically formats barcodes as `*BARCODE*` for seamless rendering in Microsoft Excel using fonts such as *Libre Barcode 39* or *Code 39*.
 
-### Admin Features
-- **Admin Panel** - Administrative controls and system management
-- **User Authentication** - Secure login system
-- **Real-time Synchronization** - Multi-tab/multi-device inventory sync using BroadcastChannel API
-- **Dashboard** - System overview and key metrics
+### 📦 Inventory & Batch Management
+- **Per-Batch Manufacturer Isolation**: Each inventory batch independently tracks its own manufacturer brand, procurement cost, retail price, stock level, and expiration date.
+- **Manufacturer Brand Auto-Suggest**: Real-time auto-suggest dropdown as you type, pulling from existing inventory records and supplier lists.
+- **Category Color System**: Persistent, vibrant category-coded borders and subtle background tints (`categoryColors.ts`) for instant visual distinction across the catalogue.
+- **Low Stock & Expiry Alerts**: Live automated notifications for items below minimum safety levels or batches approaching expiry.
 
-### User Interface
-- **Modern Design** - Built with Tailwind CSS and shadcn UI components
-- **Responsive Layout** - Works seamlessly on desktop and tablet devices
-- **Dark/Light Mode** - Toggle between dark and light themes
-- **Intuitive Navigation** - Sidebar navigation with collapsible menu
+### 📊 Excel Import & Export
+- **Multi-Batch Stock Template Export**: Downloads structured Excel spreadsheets containing `Product Name`, `Manufacturer Brand`, `Cost`, `Price`, `Minimum Stock`, `Stock Quantity`, and `Expiration Date`.
+- **Intelligent Bulk Upload Parser**: Flexible spreadsheet importer supporting 7-column, 5-column, and legacy 4-column formats with batch cost and price retention.
+- **Clean Numeric Formatting**: Numbers and stock quantities are exported cleanly without currency pollution.
+
+### ⏱️ Staff Attendance & Time Clock
+- **Time In / Time Out Modal**: Quick staff attendance clock-in/out modal accessible directly from the top header.
+- **Attendance Records Table**: Dedicated attendance history log with status tracking, work duration calculation, and Excel audit export.
+
+### 📈 Sales Analytics & Multi-Sheet Reporting
+- **Multi-Sheet Sales Workbooks**: Exports transactions and line-item details into multi-tab `.xlsx` workbooks.
+- **Core Sales Analytics**: Detailed breakdown of gross revenue, net taxable sales, VAT, profit margins, top-selling categories, and operator performance.
+
+### 🛡️ Admin Panel & System Governance
+- **Role-Based Access Control**: Strict permissions separating Super Admin, Admin, and Cashier/Staff operations.
+- **Real-Time Cross-Tab Sync**: Multi-tab synchronization using the `BroadcastChannel` API and Supabase Realtime channels.
+- **System Audit Logs**: Comprehensive activity logging for product creations, stock adjustments, price changes, and user management.
+
+---
 
 ## 🛠️ Tech Stack
 
-- **Frontend Framework**: React 19.2.7 with TypeScript
-- **Build Tool**: Vite 8.1.1
-- **Backend**: Supabase (PostgreSQL, Authentication, Real-time)
-- **Styling**: Tailwind CSS 4.3.3 with PostCSS
-- **UI Components**: Radix UI, shadcn, Lucide Icons
-- **Routing**: React Router v7
-- **Linting**: ESLint with TypeScript support
+- **Frontend Framework**: [React 19](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/)
+- **Build Tool & Bundler**: [Vite 8](https://vitejs.dev/)
+- **Database & Realtime**: [Supabase](https://supabase.com/) (PostgreSQL + Realtime WebSockets)
+- **Styling**: [Tailwind CSS 4](https://tailwindcss.com/)
+- **Icons**: [Lucide React](https://lucide.dev/)
+- **Spreadsheet Processing**: [SheetJS (xlsx)](https://sheetjs.com/)
+- **Typography**: [Inter Variable Font](https://fontsource.org/fonts/inter)
 
-## 📋 Prerequisites
+---
 
-- Node.js 18+ 
-- npm or yarn package manager
-- Supabase account with project setup
-- Environment variables configured
+## 📁 Project Structure
+
+```text
+capstone/
+├── capstone-app/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── AdminPanel.tsx            # Admin management, audit logs, and user roles
+│   │   │   ├── BarcodePrintModal.tsx     # Printable barcode sticker & Excel export modal
+│   │   │   ├── Dashboard.tsx             # Overview metrics, alerts, and quick actions
+│   │   │   ├── InventoryManager.tsx      # "Item specs" - Product profile & category manager
+│   │   │   ├── LoginScreen.tsx           # Operator authentication & session handling
+│   │   │   ├── POSCheckout.tsx           # Point of Sale interface, cart, & discount calculator
+│   │   │   ├── SalesHistory.tsx          # Transaction logs, receipt re-printing, & refunding
+│   │   │   ├── SalesReport.tsx           # Comprehensive sales analytics & charts
+│   │   │   ├── StaffAttendanceModal.tsx  # Quick Time In / Time Out clock modal
+│   │   │   ├── StaffAttendancePage.tsx   # Staff attendance log directory & Excel export
+│   │   │   └── StockAdjustment.tsx       # "Inventory" - Batch stock adjustment & Excel sync
+│   │   ├── types/
+│   │   │   └── index.ts                  # Shared TypeScript interfaces & types
+│   │   ├── utils/
+│   │   │   ├── apiClient.ts              # Supabase client & global sync broadcast helper
+│   │   │   ├── barcodeGenerator.ts       # Code-128 SVG & Excel font code generator
+│   │   │   ├── categoryColors.ts         # Deterministic category theme & color definitions
+│   │   │   └── excelUtils.ts             # Excel workbook generator & parser utilities
+│   │   ├── styles/
+│   │   │   └── index.css                 # Global CSS & Tailwind configuration
+│   │   ├── App.tsx                       # Main shell, navigation sidebar, & theme provider
+│   │   └── main.tsx                      # App entry point
+│   ├── package.json                      # Project dependencies & scripts
+│   ├── vite.config.ts                    # Vite configuration
+│   └── tsconfig.json                     # TypeScript configuration
+└── README.md                             # Project documentation
+```
+
+---
 
 ## 🚀 Getting Started
 
-### Installation
+### 1. Prerequisites
+- **Node.js**: v18.0.0 or higher
+- **npm** or **pnpm**
+- A **Supabase** project instance
 
-1. Clone the repository:
+### 2. Installation
 ```bash
+# Clone the repository
 git clone https://github.com/Poporn16/capstone.git
-cd capstone/capstone-app
-```
 
-2. Install dependencies:
-```bash
+# Navigate to the app directory
+cd capstone/capstone-app
+
+# Install dependencies
 npm install
 ```
 
-3. Set up environment variables:
-
-Create a `.env.local` file in the `capstone-app` directory:
+### 3. Configure Environment Variables
+Create a `.env` or `.env.local` file inside `capstone-app`:
+```env
+VITE_SUPABASE_URL=https://your-supabase-project-id.supabase.co
+VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
 ```
-VITE_SUPABASE_URL=your_supabase_project_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-```
 
-### Development
-
-Start the development server:
+### 4. Run Locally
 ```bash
 npm run dev
 ```
+Open [http://localhost:5173](http://localhost:5173) in your browser.
 
-The application will be available at `http://localhost:5173` (or another port if 5173 is in use).
+### 5. Build for Production
+```bash
+npm run build
+```
 
-### Supabase Database Setup
+---
 
-After creating your Supabase project, open the SQL Editor and run the following script to enable Row Level Security for the app’s public tables and expose them to Supabase Realtime:
+## 🗄️ Database Setup (Supabase SQL)
+
+Run the following script in your Supabase SQL Editor to set up the necessary tables, relationships, and Realtime publications:
 
 ```sql
--- ============================================================
--- RLS ENABLE + OPEN "FOR ALL" POLICIES (all your public tables)
--- ============================================================
-
--- public.product_categories
+-- Product Categories
 CREATE TABLE IF NOT EXISTS public.product_categories (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name text NOT NULL UNIQUE
 );
-ALTER TABLE public.product_categories ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow public full access on product_categories"
-ON public.product_categories
-FOR ALL
-USING (true)
-WITH CHECK (true);
 
--- public.inventory
+-- Main Inventory Profiles
 CREATE TABLE IF NOT EXISTS public.inventory (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name text NOT NULL,
-    category text DEFAULT 'unmarked category',
-    barcode text NOT NULL UNIQUE,
+    category text NOT NULL,
+    price numeric(10,2) NOT NULL DEFAULT 0.00,
+    cost numeric(10,2) NOT NULL DEFAULT 0.00,
+    stock integer NOT NULL DEFAULT 0,
+    min_stock integer NOT NULL DEFAULT 0,
+    barcode text,
     manufacturer text,
-    min_stock integer DEFAULT 10,
-    created_at timestamptz DEFAULT now()
+    created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
-ALTER TABLE public.inventory ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow public full access on inventory"
-ON public.inventory
-FOR ALL
-USING (true)
-WITH CHECK (true);
 
--- public.inventory_batches
+-- Product Batch Assignments (with Encoded Manufacturer)
 CREATE TABLE IF NOT EXISTS public.inventory_batches (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    item_id bigint NOT NULL REFERENCES public.inventory(id) ON DELETE CASCADE,
+    item_id bigint REFERENCES public.inventory(id) ON DELETE CASCADE,
     batch_label text NOT NULL,
     stock integer NOT NULL DEFAULT 0,
-    cost numeric(10,2) DEFAULT 0.00,
-    price numeric(10,2) DEFAULT 0.00,
+    cost numeric(10,2) NOT NULL DEFAULT 0.00,
+    price numeric(10,2) NOT NULL DEFAULT 0.00,
     expiry_date date,
-    created_at timestamptz DEFAULT now()
+    created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
-ALTER TABLE public.inventory_batches ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow public full access on inventory_batches"
-ON public.inventory_batches
-FOR ALL
-USING (true)
-WITH CHECK (true);
 
--- public.operator_profiles
-CREATE TABLE IF NOT EXISTS public.operator_profiles (
+-- Named Persons Registry for Discounts
+CREATE TABLE IF NOT EXISTS public.named_persons (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    username text NOT NULL UNIQUE,
-    password_text text NOT NULL,
-    display_name text NOT NULL,
-    system_role text DEFAULT 'staff'::text
-        CHECK (system_role = ANY (ARRAY['staff'::text, 'admin'::text, 'superadmin'::text])),
-    created_at timestamptz DEFAULT now()
+    id_number text NOT NULL UNIQUE,
+    name text NOT NULL,
+    discount_type text NOT NULL DEFAULT 'none',
+    created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
-ALTER TABLE public.operator_profiles ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow public full access on operator_profiles"
-ON public.operator_profiles
-FOR ALL
-USING (true)
-WITH CHECK (true);
 
--- public.system_audit_logs
+-- Sales Transactions
+CREATE TABLE IF NOT EXISTS public.sales (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    gross_total numeric(10,2) NOT NULL,
+    subtotal numeric(10,2) NOT NULL,
+    discount numeric(10,2) NOT NULL DEFAULT 0.00,
+    vat numeric(10,2) NOT NULL DEFAULT 0.00,
+    total numeric(10,2) NOT NULL,
+    cash_received numeric(10,2) NOT NULL,
+    change numeric(10,2) NOT NULL DEFAULT 0.00,
+    payment_method text NOT NULL,
+    online_channel text,
+    discount_label text,
+    customer_name text,
+    operator_name text,
+    created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Sales Line Items
+CREATE TABLE IF NOT EXISTS public.sales_items (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    sale_id bigint REFERENCES public.sales(id) ON DELETE CASCADE,
+    item_id bigint REFERENCES public.inventory(id),
+    product_name text NOT NULL,
+    quantity integer NOT NULL,
+    unit_price numeric(10,2) NOT NULL,
+    total_price numeric(10,2) NOT NULL,
+    batch_label text
+);
+
+-- Staff Attendance Logs
+CREATE TABLE IF NOT EXISTS public.staff_attendance (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    username text NOT NULL,
+    display_name text NOT NULL,
+    action_type text NOT NULL, -- 'time_in' or 'time_out'
+    notes text,
+    timestamp timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- System Audit Logs
 CREATE TABLE IF NOT EXISTS public.system_audit_logs (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     operator_username text NOT NULL,
     action_type text NOT NULL,
     module_target text NOT NULL,
     details_summary text NOT NULL,
-    created_at timestamptz DEFAULT now()
+    timestamp timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
-ALTER TABLE public.system_audit_logs ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow public full access on system_audit_logs"
-ON public.system_audit_logs
-FOR ALL
-USING (true)
-WITH CHECK (true);
 
--- public.sales
-CREATE TABLE IF NOT EXISTS public.sales (
-    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    date timestamptz DEFAULT now(),
-    gross_total numeric NOT NULL,
-    subtotal numeric NOT NULL,
-    discount numeric DEFAULT 0.00,
-    taxable_base numeric NOT NULL,
-    vat numeric DEFAULT 0.00,
-    total numeric NOT NULL,
-    cash_received numeric DEFAULT 0.00,
-    change numeric DEFAULT 0.00,
-    payment_method text DEFAULT 'cash'::text,
-    discount_label text DEFAULT 'NONE'::text,
-    senior_discount boolean DEFAULT false,
-    processed_by text NOT NULL,
-    is_refunded boolean DEFAULT false,
-    online_channel text,
-    customer_name varchar(255)
-);
-ALTER TABLE public.sales ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow public full access on sales"
-ON public.sales
-FOR ALL
-USING (true)
-WITH CHECK (true);
-
--- public.sale_items
-CREATE TABLE IF NOT EXISTS public.sale_items (
-    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    sale_id bigint NOT NULL REFERENCES public.sales(id) ON DELETE CASCADE,
-    item_id bigint NOT NULL REFERENCES public.inventory(id) ON DELETE CASCADE,
-    quantity integer NOT NULL,
-    unit_price numeric DEFAULT 0
-);
-ALTER TABLE public.sale_items ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow public full access on sale_items"
-ON public.sale_items
-FOR ALL
-USING (true)
-WITH CHECK (true);
-
--- public.sale_item_batches
-CREATE TABLE IF NOT EXISTS public.sale_item_batches (
-    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    sale_id bigint NOT NULL REFERENCES public.sales(id) ON DELETE CASCADE,
-    item_name text NOT NULL,
-    batch_label text NOT NULL,
-    quantity_deducted integer NOT NULL,
-    unit_price numeric NOT NULL,
-    created_at timestamptz DEFAULT now()
-);
-ALTER TABLE public.sale_item_batches ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow public full access on sale_item_batches"
-ON public.sale_item_batches
-FOR ALL
-USING (true)
-WITH CHECK (true);
-
--- public.monthly_backup_archives
-CREATE TABLE IF NOT EXISTS public.monthly_backup_archives (
-    id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-    month_tag text UNIQUE,
-    date_label text,
-    created_at timestamptz DEFAULT now(),
-    created_by text DEFAULT 'super admin'::text
-);
-ALTER TABLE public.monthly_backup_archives ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow public full access on monthly_backup_archives"
-ON public.monthly_backup_archives
-FOR ALL
-USING (true)
-WITH CHECK (true);
-
--- ============================================================
--- Realtime: add all tables to the supabase_realtime publication
--- ============================================================
-
-ALTER PUBLICATION supabase_realtime ADD TABLE public.product_categories;
+-- Enable Realtime
 ALTER PUBLICATION supabase_realtime ADD TABLE public.inventory;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.inventory_batches;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.operator_profiles;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.system_audit_logs;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.sales;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.sale_items;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.sale_item_batches;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.monthly_backup_archives;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.product_categories;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.named_persons;
 ```
-
-### Production Build
-
-Build for production:
-```bash
-npm run build
-```
-
-Preview the production build:
-```bash
-npm run preview
-```
-
-### Linting
-
-Check code for linting issues:
-```bash
-npm run lint
-```
-
-## 📁 Project Structure
-
-```
-capstone-app/
-├── src/
-│   ├── components/
-│   │   ├── AdminPanel.tsx          # Admin controls and system management
-│   │   ├── Dashboard.tsx           # Main dashboard and overview
-│   │   ├── InventoryManager.tsx    # Inventory management interface
-│   │   ├── LoginScreen.tsx         # User authentication
-│   │   ├── POSCheckout.tsx         # Point of sale checkout
-│   │   ├── SalesHistory.tsx        # Sales records and history
-│   │   ├── StockAdjustment.tsx     # Manual stock adjustments
-│   │   └── apiClient.ts            # Supabase client configuration
-│   ├── types/
-│   │   └── index.ts                # TypeScript type definitions
-│   ├── styles/
-│   │   └── index.css               # Global styles
-│   ├── App.tsx                     # Main app component with routing
-│   └── main.tsx                    # Application entry point
-├── public/                         # Static assets
-├── package.json                    # Dependencies and scripts
-├── vite.config.ts                  # Vite configuration
-├── tsconfig.json                   # TypeScript configuration
-├── tailwind.config.js              # Tailwind CSS configuration
-├── postcss.config.cjs              # PostCSS configuration
-└── eslint.config.js                # ESLint configuration
-```
-
-## 🔄 Real-time Features
-
-The application uses the BroadcastChannel API for real-time inventory synchronization across multiple browser tabs/windows:
-
-- Automatic inventory updates when items are added, sold, or adjusted
-- Cross-tab notifications for stock changes
-- LocalStorage fallback for unsupported browsers
-- Global sync events triggered on data modifications
-
-## 🔐 Security
-
-- Secure authentication via Supabase
-- Role-based access control (Admin, User)
-- Environment variable protection for sensitive credentials
-- Real-time data validation and consistency checks
-
-## 📝 License
-
-This project is part of a Capstone assignment.
-
-## 🤝 Contributing
-
-For capstone development, please follow these guidelines:
-- Create feature branches from `main`
-- Write clear commit messages
-- Test all functionality before pushing
-- Update this README if adding new features
-
-## 📧 Support
-
-For issues or questions, please create an issue in the GitHub repository.
 
 ---
 
-**Last Updated**: 2026-08-02
+## 🎨 Theme & Palette Reference
+
+- **Light Mode Canvas**: `#ECE6DD`
+- **Sidebar Background**: `#89A1A0`
+- **Active Navigation Pill**: `#FFFFFF` with soft shadow & slate text
+- **Dark Mode**: Slate-900 / Slate-800 contrast mode
+
+---
+
+## 📄 License & Attribution
+
+Developed as a Capstone Project for **Malabon Pharmacy & Clinic POS**.
