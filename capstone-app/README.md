@@ -7,8 +7,7 @@ A modern, full-featured **Point of Sale (POS)**, **Inventory**, and **Batch Mana
 ## 🎯 Key Features
 
 ### 🛒 Core POS & Checkout System
-- **Wedge & Hardware Barcode Scanner Support**: Seamlessly listens for hardware barcode scanners (such as Clabel C986) globally in the background without needing to focus input fields.
-- **Camera Barcode Scanner**: Built-in fallback camera scanner utilizing standard `BarcodeDetector` APIs.
+- **Wedge & Hardware Barcode Scanner Support**: Seamlessly listens for hardware barcode scanners (such as Clabel C986 and 1D/2D handheld optical scanners) globally in the background without needing to focus input fields.
 - **Smart Manufacturer Chooser**: Automatically prompts a *"Choose Manufacturer"* modal only when a scanned or selected product has multiple active batches from different manufacturers; adds immediately to cart if all batches share the same manufacturer.
 - **Statutory & Custom Discounts**: Automated discount engine supporting Senior Citizen (20%), PWD (20%), Solo Parent (10%), NAAC, and custom percentage discounts with VAT exemption breakdown.
 - **Customer ID & Named Registry**: Automated lookup and synchronization with the `named_persons` database table for discount eligibility validation and historical audit trails.
