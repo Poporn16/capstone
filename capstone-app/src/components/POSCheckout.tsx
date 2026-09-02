@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from "react"
-import type { InventoryItem, Sale, NamedPerson } from "../types"
+import type { InventoryItem, Sale, NamedPerson, InventoryBatch } from "../types"
 import { supabase } from "../utils/apiClient"
 import { getCategoryStyles } from "../utils/categoryColors"
-import { ArrowLeft, Printer, CreditCard, X, Users, Search, Check, Sparkles, Scan, Barcode, Camera, CheckCircle2, AlertCircle, AlertTriangle, Building2 } from "lucide-react"
+import { ArrowLeft, Printer, CreditCard, X, Users, Search, Check, Sparkles, Scan, Barcode, CheckCircle2, AlertCircle, AlertTriangle, Building2 } from "lucide-react"
 
 export type { NamedPerson }
 
@@ -62,9 +62,6 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
   const [quickScanInput, setQuickScanInput] = useState<string>("")
   const [scanToast, setScanToast] = useState<{ message: string; type: "success" | "warning" | "error"; id: number } | null>(null)
   const [scanMatchOptions, setScanMatchOptions] = useState<{ code: string; options: ScanOption[] } | null>(null)
-  const [showCameraScanner, setShowCameraScanner] = useState<boolean>(false)
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const cameraStreamRef = useRef<MediaStream | null>(null)
 
   const triggerScanToast = (message: string, type: "success" | "warning" | "error") => {
     setScanToast({ message, type, id: Date.now() })
@@ -401,85 +398,6 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
       if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
     }
   }, [inventory])
-
-  // Camera Barcode Scanner Stream Lifecycle
-  useEffect(() => {
-    let animationFrameId: number
-    let isCancelled = false
-
-    const startCamera = async () => {
-      if (!showCameraScanner) {
-        if (cameraStreamRef.current) {
-          cameraStreamRef.current.getTracks().forEach(t => t.stop())
-          cameraStreamRef.current = null
-        }
-        return
-      }
-
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
-        })
-        if (isCancelled) {
-          stream.getTracks().forEach(t => t.stop())
-          return
-        }
-        cameraStreamRef.current = stream
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream
-          await videoRef.current.play()
-        }
-
-        // Native BarcodeDetector scanning loop if supported
-        if ("BarcodeDetector" in window) {
-          const barcodeDetector = new (window as any).BarcodeDetector({
-            formats: ["code_128", "code_39", "ean_13", "ean_8", "upc_a", "upc_e", "qr_code"]
-          })
-
-          const scanFrame = async () => {
-            if (isCancelled || !videoRef.current || videoRef.current.readyState < 2) {
-              if (!isCancelled) animationFrameId = requestAnimationFrame(scanFrame)
-              return
-            }
-
-            try {
-              const barcodes = await barcodeDetector.detect(videoRef.current)
-              if (barcodes && barcodes.length > 0) {
-                const code = barcodes[0].rawValue
-                if (code) {
-                  const handled = processScannedBarcode(code)
-                  if (handled) {
-                    setShowCameraScanner(false)
-                    return
-                  }
-                }
-              }
-            } catch (err) {}
-
-            if (!isCancelled) {
-              animationFrameId = requestAnimationFrame(scanFrame)
-            }
-          }
-
-          animationFrameId = requestAnimationFrame(scanFrame)
-        }
-      } catch (err: any) {
-        console.warn("Camera stream access failed:", err)
-        triggerScanToast("Camera scanner access denied or unavailable", "warning")
-      }
-    }
-
-    startCamera()
-
-    return () => {
-      isCancelled = true
-      if (animationFrameId) cancelAnimationFrame(animationFrameId)
-      if (cameraStreamRef.current) {
-        cameraStreamRef.current.getTracks().forEach(t => t.stop())
-        cameraStreamRef.current = null
-      }
-    }
-  }, [showCameraScanner, inventory])
 
 
   const handleManualQtyChange = (id: string, value: string, maxStock: number) => {
@@ -1465,69 +1383,6 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                 className="flex-1 py-2 bg-gray-900 dark:bg-slate-700 text-white hover:bg-gray-800 dark:hover:bg-slate-600 font-bold rounded-lg tracking-wide shadow-xs text-xs transition-colors"
               >
                 Done / Reset
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Camera Barcode Scanner Modal */}
-      {showCameraScanner && (
-        <div 
-          onClick={() => setShowCameraScanner(false)}
-          className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in"
-        >
-          <div 
-            onClick={e => e.stopPropagation()}
-            className="bg-white dark:bg-slate-800 rounded-3xl max-w-sm w-full p-5 shadow-2xl border border-slate-200 dark:border-slate-700 space-y-4 relative"
-          >
-            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
-              <div className="flex items-center gap-2">
-                <div className="p-2 bg-blue-100 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 rounded-xl">
-                  <Camera className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-sm text-slate-900 dark:text-white">Camera Barcode Scanner</h3>
-                  <p className="text-[10px] text-slate-500 dark:text-slate-400">Align barcode within the target box</p>
-                </div>
-              </div>
-              <button 
-                type="button" 
-                onClick={() => setShowCameraScanner(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Video Viewport with Scanning Target Overlay */}
-            <div className="relative aspect-square w-full rounded-2xl overflow-hidden bg-black flex items-center justify-center border-2 border-slate-800">
-              <video 
-                ref={videoRef} 
-                playsInline 
-                muted 
-                className="w-full h-full object-cover" 
-              />
-              
-              {/* Scan target overlay */}
-              <div className="absolute inset-8 border-2 border-dashed border-emerald-400/80 rounded-2xl pointer-events-none flex flex-col justify-between p-2">
-                <div className="w-full h-0.5 bg-emerald-400 shadow-md shadow-emerald-400/50 animate-scan-line" />
-                <div className="text-center text-[10px] font-bold text-emerald-400 bg-black/60 px-2 py-1 rounded-md mx-auto backdrop-blur-xs">
-                  Scanning live...
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <p className="text-[11px] text-center text-slate-500 dark:text-slate-400">
-                Hold product steady in front of the lens. Scanned items are automatically added to the cart.
-              </p>
-              <button
-                type="button"
-                onClick={() => setShowCameraScanner(false)}
-                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold rounded-xl text-xs transition-colors cursor-pointer"
-              >
-                Close Camera
               </button>
             </div>
           </div>
