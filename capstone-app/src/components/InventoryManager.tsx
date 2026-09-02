@@ -1,8 +1,10 @@
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import type { InventoryItem } from "../App"
 import { supabase, triggerGlobalSync, fetchAllSupabaseRows } from "../utils/apiClient"
 import { downloadExcelWithAutoFit, parseSpreadsheetFile } from "../utils/excelUtils"
-import { Search, FolderPlus, Download, Upload, FileSpreadsheet, X, Trash2, Edit2, Clock, CheckCircle2 } from "lucide-react"
+import { getCategoryStyles } from "../utils/categoryColors"
+import { Search, FolderPlus, Download, Upload, FileSpreadsheet, X, Trash2, Edit2, Clock, CheckCircle2, Scan, Barcode } from "lucide-react"
+import { BarcodePrintModal } from "./BarcodePrintModal"
 
 interface InventoryManagerProps {
   currentOperator?: { username: string; displayName: string; systemRole: string } | null
@@ -29,9 +31,15 @@ export function InventoryManager({
   const [catFilter, setCatFilter] = useState("all")
   const [showAdd, setShowAdd] = useState(false)
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null)
+  const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null)
+  const [showBarcodeModal, setShowBarcodeModal] = useState(false)
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<InventoryItem | null>(null)
   const [newCatInput, setNewCatInput] = useState("")
   const [isBulkUploading, setIsBulkUploading] = useState(false)
+  const [scanToast, setScanToast] = useState<{ message: string; type: "success" | "warning"; id: number } | null>(null)
+  const barcodeBufferRef = useRef<string>("")
+  const lastKeyTimeRef = useRef<number>(0)
+  const flushTimerRef = useRef<any>(null)
   const [importProgress, setImportProgress] = useState<{
     active: boolean
     totalRows: number
@@ -60,9 +68,23 @@ export function InventoryManager({
   })
 
   const dynamicCategories = categoriesList.filter(c => c !== "unmarked category")
+  const isAdmin = !currentOperator || currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin"
 
-  const filtered = inventory.filter(item => {
-    const matchSearch = item.name.toLowerCase().includes(query.toLowerCase()) || String(item.barcode).includes(query)
+  // Auto-dismiss scan toast
+  useEffect(() => {
+    if (!scanToast) return
+    const timer = setTimeout(() => setScanToast(null), 3000)
+    return () => clearTimeout(timer)
+  }, [scanToast])
+
+  const safeInventory = Array.isArray(inventory) ? inventory : []
+
+  const filtered = safeInventory.filter(item => {
+    if (!item) return false
+    const name = String(item.name || "").toLowerCase()
+    const barcode = String(item.barcode || "").toLowerCase()
+    const q = (query || "").toLowerCase()
+    const matchSearch = name.includes(q) || barcode.includes(q)
     const matchCat = catFilter === "all" || item.category === catFilter
     return matchSearch && matchCat
   })
@@ -329,7 +351,10 @@ export function InventoryManager({
             const r = itemData._rowData
             if (r.initialStock > 0) {
               const cleanedName = r.name.replace(/\s+/g, "").substring(0, 5).toUpperCase()
-              const batchLabel = `BULK-${cleanedName}-${Date.now().toString().slice(-4)}`
+              const rawLabel = `BULK-${cleanedName}-${Date.now().toString().slice(-4)}`
+              const batchLabel = r.manufacturer && r.manufacturer.trim()
+                ? `${rawLabel} [${r.manufacturer.trim()}]`
+                : rawLabel
               batchesToInsert.push({
                 item_id: itemData.id,
                 batch_label: batchLabel,
@@ -574,6 +599,102 @@ export function InventoryManager({
     setShowAdd(false)
   }
 
+  // Automatic Background Barcode Scanner for Item Specs (Wedge Mode / Clabel C986)
+  const handleSpecsBarcodeScan = (scannedCode: string) => {
+    const clean = scannedCode.trim()
+    if (!clean) return
+
+    // Search if this barcode already exists in inventory
+    const matched = safeInventory.find(i => {
+      if (!i) return false
+      const b = String(i.barcode || "").trim().toLowerCase()
+      const bd = b.replace(/\D/g, "")
+      const cd = clean.replace(/\D/g, "")
+      return (b && b === clean.toLowerCase()) || (cd.length >= 4 && bd === cd)
+    })
+
+    if (editingItem) {
+      // User is in "Modify Specifications Template" modal
+      setEditForm(prev => ({ ...prev, barcode: clean }))
+      setScanToast({ message: `✓ Barcode assigned to specs: "${clean}"`, type: "success", id: Date.now() })
+    } else if (showAdd) {
+      // User is in "Add New Product Specification" modal
+      setNewItem(prev => ({ ...prev, barcode: clean }))
+      setScanToast({ message: `✓ Barcode assigned: "${clean}"`, type: "success", id: Date.now() })
+    } else {
+      // When on main Item Specs table:
+      if (matched) {
+        openEditModal(matched)
+        setScanToast({ message: `✓ Found "${matched.name}" • Specs opened`, type: "success", id: Date.now() })
+      } else {
+        if (isAdmin) {
+          setShowAdd(true)
+          setNewItem(prev => ({ ...prev, barcode: clean }))
+          setScanToast({ message: `✓ Barcode "${clean}" • Ready to Add Profile`, type: "success", id: Date.now() })
+        } else {
+          setScanToast({ message: `Scanned Barcode: ${clean}`, type: "warning", id: Date.now() })
+        }
+      }
+    }
+  }
+
+  // Global KeyDown listener for Hardware Scanner in Item Specs
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement
+      const isSearchInput = target && target.getAttribute("placeholder")?.includes("Search product")
+
+      const now = Date.now()
+      const elapsed = now - lastKeyTimeRef.current
+      lastKeyTimeRef.current = now
+
+      // Hardware scanners terminate with Enter, Tab, or Nothing
+      if (e.key === "Enter" || e.key === "Tab") {
+        if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
+        const buffered = barcodeBufferRef.current.trim()
+        barcodeBufferRef.current = ""
+
+        if (buffered.length >= 2) {
+          handleSpecsBarcodeScan(buffered)
+          e.preventDefault()
+          e.stopPropagation()
+        }
+        return
+      }
+
+      // Ignore modifier keys
+      if (e.key.length > 1) {
+        return
+      }
+
+      // Fast keystrokes indicate scanner hardware (< 80ms)
+      if (elapsed > 110 && !isSearchInput) {
+        barcodeBufferRef.current = e.key
+      } else {
+        barcodeBufferRef.current += e.key
+      }
+
+      // Auto-flush debounce timer for suffix-less scanners (Clabel C986)
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current)
+      }
+
+      flushTimerRef.current = setTimeout(() => {
+        const buffered = barcodeBufferRef.current.trim()
+        if (buffered.length >= 3) {
+          handleSpecsBarcodeScan(buffered)
+          barcodeBufferRef.current = ""
+        }
+      }, 95)
+    }
+
+    window.addEventListener("keydown", handleGlobalKeyDown, true)
+    return () => {
+      window.removeEventListener("keydown", handleGlobalKeyDown, true)
+      if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
+    }
+  }, [editingItem, showAdd, inventory, isAdmin])
+
   const calculateImportEta = (processed: number, total: number, startTime: number) => {
     if (processed <= 0 || !startTime) return "Calculating..."
     const elapsedSec = (Date.now() - startTime) / 1000
@@ -587,10 +708,24 @@ export function InventoryManager({
     return `${m}m ${s}s remaining`
   }
 
-  const isAdmin = !currentOperator || currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin"
-
   return (
-    <div className="space-y-6 text-xs font-medium">
+    <div className="space-y-6 text-xs font-medium relative">
+      {/* Floating Scanner Toast Notification */}
+      {scanToast && (
+        <div className="fixed top-4 right-4 z-50 animate-in slide-in-from-top-3 fade-in duration-200 pointer-events-none">
+          <div className={`px-4 py-2.5 rounded-xl shadow-2xl border backdrop-blur-md flex items-center gap-2.5 text-xs font-bold ${
+            scanToast.type === "success"
+              ? "bg-slate-900/95 text-emerald-300 border-emerald-500/40 shadow-emerald-950/40"
+              : "bg-slate-900/95 text-amber-300 border-amber-500/40 shadow-amber-950/40"
+          }`}>
+            <div className="p-1 rounded-full bg-emerald-500/20 text-emerald-400">
+              <Scan className="w-3.5 h-3.5" />
+            </div>
+            <span>{scanToast.message}</span>
+          </div>
+        </div>
+      )}
+
       {!isAdmin && (
         <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 rounded-xl text-amber-800 dark:text-amber-300 text-xs font-medium flex items-center justify-between">
           <span>🔒 <strong>Staff Read-Only View:</strong> Only Administrators can add product profiles, edit item specifications, or bulk import files.</span>
@@ -608,6 +743,16 @@ export function InventoryManager({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowBarcodeModal(true)}
+            className="px-3 py-2 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 font-bold rounded-lg flex items-center gap-1.5 border border-blue-200 dark:border-blue-800 transition-colors cursor-pointer"
+            title="Generate & Print Scannable Barcode Labels or Export to Excel"
+          >
+            <Barcode className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+            Print / Export Barcodes
+          </button>
+
           <button
             type="button"
             onClick={handleDownloadTemplate}
@@ -687,13 +832,33 @@ export function InventoryManager({
       </div>
 
       {/* Search Header Bar */}
-      <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-4">
+      <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-4 shadow-xs">
         <div className="flex flex-col md:flex-row gap-4">
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
-            <input type="text" placeholder="Search product profile templates..." value={query} onChange={e=>setQuery(e.target.value)} className="w-full pl-9 pr-3 py-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
+          <div className="relative flex-1 flex items-center">
+            <Search className="w-4 h-4 text-gray-400 dark:text-slate-400 absolute left-3 pointer-events-none" />
+            <input 
+              type="text" 
+              placeholder="Search product profile templates by name, barcode, or brand..." 
+              value={query} 
+              onChange={e=>setQuery(e.target.value)} 
+              className="w-full pl-9 pr-8 py-2.5 border border-gray-200 dark:border-slate-700 rounded-xl bg-gray-50/50 dark:bg-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-gray-400" 
+            />
+            {query && (
+              <button 
+                type="button" 
+                onClick={() => setQuery("")}
+                className="absolute right-2.5 p-1 rounded-full text-gray-400 hover:text-gray-600 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors"
+                title="Clear search"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
-          <select value={catFilter} onChange={e=>setCatFilter(e.target.value)} className="px-4 py-2 border rounded-lg uppercase tracking-wider bg-white dark:bg-slate-900 dark:border-slate-700 dark:text-white">
+          <select 
+            value={catFilter} 
+            onChange={e=>setCatFilter(e.target.value)} 
+            className="px-4 py-2.5 border border-gray-200 dark:border-slate-700 rounded-xl uppercase tracking-wider bg-white dark:bg-slate-900 dark:text-white text-xs font-bold focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+          >
             <option value="all">All Categories</option>
             <option value="unmarked category">UNMARKED CATEGORY</option>
             {dynamicCategories.map(cat => (<option key={cat} value={cat}>{cat.toUpperCase()}</option>))}
@@ -709,11 +874,12 @@ export function InventoryManager({
               setEditingItem(null)
               setShowAdd(true)
             }} 
-            className={`px-4 py-2 rounded-lg font-bold shadow-xs transition-colors flex items-center gap-1.5 whitespace-nowrap text-white ${
-              isAdmin ? "bg-blue-600 hover:bg-blue-700" : "bg-gray-400 dark:bg-slate-700 cursor-not-allowed"
+            className={`px-4 py-2.5 rounded-xl font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 whitespace-nowrap text-white cursor-pointer ${
+              isAdmin ? "bg-blue-600 hover:bg-blue-700 active:scale-98" : "bg-gray-400 dark:bg-slate-700 cursor-not-allowed"
             }`}
             title={!isAdmin ? "Only Admin can add items" : undefined}
           >
+            <FolderPlus className="w-4 h-4" />
             Add Item Profile
           </button>
         </div>
@@ -721,39 +887,80 @@ export function InventoryManager({
 
       {/* New Form Overlay Modal */}
       {showAdd && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-gray-100">
-            <div className="flex justify-between items-center border-b pb-2">
-              <h2 className="font-bold text-sm text-gray-900">Add New Product Specification</h2>
-              <button type="button" onClick={() => setShowAdd(false)} className="text-gray-400 hover:text-gray-600">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-gray-100 dark:border-slate-700 text-xs">
+            <div className="flex justify-between items-center border-b dark:border-slate-700 pb-3">
+              <div>
+                <h2 className="font-bold text-sm text-gray-900 dark:text-white flex items-center gap-2">
+                  <FolderPlus className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  Add New Product Specification
+                </h2>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Scan barcode anytime to auto-fill identity directly</p>
+              </div>
+              <button type="button" onClick={() => setShowAdd(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-white p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {[
-                { label: "Product Name *", key: "name", type: "text" },
-                { label: "Barcode Identity (Optional)", key: "barcode", type: "text" },
-                { label: "Manufacturer Brand Name", key: "manufacturer", type: "text" },
-                { label: "Minimum Safety Stock Level", key: "minStock", type: "number" },
-              ].map(({ label, key, type }) => (
-                <div key={key}>
-                  <label className="block text-gray-600 mb-1">{label}</label>
-                  <input type={type} value={(newItem as any)[key] || ""} onChange={e=>setNewItem({...newItem, [key]: type==='number'? parseFloat(e.target.value) || 0 : e.target.value})} className="w-full border p-2 rounded-lg" />
+              {/* Product Name */}
+              <div className="space-y-1">
+                <label className="block text-gray-700 dark:text-slate-300 font-bold text-[11px]">Product Name *</label>
+                <input 
+                  type="text" 
+                  placeholder="e.g. Paracetamol 500mg"
+                  value={newItem.name || ""} 
+                  onChange={e=>setNewItem({...newItem, name: e.target.value})} 
+                  className="w-full border border-gray-200 dark:border-slate-700 p-2 rounded-lg bg-gray-50/50 dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" 
+                />
+              </div>
+
+              {/* Barcode Identity with Auto-Scanner Active Badge */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="block text-gray-700 dark:text-slate-300 font-bold text-[11px]">Barcode Identity</label>
+                  <span className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800 animate-pulse">
+                    <Scan className="w-3 h-3" /> Scanner Ready
+                  </span>
                 </div>
-              ))}
-              <div>
-                <label className="block text-gray-600 mb-1">Category Group</label>
-                <select value={newItem.category || "unmarked category"} onChange={e=>setNewItem({...newItem, category: e.target.value})} className="w-full border p-2 rounded-lg uppercase font-semibold bg-white">
+                <input 
+                  type="text" 
+                  placeholder="Scan barcode or enter manually..."
+                  value={newItem.barcode || ""} 
+                  onChange={e=>setNewItem({...newItem, barcode: e.target.value})} 
+                  className="w-full border border-gray-200 dark:border-slate-700 p-2 rounded-lg font-mono text-[11px] bg-gray-50/50 dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" 
+                />
+              </div>
+
+              {/* Safety Stock */}
+              <div className="space-y-1">
+                <label className="block text-gray-700 dark:text-slate-300 font-bold text-[11px]">Minimum Safety Stock Level</label>
+                <input 
+                  type="number" 
+                  placeholder="10"
+                  value={newItem.minStock ?? 10} 
+                  onChange={e=>setNewItem({...newItem, minStock: parseFloat(e.target.value) || 0})} 
+                  className="w-full border border-gray-200 dark:border-slate-700 p-2 rounded-lg bg-gray-50/50 dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" 
+                />
+              </div>
+
+              {/* Category Group */}
+              <div className="space-y-1">
+                <label className="block text-gray-700 dark:text-slate-300 font-bold text-[11px]">Category Group</label>
+                <select 
+                  value={newItem.category || "unmarked category"} 
+                  onChange={e=>setNewItem({...newItem, category: e.target.value})} 
+                  className="w-full border border-gray-200 dark:border-slate-700 p-2 rounded-lg uppercase font-semibold bg-gray-50/50 dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                >
                   <option value="unmarked category">UNMARKED CATEGORY</option>
                   {dynamicCategories.map(cat => (<option key={cat} value={cat}>{cat.toUpperCase()}</option>))}
                 </select>
               </div>
             </div>
 
-            <div className="flex gap-2 pt-2">
-              <button onClick={addNewItem} className="px-4 py-2 bg-blue-600 text-white font-bold rounded-lg shadow-xs">Save Profile</button>
-              <button onClick={()=>setShowAdd(false)} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg">Cancel</button>
+            <div className="flex justify-end gap-2 pt-3 border-t dark:border-slate-700">
+              <button type="button" onClick={()=>setShowAdd(false)} className="px-4 py-2 bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-slate-600 rounded-xl font-bold transition-colors">Cancel</button>
+              <button type="button" onClick={addNewItem} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-xs transition-colors">Save Profile</button>
             </div>
           </div>
         </div>
@@ -761,50 +968,86 @@ export function InventoryManager({
 
       {/* Centered Modal Edit Dialog */}
       {editingItem && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-gray-100">
-            <div className="flex justify-between items-center border-b pb-3">
-              <h2 className="font-bold text-base text-gray-900 flex items-center gap-2">
-                <Edit2 className="w-4 h-4 text-blue-600" />
-                Modify Specifications Template
-              </h2>
-              <button type="button" onClick={() => setEditingItem(null)} className="text-gray-400 hover:text-gray-600">
-                <X className="w-5 h-5" />
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-gray-100 dark:border-slate-700 text-xs">
+            <div className="flex justify-between items-center border-b dark:border-slate-700 pb-3">
+              <div>
+                <h2 className="font-bold text-sm text-gray-900 dark:text-white flex items-center gap-2">
+                  <Edit2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  Modify Specifications Template
+                </h2>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Scan barcode anytime to auto-assign identity directly</p>
+              </div>
+              <button type="button" onClick={() => setEditingItem(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-white p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700">
+                <X className="w-4 h-4" />
               </button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {[
-                { label: "Product Name *", key: "name", type: "text" },
-                { label: "Barcode Identity (Optional)", key: "barcode", type: "text" },
-                { label: "Manufacturer Brand Name", key: "manufacturer", type: "text" },
-                { label: "Minimum Safety Stock Threshold", key: "minStock", type: "number" },
-              ].map(({ label, key, type }) => (
-                <div key={key}>
-                  <label className="block text-gray-600 mb-1">{label}</label>
-                  <input type={type} value={(editForm as any)[key] || ""} onChange={e=>setEditForm({...editForm, [key]: type==='number'? parseFloat(e.target.value) || 0 : e.target.value})} className="w-full border p-2 rounded-lg" />
+              {/* Product Name */}
+              <div className="space-y-1">
+                <label className="block text-gray-700 dark:text-slate-300 font-bold text-[11px]">Product Name *</label>
+                <input 
+                  type="text" 
+                  value={editForm.name || ""} 
+                  onChange={e=>setEditForm({...editForm, name: e.target.value})} 
+                  className="w-full border border-gray-200 dark:border-slate-700 p-2 rounded-lg bg-gray-50/50 dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" 
+                />
+              </div>
+
+              {/* Barcode Identity with Auto-Scanner Indicator */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="block text-gray-700 dark:text-slate-300 font-bold text-[11px]">Barcode Identity</label>
+                  <span className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800 animate-pulse">
+                    <Scan className="w-3 h-3" /> Scanner Ready
+                  </span>
                 </div>
-              ))}
-              <div>
-                <label className="block text-gray-600 mb-1">Category Group</label>
-                <select value={editForm.category || "unmarked category"} onChange={e=>setEditForm({...editForm, category: e.target.value})} className="w-full border p-2 rounded-lg uppercase font-semibold bg-white">
+                <input 
+                  type="text" 
+                  placeholder="Scan barcode directly..."
+                  value={editForm.barcode || ""} 
+                  onChange={e=>setEditForm({...editForm, barcode: e.target.value})} 
+                  className="w-full border border-gray-200 dark:border-slate-700 p-2 rounded-lg font-mono text-[11px] bg-gray-50/50 dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" 
+                />
+              </div>
+
+              {/* Safety Stock */}
+              <div className="space-y-1">
+                <label className="block text-gray-700 dark:text-slate-300 font-bold text-[11px]">Minimum Safety Stock Threshold</label>
+                <input 
+                  type="number" 
+                  value={editForm.minStock ?? 10} 
+                  onChange={e=>setEditForm({...editForm, minStock: parseFloat(e.target.value) || 0})} 
+                  className="w-full border border-gray-200 dark:border-slate-700 p-2 rounded-lg bg-gray-50/50 dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" 
+                />
+              </div>
+
+              {/* Category Group */}
+              <div className="space-y-1">
+                <label className="block text-gray-700 dark:text-slate-300 font-bold text-[11px]">Category Group</label>
+                <select 
+                  value={editForm.category || "unmarked category"} 
+                  onChange={e=>setEditForm({...editForm, category: e.target.value})} 
+                  className="w-full border border-gray-200 dark:border-slate-700 p-2 rounded-lg uppercase font-semibold bg-gray-50/50 dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                >
                   <option value="unmarked category">UNMARKED CATEGORY</option>
                   {dynamicCategories.map(cat => (<option key={cat} value={cat}>{cat.toUpperCase()}</option>))}
                 </select>
               </div>
             </div>
 
-            <div className="flex justify-between pt-2">
+            <div className="flex justify-between items-center pt-3 border-t dark:border-slate-700">
               <button 
                 type="button"
                 onClick={() => setDeleteConfirmItem(editingItem)} 
-                className="px-4 py-2 bg-red-50 dark:bg-red-950/60 text-red-600 dark:text-red-300 border border-red-200 dark:border-red-800 rounded-lg font-bold flex items-center gap-1.5 hover:bg-red-100 dark:hover:bg-red-900 transition-colors text-xs cursor-pointer"
+                className="px-3.5 py-2 bg-red-50 dark:bg-red-950/60 text-red-600 dark:text-red-300 border border-red-200 dark:border-red-800 rounded-xl font-bold flex items-center gap-1.5 hover:bg-red-100 dark:hover:bg-red-900 transition-colors text-xs cursor-pointer"
               >
-                <Trash2 className="w-4 h-4" /> Delete Item
+                <Trash2 className="w-3.5 h-3.5" /> Delete Profile
               </button>
               <div className="flex gap-2">
-                <button onClick={saveEdit} className="px-4 py-2 bg-green-600 text-white font-bold rounded-lg shadow-xs">Save Changes</button>
-                <button onClick={()=>setEditingItem(null)} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg">Cancel</button>
+                <button type="button" onClick={()=>setEditingItem(null)} className="px-4 py-2 bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-slate-600 rounded-xl font-bold transition-colors">Cancel</button>
+                <button type="button" onClick={saveEdit} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-xs transition-colors">Save Changes</button>
               </div>
             </div>
           </div>
@@ -869,26 +1112,26 @@ export function InventoryManager({
             <tr>
               <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold">Product Profile Name</th>
               <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold">Category</th>
-              <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold">Manufacturer Vendor</th>
               <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold text-center">Min Stock</th>
               <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold text-center">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 dark:divide-slate-700">
-            {filtered.map(item => (
-              <tr key={item.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors">
-                <td className="py-3 px-4">
-                  <p className="text-sm font-medium text-gray-900 dark:text-white">{item.name}</p>
-                  <p className="text-[10px] text-gray-500 dark:text-gray-400 font-mono mt-0.5">{item.barcode}</p>
-                </td>
-                <td className="py-3 px-4">
-                  <span className="text-[9px] px-2 py-0.5 rounded-full font-bold uppercase bg-gray-100 dark:bg-slate-900 text-gray-700 dark:text-slate-300 border dark:border-slate-700">
-                    {item.category}
-                  </span>
-                </td>
-                <td className="py-3 px-4 text-gray-700 dark:text-slate-300">{item.manufacturer || "Unspecified"}</td>
-                <td className="py-3 px-4 text-gray-700 dark:text-slate-300 font-mono font-bold text-center">{item.minStock}</td>
-                <td className="py-3 px-4 text-center">
+            {filtered.map(item => {
+              const catStyle = getCategoryStyles(item.category)
+              return (
+                <tr key={item.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors">
+                  <td className="py-3 px-4">
+                    <p className="text-sm font-medium text-gray-900 dark:text-white">{item.name}</p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400 font-mono mt-0.5">{item.barcode}</p>
+                  </td>
+                  <td className="py-3 px-4">
+                    <span className={`text-[9px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider ${catStyle.badge}`}>
+                      {item.category}
+                    </span>
+                  </td>
+                  <td className="py-3 px-4 text-gray-700 dark:text-slate-300 font-mono font-bold text-center">{item.minStock}</td>
+                  <td className="py-3 px-4 text-center">
                   <div className="flex items-center justify-center gap-1.5">
                     <button 
                       type="button"
@@ -909,7 +1152,7 @@ export function InventoryManager({
                   </div>
                 </td>
               </tr>
-            ))}
+            )})}
           </tbody>
         </table>
       </div>
@@ -977,6 +1220,13 @@ export function InventoryManager({
           </div>
         </div>
       )}
+
+      {/* Scannable Barcode Labels Print & Export Modal */}
+      <BarcodePrintModal
+        isOpen={showBarcodeModal}
+        onClose={() => setShowBarcodeModal(false)}
+        inventory={inventory}
+      />
 
     </div>
   )

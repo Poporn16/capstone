@@ -243,17 +243,36 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
 
   const loadAttendanceLogs = async () => {
     try {
-      const { data } = await supabase.from("staff_attendance").select("*").order("id", { ascending: false })
-      if (data) {
-        const formatted = data.map((d: any) => ({
-          id: String(d.id),
-          username: d.username || "",
-          displayName: d.display_name || d.username || "",
-          systemRole: d.system_role || "staff",
-          timeIn: d.time_in,
-          timeOut: d.time_out || undefined,
-          durationMinutes: d.duration_minutes || undefined
-        }))
+      const [attRes, profRes] = await Promise.all([
+        supabase.from("staff_attendance").select("*").order("id", { ascending: false }).limit(200),
+        supabase.from("operator_profiles").select("username, system_role, display_name")
+      ])
+      const profMap = new Map<string, { role: string; name: string }>()
+      if (profRes.data) {
+        profRes.data.forEach((p: any) => {
+          if (p.username) {
+            profMap.set(p.username.toLowerCase().trim(), {
+              role: p.system_role || "staff",
+              name: p.display_name || p.username
+            })
+          }
+        })
+      }
+      if (attRes.data) {
+        const formatted = attRes.data.map((d: any) => {
+          const userKey = (d.username || "").toLowerCase().trim()
+          const matchedProfile = profMap.get(userKey)
+          const actualRole = matchedProfile?.role || d.system_role || (userKey.includes("superadmin") ? "superadmin" : "staff")
+          return {
+            id: String(d.id),
+            username: d.username || "",
+            displayName: d.display_name || matchedProfile?.name || d.username || "",
+            systemRole: actualRole,
+            timeIn: d.time_in,
+            timeOut: d.time_out || undefined,
+            durationMinutes: d.duration_minutes || undefined
+          }
+        })
         setAttendanceLogs(formatted)
       }
     } catch (e) {
@@ -1090,13 +1109,15 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     }
   }
 
+
   const fetchAllAdminData = async () => {
     setIsLoading(true)
     await Promise.all([
       fetchAdminLogs(),
       fetchBatchSalesHistory(),
       fetchInventoryBatches(),
-      fetchProfiles()
+      fetchProfiles(),
+      loadAttendanceLogs()
     ])
     setIsLoading(false)
   }
@@ -1296,47 +1317,47 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
 
             <form onSubmit={handleCreateProfile} className="space-y-3">
               <div>
-                <label className="block text-gray-500 dark:text-gray-400 font-bold uppercase text-[9px] mb-1">Operator Username ID</label>
+                <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] mb-1">Operator Username ID</label>
                 <input
                   type="text"
                   required
                   placeholder="e.g. staff_member"
                   value={regUsername}
                   onChange={e => setRegUsername(e.target.value)}
-                  className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-900 text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="w-full p-2.5 border border-gray-200 dark:border-slate-700 rounded-xl text-xs bg-gray-50/50 dark:bg-slate-900 text-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-gray-400"
                 />
               </div>
 
               <div>
-                <label className="block text-gray-500 dark:text-gray-400 font-bold uppercase text-[9px] mb-1">Account Password PIN</label>
+                <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] mb-1">Account Password PIN</label>
                 <input
                   type="password"
                   required
                   placeholder="Enter access code..."
                   value={regPin}
                   onChange={e => setRegPin(e.target.value)}
-                  className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-900 text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+                  className="w-full p-2.5 border border-gray-200 dark:border-slate-700 rounded-xl text-xs bg-gray-50/50 dark:bg-slate-900 text-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-mono placeholder:text-gray-400"
                 />
               </div>
 
               <div>
-                <label className="block text-gray-500 dark:text-gray-400 font-bold uppercase text-[9px] mb-1">Full Display Employee Name</label>
+                <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] mb-1">Full Display Employee Name</label>
                 <input
                   type="text"
                   required
                   placeholder="e.g. Jane Doe"
                   value={regDisplayName}
                   onChange={e => setRegDisplayName(e.target.value)}
-                  className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-900 text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="w-full p-2.5 border border-gray-200 dark:border-slate-700 rounded-xl text-xs bg-gray-50/50 dark:bg-slate-900 text-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-gray-400"
                 />
               </div>
 
               <div>
-                <label className="block text-gray-500 dark:text-gray-400 font-bold uppercase text-[9px] mb-1">Authorization Role</label>
+                <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] mb-1">Authorization Role</label>
                 <select
                   value={regRole}
                   onChange={e => setRegRole(e.target.value)}
-                  className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-900 text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold uppercase"
+                  className="w-full p-2.5 border border-gray-200 dark:border-slate-700 rounded-xl text-xs bg-white dark:bg-slate-900 text-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-bold uppercase cursor-pointer"
                 >
                   <option value="staff">STAFF OPERATOR</option>
                   <option value="admin">SYSTEM ADMIN</option>
@@ -1345,7 +1366,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
 
               <button
                 type="submit"
-                className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-xs text-xs tracking-wide transition-colors"
+                className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-xs text-xs tracking-wide transition-all cursor-pointer active:scale-98"
               >
                 Create Credentials Profile
               </button>
@@ -1622,7 +1643,21 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                           <td className="p-2 font-bold text-gray-800 dark:text-white">
                             {r.displayName || r.username} <span className="text-[10px] text-gray-400 font-normal">(@{r.username})</span>
                           </td>
-                          <td className="p-2 font-mono uppercase text-[10px]">{r.systemRole || "staff"}</td>
+                          <td className="p-2">
+                            {String(r.systemRole || "").toLowerCase() === "superadmin" ? (
+                              <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-mono text-[9px] font-extrabold uppercase border border-purple-200 dark:border-purple-800">
+                                SUPERADMIN
+                              </span>
+                            ) : String(r.systemRole || "").toLowerCase() === "admin" ? (
+                              <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 font-mono text-[9px] font-extrabold uppercase border border-blue-200 dark:border-blue-800">
+                                ADMIN
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200 font-mono text-[9px] font-bold uppercase border border-slate-200 dark:border-slate-600">
+                                STAFF
+                              </span>
+                            )}
+                          </td>
                           <td className="p-2">{inStr}</td>
                           <td className="p-2">
                             <span className={r.timeOut ? "text-gray-700 dark:text-slate-300" : "text-emerald-600 font-bold"}>{outStr}</span>

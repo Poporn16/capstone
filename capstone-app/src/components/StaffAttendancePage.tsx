@@ -27,17 +27,39 @@ export function StaffAttendancePage({ currentOperator }: StaffAttendancePageProp
 
   const loadAttendance = async () => {
     try {
-      const { data } = await supabase.from("staff_attendance").select("*").order("id", { ascending: false })
-      if (data) {
-        const formatted: AttendanceRecord[] = data.map((d: any) => ({
-          id: String(d.id),
-          username: d.username || "",
-          displayName: d.display_name || d.username || "",
-          systemRole: d.system_role || "staff",
-          timeIn: d.time_in,
-          timeOut: d.time_out || undefined,
-          durationMinutes: d.duration_minutes || undefined
-        }))
+      const [attRes, profRes] = await Promise.all([
+        supabase.from("staff_attendance").select("*").order("id", { ascending: false }),
+        supabase.from("operator_profiles").select("username, system_role, display_name")
+      ])
+
+      const profMap = new Map<string, { role: string; name: string }>()
+      if (profRes.data) {
+        profRes.data.forEach((p: any) => {
+          if (p.username) {
+            profMap.set(p.username.toLowerCase().trim(), {
+              role: p.system_role || "staff",
+              name: p.display_name || p.username
+            })
+          }
+        })
+      }
+
+      if (attRes.data) {
+        const formatted: AttendanceRecord[] = attRes.data.map((d: any) => {
+          const userKey = (d.username || "").toLowerCase().trim()
+          const matched = profMap.get(userKey)
+          const actualRole = matched?.role || d.system_role || (userKey.includes("superadmin") ? "superadmin" : "staff")
+          const actualDisplayName = d.display_name || matched?.name || d.username || "Operator"
+          return {
+            id: String(d.id),
+            username: d.username || "",
+            displayName: actualDisplayName,
+            systemRole: actualRole,
+            timeIn: d.time_in,
+            timeOut: d.time_out || undefined,
+            durationMinutes: d.duration_minutes || undefined
+          }
+        })
         setRecords(formatted)
       }
     } catch (e) {
@@ -90,17 +112,31 @@ export function StaffAttendancePage({ currentOperator }: StaffAttendancePageProp
     return true
   }
 
-  const filteredRecords = records.filter(r => {
-    if (!checkDateFrame(r.timeIn)) return false
-    const q = searchQuery.toLowerCase().trim()
-    const matchSearch = !q ||
-      r.username.toLowerCase().includes(q) ||
-      r.displayName.toLowerCase().includes(q)
+  const filteredRecords = useMemo(() => {
+    return records
+      .filter(r => {
+        if (!checkDateFrame(r.timeIn)) return false
+        const q = searchQuery.toLowerCase().trim()
+        const matchSearch = !q ||
+          r.username.toLowerCase().includes(q) ||
+          r.displayName.toLowerCase().includes(q)
 
-    const matchRole = roleFilter === "all" || (r.systemRole || "staff").toLowerCase() === roleFilter.toLowerCase()
+        const matchRole = roleFilter === "all" || (r.systemRole || "staff").toLowerCase() === roleFilter.toLowerCase()
 
-    return matchSearch && matchRole
-  })
+        return matchSearch && matchRole
+      })
+      .sort((a, b) => {
+        const aActive = !a.timeOut
+        const bActive = !b.timeOut
+        // 1. Active Working Shift (Clocked In) always on top
+        if (aActive && !bActive) return -1
+        if (!aActive && bActive) return 1
+        // 2. Secondary sort: newest timeIn first
+        const aTime = a.timeIn ? new Date(a.timeIn).getTime() : 0
+        const bTime = b.timeIn ? new Date(b.timeIn).getTime() : 0
+        return bTime - aTime
+      })
+  }, [records, dateFrame, startDate, endDate, searchQuery, roleFilter])
 
   // Total shift duration calculation for searched staff/filter
   const totalShiftSummary = useMemo(() => {
@@ -180,18 +216,18 @@ export function StaffAttendancePage({ currentOperator }: StaffAttendancePageProp
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs">
+        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs card-hover">
           <span className="text-gray-400 dark:text-slate-400 font-bold text-[10px] uppercase tracking-wider block">Total Recorded Shifts</span>
           <h3 className="text-gray-900 dark:text-white font-bold text-xl mt-1 font-mono">{records.length}</h3>
         </div>
-        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs">
+        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs card-hover">
           <span className="text-gray-400 dark:text-slate-400 font-bold text-[10px] uppercase tracking-wider block">Currently Active Shifts</span>
           <h3 className="text-emerald-600 dark:text-emerald-400 font-bold text-xl mt-1 font-mono flex items-center gap-2">
             <span>{activeSessionsCount}</span>
             {activeSessionsCount > 0 && <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>}
           </h3>
         </div>
-        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs">
+        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs card-hover">
           <span className="text-gray-400 dark:text-slate-400 font-bold text-[10px] uppercase tracking-wider block">Unique Staff Members</span>
           <h3 className="text-blue-600 dark:text-blue-400 font-bold text-xl mt-1 font-mono">
             {new Set(records.map(r => r.username)).size}
@@ -200,22 +236,32 @@ export function StaffAttendancePage({ currentOperator }: StaffAttendancePageProp
       </div>
 
       {/* Filter Header with Date Frame */}
-      <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-4 space-y-3">
+      <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-4 space-y-3 shadow-xs">
         <div className="flex flex-col md:flex-row gap-3">
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3" />
+          <div className="relative flex-1 flex items-center">
+            <Search className="w-4 h-4 text-gray-400 dark:text-slate-400 absolute left-3 pointer-events-none" />
             <input
               type="text"
               placeholder="Search by staff username or display name..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 border rounded-lg dark:bg-slate-900 dark:border-slate-700 dark:text-white text-xs font-medium focus:ring-1 focus:ring-blue-500"
+              className="w-full pl-9 pr-8 py-2.5 border border-gray-200 dark:border-slate-700 rounded-xl bg-gray-50/50 dark:bg-slate-900 dark:text-white text-xs font-medium focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-gray-400"
             />
+            {searchQuery && (
+              <button 
+                type="button" 
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2.5 p-1 rounded-full text-gray-400 hover:text-gray-600 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors"
+                title="Clear search"
+              >
+                <span className="text-xs font-bold">×</span>
+              </button>
+            )}
           </div>
           <select
             value={roleFilter}
             onChange={e => setRoleFilter(e.target.value)}
-            className="px-3 py-2 border rounded-lg uppercase tracking-wider bg-white dark:bg-slate-900 dark:border-slate-700 dark:text-white text-xs font-bold"
+            className="px-4 py-2.5 border border-gray-200 dark:border-slate-700 rounded-xl uppercase tracking-wider bg-white dark:bg-slate-900 dark:text-white text-xs font-bold focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
           >
             <option value="all">All Roles</option>
             <option value="staff">STAFF</option>
@@ -312,7 +358,14 @@ export function StaffAttendancePage({ currentOperator }: StaffAttendancePageProp
                   const durationStr = r.durationMinutes ? `${hours}h ${mins}m` : "-"
 
                   return (
-                    <tr key={r.id} className="hover:bg-gray-50/60 dark:hover:bg-slate-700/60 transition-colors">
+                    <tr 
+                      key={r.id} 
+                      className={`transition-colors ${
+                        !r.timeOut 
+                          ? "bg-emerald-50/50 dark:bg-emerald-950/20 hover:bg-emerald-50/80 dark:hover:bg-emerald-950/40 border-l-4 border-l-emerald-500" 
+                          : "hover:bg-gray-50/60 dark:hover:bg-slate-700/60"
+                      }`}
+                    >
                       <td className="p-4">
                         <div className="font-bold text-gray-900 dark:text-white">
                           {r.displayName}
@@ -320,9 +373,19 @@ export function StaffAttendancePage({ currentOperator }: StaffAttendancePageProp
                         <span className="text-[10px] text-gray-400 dark:text-slate-400">@{r.username}</span>
                       </td>
                       <td className="p-4">
-                        <span className="px-2 py-0.5 rounded bg-gray-100 dark:bg-slate-700 font-mono text-[10px] font-bold uppercase text-gray-700 dark:text-slate-300">
-                          {r.systemRole || "staff"}
-                        </span>
+                        {String(r.systemRole || "").toLowerCase() === "superadmin" ? (
+                          <span className="px-2.5 py-1 rounded-full bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-mono text-[10px] font-extrabold uppercase tracking-wide border border-purple-200 dark:border-purple-800 shadow-2xs">
+                            SUPERADMIN
+                          </span>
+                        ) : String(r.systemRole || "").toLowerCase() === "admin" ? (
+                          <span className="px-2.5 py-1 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 font-mono text-[10px] font-extrabold uppercase tracking-wide border border-blue-200 dark:border-blue-800 shadow-2xs">
+                            ADMIN
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200 font-mono text-[10px] font-bold uppercase tracking-wide border border-slate-200 dark:border-slate-600">
+                            STAFF
+                          </span>
+                        )}
                       </td>
                       <td className="p-4 text-gray-700 dark:text-slate-200 font-medium whitespace-nowrap">{inStr}</td>
                       <td className="p-4 text-gray-700 dark:text-slate-200 font-medium whitespace-nowrap">

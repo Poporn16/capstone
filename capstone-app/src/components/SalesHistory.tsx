@@ -45,6 +45,24 @@ export function SalesHistory({ currentOperator, sales, onToggleRefund }: SalesHi
     };
   }, []);
 
+  useEffect(() => {
+    const handleSelectSaleEvent = (e: any) => {
+      const saleId = e.detail?.id;
+      if (saleId) {
+        setSearchQuery(String(saleId));
+        const matchedSale = sales.find(s => String(s.id) === String(saleId) || String(s.dbId) === String(saleId));
+        if (matchedSale) {
+          setSelectedInvoice(matchedSale);
+        }
+      }
+    };
+
+    window.addEventListener("pinv_select_sale", handleSelectSaleEvent as any);
+    return () => {
+      window.removeEventListener("pinv_select_sale", handleSelectSaleEvent as any);
+    };
+  }, [sales]);
+
   const getFilteredSales = () => {
     let result = [...sales];
 
@@ -179,15 +197,21 @@ export function SalesHistory({ currentOperator, sales, onToggleRefund }: SalesHi
       const totalItemsCount = s.items.reduce((sum, ci) => sum + ci.quantity, 0);
       const dateStr = formatReceiptDate(s.date);
       const statusStr = s.isRefunded ? "Voided" : "Completed";
+      const channelStr = (s.onlineChannel || "").trim();
       const payStr = s.paymentMethod === "cash" 
         ? "Cash" 
-        : s.onlineChannel 
-          ? `Other (${s.onlineChannel})` 
-          : "Other (Online)";
+        : channelStr 
+          ? `Online (${channelStr})` 
+          : "Online";
+
+      const rawCustomer = s.customerName || (s.discountLabel && s.discountLabel.includes("(") ? s.discountLabel.split("(")[1]?.replace(")", "").trim() : null);
+      const isWalkIn = !rawCustomer || ["walk-in", "walk-in customer", "regular customer", "walkin", "none"].includes(rawCustomer.trim().toLowerCase());
+      const customerNameStr = (!isWalkIn && rawCustomer) ? rawCustomer.trim() : "Walk-in Customer";
 
       return {
         id: String(s.id),
         date: dateStr,
+        customerName: customerNameStr,
         processedBy: s.processedBy || "Staff",
         paymentOption: payStr,
         status: statusStr,
@@ -198,13 +222,35 @@ export function SalesHistory({ currentOperator, sales, onToggleRefund }: SalesHi
         vat: Number(s.vat || 0),
         grandTotal: Number(s.total || 0),
         isRefunded: !!s.isRefunded,
-        lineItems: s.items.map(ci => ({
-          itemDescription: ci.item.name,
-          category: (ci.item as any).category || "General",
-          quantity: ci.quantity,
-          unitPrice: Number(ci.item.price || 0),
-          totalLinePrice: Number(ci.quantity * (ci.item.price || 0))
-        }))
+        lineItems: s.items.map(ci => {
+          const itemObj = ci.item || {} as any;
+          const qty = Number(ci.quantity) || 1;
+          const resolvedUnitPrice = Number(
+            itemObj.price ||
+            (ci as any).unit_price ||
+            (ci as any).unitPrice ||
+            (ci as any).price ||
+            (ci as any).item_price ||
+            0
+          );
+          
+          let linePrice = Number((qty * resolvedUnitPrice).toFixed(2));
+          let finalUnitPrice = resolvedUnitPrice;
+
+          // Fallback if price on item object was 0 but transaction total exists
+          if (finalUnitPrice === 0 && Number(s.total || s.subtotal || 0) > 0 && s.items.length > 0) {
+            linePrice = Number((Number(s.total || s.subtotal || 0) / s.items.length).toFixed(2));
+            finalUnitPrice = Number((linePrice / qty).toFixed(2));
+          }
+
+          return {
+            itemDescription: itemObj.name || (ci as any).item_name || (ci as any).name || "Product Item",
+            category: itemObj.category || (ci as any).category || "General",
+            quantity: qty,
+            unitPrice: finalUnitPrice,
+            totalLinePrice: linePrice
+          };
+        })
       };
     });
 

@@ -1,14 +1,10 @@
-import { useState, useEffect } from "react"
-import type { InventoryItem, Sale } from "../App"
+import { useState, useEffect, useRef } from "react"
+import type { InventoryItem, Sale, NamedPerson } from "../types"
 import { supabase } from "../utils/apiClient"
-import { ArrowLeft, Printer, CreditCard, X, Users } from "lucide-react"
+import { getCategoryStyles } from "../utils/categoryColors"
+import { ArrowLeft, Printer, CreditCard, X, Users, Search, Check, Sparkles, Scan, Barcode, Camera, CheckCircle2, AlertCircle, AlertTriangle, Building2 } from "lucide-react"
 
-export interface NamedPerson {
-  id: string
-  idNumber: string
-  name: string
-  discountType?: string
-}
+export type { NamedPerson }
 
 interface POSCheckoutProps {
   inventory: InventoryItem[]
@@ -20,6 +16,19 @@ interface POSCheckoutProps {
 interface CartItem {
   item: InventoryItem
   quantity: number
+}
+
+export interface ScanOption {
+  item: InventoryItem
+  batch?: InventoryBatch
+  label: string
+  productName: string
+  manufacturer: string
+  category: string
+  stock: number
+  price: number
+  expiryDate?: string
+  batchLabel?: string
 }
 
 type DiscountType = "none" | "senior" | "pwd" | "naac" | "soloparent" | "custom"
@@ -45,6 +54,27 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
 
   // Registry of known named persons with ID numbers
   const [namedPersonsRegistry, setNamedPersonsRegistry] = useState<NamedPerson[]>([])
+
+  // Barcode scanner state
+  const barcodeBufferRef = useRef<string>("")
+  const lastKeyTimeRef = useRef<number>(0)
+  const flushTimerRef = useRef<any>(null)
+  const [quickScanInput, setQuickScanInput] = useState<string>("")
+  const [scanToast, setScanToast] = useState<{ message: string; type: "success" | "warning" | "error"; id: number } | null>(null)
+  const [scanMatchOptions, setScanMatchOptions] = useState<{ code: string; options: ScanOption[] } | null>(null)
+  const [showCameraScanner, setShowCameraScanner] = useState<boolean>(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const cameraStreamRef = useRef<MediaStream | null>(null)
+
+  const triggerScanToast = (message: string, type: "success" | "warning" | "error") => {
+    setScanToast({ message, type, id: Date.now() })
+  }
+
+  useEffect(() => {
+    if (!scanToast) return
+    const timer = setTimeout(() => setScanToast(null), 3000)
+    return () => clearTimeout(timer)
+  }, [scanToast])
 
   useEffect(() => {
     const fetchNamedPersonsFromDb = async () => {
@@ -86,48 +116,8 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
     setDisplayLimit(20)
   }
 
-  const handleQueryChange = (val: string) => {
-    setQuery(val)
-    setDisplayLimit(20)
-  }
-
-  const handleCatalogueScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget
-    if (scrollHeight - scrollTop <= clientHeight + 60) {
-      if (displayLimit < uniqueGroups.length) {
-        setDisplayLimit(prev => prev + 20)
-      }
-    }
-  }
-
-  const getCategoryCardBorder = (catName: string) => {
-    const normalized = (catName || "").toLowerCase().trim()
-    if (normalized.includes("prescription") || normalized.includes("rx") || normalized.includes("pain")) return "border-2 border-blue-500 bg-blue-50/20"
-    if (normalized.includes("antibiotic")) return "border-2 border-cyan-400 bg-cyan-50/20"
-    if (normalized.includes("supply") || normalized.includes("supplies")) return "border-2 border-emerald-400 bg-emerald-50/20"
-    if (normalized.includes("wellness") || normalized.includes("vitamin")) return "border-2 border-purple-400 bg-purple-50/20"
-    if (normalized.includes("first aid")) return "border-2 border-amber-400 bg-amber-50/20"
-    if (normalized.includes("cardiovascular") || normalized.includes("cardio")) return "border-2 border-sky-400 bg-sky-50/20"
-    if (normalized.includes("respiratory") || normalized.includes("lung")) return "border-2 border-teal-500 bg-teal-50/20"
-    if (normalized.includes("gastrointestinal") || normalized.includes("gastro")) return "border-2 border-indigo-400 bg-indigo-50/20"
-    return "border-2 border-slate-300 bg-white"
-  }
-
-  const getCategoryBorderHex = (catName: string): string => {
-    const n = (catName || "").toLowerCase().trim()
-    if (n.includes("prescription") || n.includes("rx") || n.includes("pain")) return "#3b82f6"
-    if (n.includes("antibiotic")) return "#22d3ee"
-    if (n.includes("supply") || n.includes("supplies")) return "#34d399"
-    if (n.includes("wellness") || n.includes("vitamin")) return "#c084fc"
-    if (n.includes("first aid")) return "#fbbf24"
-    if (n.includes("cardiovascular") || n.includes("cardio")) return "#38bdf8"
-    if (n.includes("respiratory") || n.includes("lung")) return "#14b8a6"
-    if (n.includes("gastrointestinal") || n.includes("gastro")) return "#818cf8"
-    return "#94a3b8"
-  }
-
   const getGenericGroupName = (name: string) => {
-    const uppercaseName = name.toUpperCase().trim()
+    const uppercaseName = (name || "").toUpperCase().trim()
     if (uppercaseName.includes("AMLODIPINE") || uppercaseName.includes("AMLO")) return "AMLODIPINE"
     if (uppercaseName.includes("PARACETAMOL") || uppercaseName.includes("BIOGESIC") || uppercaseName.includes("CALPOL")) return "PARACETAMOL"
     if (uppercaseName.includes("MEFENAMIC") || uppercaseName.includes("DOLFENAL")) return "MEFENAMIC ACID"
@@ -150,6 +140,15 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
 
   const getGroupTotalStock = (groupName: string) => {
     return getItemsInGroup(groupName).reduce((sum, item) => sum + item.stock, 0)
+  }
+
+  const handleCatalogueScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget
+    if (scrollHeight - scrollTop <= clientHeight + 60) {
+      if (displayLimit < uniqueGroups.length) {
+        setDisplayLimit(prev => prev + 20)
+      }
+    }
   }
 
   const getItemBatchAwarePrice = (item: InventoryItem, quantity: number): number => {
@@ -191,6 +190,297 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
       return item.stock > 0 ? [...prev, { item, quantity: 1 }] : prev
     })
   }
+
+  // Helper to match all inventory items and batches by barcode, digits, SKU, or batch label
+  const findMatchingInventoryOptions = (rawCode: string): { options: ScanOption[]; hasDifferentManufacturers: boolean } => {
+    const cleanCode = (rawCode || "").trim().toLowerCase()
+    if (!cleanCode) return { options: [], hasDifferentManufacturers: false }
+
+    const digitsOnly = cleanCode.replace(/\D/g, "")
+
+    const matchedItems = inventory.filter(item => {
+      if (!item) return false
+      const b = String(item.barcode || "").trim().toLowerCase()
+      const bd = b.replace(/\D/g, "")
+      const itemId = String(item.id || "").trim().toLowerCase()
+
+      if (b && b === cleanCode) return true
+      if (digitsOnly.length >= 3 && bd && (bd === digitsOnly || (digitsOnly.length >= 6 && (bd.endsWith(digitsOnly) || digitsOnly.endsWith(bd))))) return true
+      if (itemId === cleanCode) return true
+      if (item.batches?.some(batch => String(batch.batchLabel || "").trim().toLowerCase() === cleanCode)) return true
+      return false
+    })
+
+    const rawOptions: ScanOption[] = []
+
+    matchedItems.forEach(item => {
+      const activeBatches = (item.batches || []).filter(b => (Number(b.stock) || 0) > 0)
+
+      if (activeBatches.length > 0) {
+        activeBatches.forEach(b => {
+          rawOptions.push({
+            item,
+            batch: b,
+            label: "",
+            productName: item.name,
+            manufacturer: b.manufacturer || item.manufacturer || "Generic / Phyto",
+            category: item.category,
+            stock: b.stock,
+            price: b.price > 0 ? b.price : (item.price > 0 ? item.price : 0),
+            expiryDate: b.expiryDate,
+            batchLabel: b.batchLabel
+          })
+        })
+      } else {
+        rawOptions.push({
+          item,
+          label: "",
+          productName: item.name,
+          manufacturer: item.manufacturer || "Generic / Phyto",
+          category: item.category,
+          stock: item.stock,
+          price: item.price || 0
+        })
+      }
+    })
+
+    // Check unique normalized manufacturer names
+    const distinctManufacturers = new Set(
+      rawOptions.map(opt => (opt.manufacturer || "Generic / Phyto").trim().toLowerCase())
+    )
+
+    const hasDifferentManufacturers = distinctManufacturers.size > 1
+
+    const finalOptions = rawOptions.map((opt, idx) => ({
+      ...opt,
+      label: idx === 0 ? "Option A" : idx === 1 ? "Option B" : idx === 2 ? "Option C" : `Option ${idx + 1}`
+    }))
+
+    return { options: finalOptions, hasDifferentManufacturers }
+  }
+
+  // Barcode Scanner Core Processor (only prompts if there are 2+ different manufacturers)
+  const processScannedBarcode = (rawCode: string): boolean => {
+    const cleanCode = (rawCode || "").trim()
+    if (!cleanCode) return false
+
+    const { options, hasDifferentManufacturers } = findMatchingInventoryOptions(cleanCode)
+
+    if (options.length === 0) {
+      triggerScanToast(`Unrecognized Barcode "${rawCode.trim()}"`, "warning")
+      return false
+    }
+
+    // ONLY show options modal when there are 2 or more DIFFERENT manufacturers!
+    if (hasDifferentManufacturers && options.length > 1) {
+      setScanMatchOptions({ code: rawCode.trim(), options })
+      return true
+    }
+
+    // Same manufacturer: directly add to cart
+    const singleOpt = options[0]
+    if (singleOpt.stock <= 0) {
+      triggerScanToast(`⚠️ "${singleOpt.productName}" is OUT OF STOCK!`, "error")
+      return false
+    }
+
+    addToCart(singleOpt.item)
+    triggerScanToast(`✓ Scanned: ${singleOpt.productName} (${singleOpt.manufacturer}) • ₱${singleOpt.price.toFixed(2)} added`, "success")
+    return true
+  }
+
+  const handleQueryChange = (val: string) => {
+    const trimmed = val.trim()
+    // Auto-detect if scanned barcode was typed into the search bar
+    if (trimmed.length >= 4) {
+      const { options, hasDifferentManufacturers } = findMatchingInventoryOptions(trimmed)
+
+      if (hasDifferentManufacturers && options.length > 1) {
+        setScanMatchOptions({ code: trimmed, options })
+        setQuery("")
+        return
+      } else if (options.length > 0) {
+        const singleOpt = options[0]
+        if (singleOpt.stock > 0) {
+          addToCart(singleOpt.item)
+          triggerScanToast(`✓ Scanned: ${singleOpt.productName} • ₱${singleOpt.price.toFixed(2)} added to cart`, "success")
+          setQuery("")
+          setDisplayLimit(20)
+          return
+        }
+      }
+    }
+
+    setQuery(val)
+    setDisplayLimit(20)
+  }
+
+  const handleQuickScanChange = (val: string) => {
+    setQuickScanInput(val)
+    const trimmed = val.trim()
+    if (trimmed.length >= 4) {
+      const { options, hasDifferentManufacturers } = findMatchingInventoryOptions(trimmed)
+
+      if (hasDifferentManufacturers && options.length > 1) {
+        setScanMatchOptions({ code: trimmed, options })
+        setQuickScanInput("")
+        return
+      } else if (options.length > 0) {
+        const singleOpt = options[0]
+        if (singleOpt.stock > 0) {
+          addToCart(singleOpt.item)
+          triggerScanToast(`✓ Scanned: ${singleOpt.productName} • ₱${singleOpt.price.toFixed(2)} added to cart`, "success")
+          setQuickScanInput("")
+        }
+      }
+    }
+  }
+
+  // Automatic Background Hardware Barcode Scanner Listener (Wedge Mode for Clabel & All Scanners)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement
+      const isSearchOrScanInput = target && (target.getAttribute("data-barcode-scanner") === "true" || target.getAttribute("placeholder")?.includes("Search product"))
+
+      const now = Date.now()
+      const elapsed = now - lastKeyTimeRef.current
+      lastKeyTimeRef.current = now
+
+      // Hardware scanners might end with Enter, Tab, or Nothing (suffix-less)
+      if (e.key === "Enter" || e.key === "Tab") {
+        if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
+        const buffered = barcodeBufferRef.current.trim()
+        barcodeBufferRef.current = ""
+
+        if (buffered.length >= 2) {
+          const success = processScannedBarcode(buffered)
+          if (success) {
+            setQuery("")
+            setQuickScanInput("")
+            e.preventDefault()
+            e.stopPropagation()
+          }
+        }
+        return
+      }
+
+      // Ignore modifier keys (Shift, Alt, Control, Meta, CapsLock)
+      if (e.key.length > 1) {
+        return
+      }
+
+      // Scanner hardware sends characters in rapid succession (< 80ms)
+      if (elapsed > 110 && !isSearchOrScanInput) {
+        barcodeBufferRef.current = e.key
+      } else {
+        barcodeBufferRef.current += e.key
+      }
+
+      // AUTO-FLUSH DEBOUNCE TIMER (Crucial for scanners like Clabel C986 that have no Enter suffix)
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current)
+      }
+
+      flushTimerRef.current = setTimeout(() => {
+        const buffered = barcodeBufferRef.current.trim()
+        if (buffered.length >= 3) {
+          // Check if this fast buffered string matches an item in inventory
+          const success = processScannedBarcode(buffered)
+          if (success) {
+            barcodeBufferRef.current = ""
+            setQuery(prev => (prev.trim() === buffered ? "" : prev))
+            setQuickScanInput("")
+          }
+        }
+      }, 95)
+    }
+
+    window.addEventListener("keydown", handleGlobalKeyDown, true)
+    return () => {
+      window.removeEventListener("keydown", handleGlobalKeyDown, true)
+      if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
+    }
+  }, [inventory])
+
+  // Camera Barcode Scanner Stream Lifecycle
+  useEffect(() => {
+    let animationFrameId: number
+    let isCancelled = false
+
+    const startCamera = async () => {
+      if (!showCameraScanner) {
+        if (cameraStreamRef.current) {
+          cameraStreamRef.current.getTracks().forEach(t => t.stop())
+          cameraStreamRef.current = null
+        }
+        return
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
+        })
+        if (isCancelled) {
+          stream.getTracks().forEach(t => t.stop())
+          return
+        }
+        cameraStreamRef.current = stream
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream
+          await videoRef.current.play()
+        }
+
+        // Native BarcodeDetector scanning loop if supported
+        if ("BarcodeDetector" in window) {
+          const barcodeDetector = new (window as any).BarcodeDetector({
+            formats: ["code_128", "code_39", "ean_13", "ean_8", "upc_a", "upc_e", "qr_code"]
+          })
+
+          const scanFrame = async () => {
+            if (isCancelled || !videoRef.current || videoRef.current.readyState < 2) {
+              if (!isCancelled) animationFrameId = requestAnimationFrame(scanFrame)
+              return
+            }
+
+            try {
+              const barcodes = await barcodeDetector.detect(videoRef.current)
+              if (barcodes && barcodes.length > 0) {
+                const code = barcodes[0].rawValue
+                if (code) {
+                  const handled = processScannedBarcode(code)
+                  if (handled) {
+                    setShowCameraScanner(false)
+                    return
+                  }
+                }
+              }
+            } catch (err) {}
+
+            if (!isCancelled) {
+              animationFrameId = requestAnimationFrame(scanFrame)
+            }
+          }
+
+          animationFrameId = requestAnimationFrame(scanFrame)
+        }
+      } catch (err: any) {
+        console.warn("Camera stream access failed:", err)
+        triggerScanToast("Camera scanner access denied or unavailable", "warning")
+      }
+    }
+
+    startCamera()
+
+    return () => {
+      isCancelled = true
+      if (animationFrameId) cancelAnimationFrame(animationFrameId)
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach(t => t.stop())
+        cameraStreamRef.current = null
+      }
+    }
+  }, [showCameraScanner, inventory])
+
 
   const handleManualQtyChange = (id: string, value: string, maxStock: number) => {
     if (value === "" || value === "0") {
@@ -445,72 +735,108 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
 
   return (
     <>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 text-xs font-medium">
-        <div className="lg:col-span-2 space-y-3 flex flex-col">
-        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border dark:border-slate-700 p-3.5 space-y-2.5 shrink-0">
-          <input 
-            type="text" 
-            placeholder="Search product name or code..." 
-            value={query} 
-            onChange={e => handleQueryChange(e.target.value)} 
-            className="w-full border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-800 dark:text-white p-2.5 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" 
-          />
-          <div className="flex gap-1.5 bg-gray-100 dark:bg-slate-900 p-1.5 rounded-xl overflow-x-auto border dark:border-slate-700">
-            <button 
-              type="button" 
-              onClick={() => handleCategoryTabChange("all")} 
-              className={`px-3.5 py-1.5 rounded-lg font-extrabold text-xs transition-all border whitespace-nowrap ${
-                activeCategoryTab === "all"
-                  ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                  : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700 dark:hover:text-white font-bold'
-              }`}
-            >
-              ALL
-            </button>
-            
-            <button 
-              type="button" 
-              onClick={() => handleCategoryTabChange("unmarked category")} 
-              className={`px-3.5 py-1.5 rounded-lg font-extrabold text-xs uppercase transition-all border whitespace-nowrap ${
-                activeCategoryTab === "unmarked category"
-                  ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                  : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700 dark:hover:text-white font-bold'
-              }`}
-            >
-              UNMARKED CATEGORY
-            </button>
-
-            {dynamicCategories.map((cat) => {
-              const isActive = activeCategoryTab === cat
-              return (
-                <button 
-                  key={cat} 
-                  type="button" 
-                  onClick={() => handleCategoryTabChange(cat)} 
-                  className={`px-3.5 py-1.5 rounded-lg font-extrabold text-xs uppercase transition-all border whitespace-nowrap ${
-                    isActive 
-                      ? 'bg-blue-600 text-white border-blue-600 shadow-sm' 
-                      : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700 dark:hover:text-white font-bold'
-                  }`}
-                >
-                  {cat}
-                </button>
-              )
-            })}
+      {/* Floating Scan Feedback Banner */}
+      {scanToast && (
+        <div className="fixed top-16 right-6 z-50 animate-in fade-in slide-in-from-top-3 duration-200 pointer-events-none">
+          <div className={`px-4 py-2.5 rounded-2xl shadow-xl border flex items-center gap-2.5 text-xs font-bold backdrop-blur-md ${
+            scanToast.type === "success"
+              ? "bg-emerald-600 text-white border-emerald-500 shadow-emerald-500/20"
+              : scanToast.type === "warning"
+                ? "bg-amber-500 text-white border-amber-400 shadow-amber-500/20"
+                : "bg-rose-600 text-white border-rose-500 shadow-rose-500/20"
+          }`}>
+            {scanToast.type === "success" && <CheckCircle2 className="w-4 h-4 shrink-0 text-white" />}
+            {scanToast.type === "warning" && <AlertTriangle className="w-4 h-4 shrink-0 text-white" />}
+            {scanToast.type === "error" && <AlertCircle className="w-4 h-4 shrink-0 text-white" />}
+            <span>{scanToast.message}</span>
           </div>
         </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 text-xs font-medium">
+        <div className="lg:col-span-2 space-y-3 flex flex-col">
+          {/* Top Search Bar & Category Pills */}
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xs border border-slate-200/80 dark:border-slate-700 p-4 space-y-3 shrink-0 transition-colors">
+            
+            {/* Search Input */}
+            <div className="relative flex items-center">
+              <input 
+                type="text" 
+                data-barcode-scanner="true"
+                placeholder="Search product name or code.." 
+                value={query} 
+                onChange={e => handleQueryChange(e.target.value)} 
+                className="w-full px-4 py-2.5 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-800 dark:text-white rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-gray-400 font-medium" 
+              />
+              {query && (
+                <button 
+                  type="button" 
+                  onClick={() => handleQueryChange("")}
+                  className="absolute right-3 p-1 rounded-full text-gray-400 hover:text-gray-600 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                  title="Clear search"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Category Tabs */}
+            <div className="flex gap-2 bg-slate-100/60 dark:bg-slate-900/60 p-2 rounded-2xl overflow-x-auto border border-slate-200/50 dark:border-slate-700/80 scrollbar-none">
+              <button 
+                type="button" 
+                onClick={() => handleCategoryTabChange("all")} 
+                className={`px-4 py-2 rounded-xl font-bold text-xs transition-all border whitespace-nowrap cursor-pointer ${
+                  activeCategoryTab === "all"
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                    : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/70 hover:text-blue-600 dark:hover:text-blue-400'
+                }`}
+              >
+                ALL
+              </button>
+              
+              <button 
+                type="button" 
+                onClick={() => handleCategoryTabChange("unmarked category")} 
+                className={`px-4 py-2 rounded-xl font-bold text-xs uppercase transition-all border whitespace-nowrap cursor-pointer ${
+                  activeCategoryTab === "unmarked category"
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                    : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/70 hover:text-blue-600 dark:hover:text-blue-400'
+                }`}
+              >
+                UNMARKED CATEGORY
+              </button>
+
+              {dynamicCategories.map((cat) => {
+                const isActive = activeCategoryTab === cat
+                return (
+                  <button 
+                    key={cat} 
+                    type="button" 
+                    onClick={() => handleCategoryTabChange(cat)} 
+                    className={`px-4 py-2 rounded-xl font-bold text-xs uppercase transition-all border whitespace-nowrap cursor-pointer ${
+                      isActive 
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-xs' 
+                        : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/70 hover:text-blue-600 dark:hover:text-blue-400'
+                    }`}
+                  >
+                    {cat}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
 
         <div 
           onScroll={handleCatalogueScroll}
-          className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border dark:border-slate-700 p-4 max-h-[calc(100vh-230px)] overflow-y-auto relative"
+          className="bg-white dark:bg-slate-800 rounded-xl shadow-xs border dark:border-slate-700 p-4 max-h-[calc(100vh-230px)] overflow-y-auto relative"
         >
           {selectedGenericGroup ? (
             <div className="space-y-4">
-              <div className="sticky -top-4 z-20 -mx-4 -mt-4 px-4 py-3 bg-white dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 shadow-sm rounded-t-xl flex items-center justify-between">
+              <div className="sticky -top-4 z-20 -mx-4 -mt-4 px-4 py-3 bg-white/95 dark:bg-slate-800/95 backdrop-blur-xs border-b border-gray-200 dark:border-slate-700 shadow-xs rounded-t-xl flex items-center justify-between">
                 <button 
                   type="button" 
                   onClick={() => setSelectedGenericGroup(null)} 
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-50 dark:bg-blue-950/80 hover:bg-blue-100 dark:hover:bg-blue-900 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded-lg font-bold text-xs shadow-2xs transition-all cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 dark:bg-blue-950/80 hover:bg-blue-100 dark:hover:bg-blue-900 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded-lg font-bold text-xs shadow-2xs transition-all cursor-pointer"
                 >
                   <ArrowLeft className="w-4 h-4" />
                   Back to Grid
@@ -521,7 +847,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                 {getItemsInGroup(selectedGenericGroup).map(item => {
                   const displayUnitPrice = getItemBatchAwarePrice(item, 1)
-                  const cardBorder = getCategoryCardBorder(item.category)
+                  const catStyle = getCategoryStyles(item.category)
 
                   return (
                     <button 
@@ -529,15 +855,30 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                       type="button" 
                       onClick={() => addToCart(item)}
                       disabled={item.stock === 0}
-                      className={`relative text-left p-3.5 rounded-2xl ${cardBorder} transition-all flex flex-col justify-between min-h-[110px] ${item.stock === 0 ? 'opacity-40 border-gray-200 bg-gray-50 cursor-not-allowed':'hover:shadow-lg hover:scale-[1.01]'}`}
+                      className={`relative text-left p-3 rounded-2xl ${catStyle.border} ${catStyle.bg} transition-all flex flex-col justify-between min-h-[110px] cursor-pointer ${
+                        item.stock === 0 
+                          ? 'opacity-40 cursor-not-allowed'
+                          : 'card-hover hover:shadow-md'
+                      }`}
                     >
-                      <div className="flex justify-end items-start">
-                        <span className="font-mono text-gray-500 font-bold text-[10px]">{item.stock} left</span>
+                      <div className="flex justify-between items-center gap-1.5">
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${catStyle.badge}`}>
+                          {item.category || "Unmarked"}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded-full font-mono text-[9px] font-bold ${
+                          item.stock === 0 
+                            ? 'bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300' 
+                            : item.stock <= (item.minStock || 10)
+                              ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                              : 'bg-gray-100 text-gray-700 dark:bg-slate-800 dark:text-slate-300'
+                        }`}>
+                          {item.stock === 0 ? "Out of Stock" : `${item.stock} left`}
+                        </span>
                       </div>
-                      <div className="font-bold text-gray-900 dark:text-white text-xs leading-tight mt-1">{item.name}</div>
-                      <div className="flex justify-between items-center pt-2 mt-2 font-mono border-t border-gray-100">
-                        <span className="text-gray-400 text-[9px] font-normal">{item.barcode || "No Barcode"}</span>
-                        <span className="text-blue-600 font-bold text-xs">₱{displayUnitPrice.toFixed(2)}</span>
+                      <div className="font-bold text-gray-900 dark:text-white text-xs leading-snug mt-1.5">{item.name}</div>
+                      <div className="flex justify-between items-center pt-2 mt-1.5 font-mono border-t border-gray-200/60 dark:border-slate-700/60">
+                        <span className="text-gray-400 dark:text-slate-400 text-[9px] font-normal">{item.barcode || "No Barcode"}</span>
+                        <span className="text-blue-600 dark:text-blue-400 font-bold text-xs">₱{displayUnitPrice.toFixed(2)}</span>
                       </div>
                     </button>
                   )
@@ -547,8 +888,11 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
           ) : (
             <div className="space-y-3">
               <div className="flex justify-between items-center">
-                <h2 className="font-semibold text-xs text-gray-800 dark:text-slate-200 tracking-wide">Available Products Catalogue</h2>
-                <span className="text-[10px] text-gray-500 font-mono font-bold">
+                <h2 className="font-bold text-xs text-gray-800 dark:text-slate-200 tracking-wide flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-blue-500" />
+                  Available Products Catalogue
+                </h2>
+                <span className="text-[10px] text-gray-500 dark:text-slate-400 font-mono font-bold">
                   Showing {visibleGroups.length} of {uniqueGroups.length} items
                 </span>
               </div>
@@ -559,7 +903,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                   const hasVariants = itemsInGroup.length > 1
                   const primaryItem = itemsInGroup[0]
                   const displayUnitPrice = primaryItem ? getItemBatchAwarePrice(primaryItem, 1) : 0
-                  const cardBorder = primaryItem ? getCategoryCardBorder(primaryItem.category) : "border-2 border-gray-200"
+                  const catStyle = getCategoryStyles(primaryItem?.category || "")
 
                   return (
                     <button 
@@ -573,22 +917,39 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                         }
                       }}
                       disabled={totalStock === 0}
-                      className={`text-left p-3.5 rounded-2xl ${cardBorder} transition-all flex flex-col justify-between min-h-[110px] relative ${totalStock === 0 ? 'bg-gray-50 border-gray-200 opacity-40 cursor-not-allowed' : 'hover:shadow-lg hover:scale-[1.01]'}`}
+                      className={`text-left p-3 rounded-2xl ${catStyle.border} ${catStyle.bg} transition-all flex flex-col justify-between min-h-[110px] relative cursor-pointer ${
+                        totalStock === 0 
+                          ? 'opacity-40 cursor-not-allowed' 
+                          : 'card-hover hover:shadow-md'
+                      }`}
                     >
-                      <div className="flex justify-between items-center">
-                        {hasVariants ? (
-                          <span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 text-[9px] font-bold uppercase tracking-wider">Group</span>
-                        ) : (
-                          <span />
-                        )}
-                        <span className="font-mono text-gray-500 font-bold text-[10px]">{totalStock} left</span>
+                      <div className="flex justify-between items-center gap-1">
+                        <div className="flex items-center gap-1 truncate">
+                          {hasVariants && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-blue-600 text-white text-[8px] font-black uppercase tracking-wider">Group</span>
+                          )}
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider truncate ${catStyle.badge}`}>
+                            {primaryItem?.category || "Unmarked"}
+                          </span>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded-full font-mono text-[9px] font-bold shrink-0 ${
+                          totalStock === 0 
+                            ? 'bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300' 
+                            : totalStock <= 10 
+                              ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300' 
+                              : 'bg-gray-100 text-gray-700 dark:bg-slate-800 dark:text-slate-300'
+                        }`}>
+                          {totalStock === 0 ? "Out of Stock" : `${totalStock} left`}
+                        </span>
                       </div>
-                      <div className="font-bold text-gray-900 dark:text-white text-xs leading-tight mt-1 truncate-2-lines">{groupName}</div>
-                      <div className="mt-2 flex items-center justify-between text-[10px]">
-                        {hasVariants && (
-                          <span className="text-[9px] text-gray-500 font-medium">({itemsInGroup.length} items)</span>
+                      <div className="font-bold text-gray-900 dark:text-white text-xs leading-snug mt-1.5 truncate-2-lines">{groupName}</div>
+                      <div className="mt-2 flex items-center justify-between text-[10px] pt-1.5 border-t border-gray-200/60 dark:border-slate-700/60">
+                        {hasVariants ? (
+                          <span className="text-[9px] text-blue-600 dark:text-blue-400 font-bold">{itemsInGroup.length} variants</span>
+                        ) : (
+                          <span className="text-[9px] text-gray-400 dark:text-slate-400 font-mono">{primaryItem?.barcode || "No Barcode"}</span>
                         )}
-                        <span className="text-blue-600 font-bold text-xs font-mono ml-auto">
+                        <span className="text-blue-600 dark:text-blue-400 font-bold text-xs font-mono ml-auto">
                           ₱{displayUnitPrice.toFixed(2)}
                         </span>
                       </div>
@@ -599,7 +960,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
             </div>
           )}
         </div>
-      </div>
+        </div>
 
       {/* Right Column: Current Sale Cart */}
       <div className="lg:col-span-1 space-y-3 flex flex-col min-w-0">
@@ -625,22 +986,23 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                   genericGroups[g].push(ci)
                 })
 
-                return Object.entries(genericGroups).map(([groupName, groupItems]) => (
-                  <div key={groupName} className="rounded-xl overflow-hidden border border-gray-200 dark:border-slate-700 shadow-xs">
-                    <div
-                      className="flex items-center gap-2 px-2.5 py-1"
-                      style={{ backgroundColor: getCategoryBorderHex(groupItems[0]?.item.category) + '22' }}
-                    >
-                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: getCategoryBorderHex(groupItems[0]?.item.category) }} />
-                      <span className="font-black text-[9px] uppercase tracking-widest" style={{ color: getCategoryBorderHex(groupItems[0]?.item.category) }}>
-                        {groupName}
-                      </span>
-                      {groupItems.length > 1 && (
-                        <span className="ml-auto bg-white rounded-full px-1.5 py-0.5 text-[8px] font-bold text-gray-500 border">
-                          {groupItems.length} variants
+                return Object.entries(genericGroups).map(([groupName, groupItems]) => {
+                  const catStyle = getCategoryStyles(groupItems[0]?.item.category)
+                  return (
+                    <div key={groupName} className="rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 shadow-xs">
+                      <div
+                        className="flex items-center gap-2 px-2.5 py-1 bg-slate-100/90 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700/60"
+                      >
+                        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${catStyle.dotColor}`} />
+                        <span className="font-black text-[9px] uppercase tracking-widest text-slate-700 dark:text-slate-200">
+                          {groupName}
                         </span>
-                      )}
-                    </div>
+                        {groupItems.length > 1 && (
+                          <span className="ml-auto bg-white dark:bg-slate-800 rounded-full px-1.5 py-0.5 text-[8px] font-bold text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                            {groupItems.length} variants
+                          </span>
+                        )}
+                      </div>
 
                     {groupItems.map((ci, itemIdx) => {
                       const itemTotal = getItemBatchAwarePrice(ci.item, ci.quantity)
@@ -667,8 +1029,9 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                         </div>
                       )
                     })}
-                  </div>
-                ))
+                    </div>
+                  )
+                })
               })()
             }
           </div>
@@ -701,7 +1064,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
             </div>
 
             {paymentMethod === "cash" && cart.length > 0 && (
-              <div className="space-y-1.5 p-2 bg-blue-50/50 dark:bg-blue-950/40 rounded-lg border border-blue-100 dark:border-blue-900/50 text-[11px]">
+              <div className="space-y-2 p-2.5 bg-blue-50/50 dark:bg-blue-950/40 rounded-xl border border-blue-100 dark:border-blue-900/50 text-[11px]">
                 <div className="flex justify-between items-center gap-2">
                   <label className="font-bold whitespace-nowrap text-gray-700 dark:text-slate-200">Cash Rendered:</label>
                   <input 
@@ -720,13 +1083,35 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                       setCashReceived(sanitized)
                     }} 
                     placeholder="0.00" 
-                    className="w-28 text-right p-1 border bg-white dark:bg-slate-900 rounded font-bold text-gray-900 dark:text-white text-xs focus:ring-1 focus:ring-blue-500" 
+                    className="w-28 text-right p-1.5 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-lg font-mono font-bold text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" 
                   />
                 </div>
+                
+                {/* Fast Cash Quick Presets */}
+                <div className="flex flex-wrap gap-1 items-center justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setCashReceived(total.toFixed(2))}
+                    className="px-2 py-0.5 rounded-md bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/60 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-300 font-bold text-[10px] transition-colors cursor-pointer"
+                  >
+                    Exact (₱{total.toFixed(2)})
+                  </button>
+                  {[100, 200, 500, 1000].map(amt => (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => setCashReceived(amt.toString())}
+                      className="px-2 py-0.5 rounded-md bg-white hover:bg-gray-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 border border-gray-200 dark:border-slate-700 font-mono font-bold text-[10px] transition-colors cursor-pointer"
+                    >
+                      ₱{amt}
+                    </button>
+                  ))}
+                </div>
+
                 {parseFloat(cashReceived) > 0 && (
-                  <div className="flex justify-between items-center text-[10px] pt-1 border-t border-blue-100 dark:border-blue-900">
-                    <span className="text-gray-600 dark:text-slate-300">Change Return Cash:</span>
-                    <span className={`font-bold font-mono text-xs ${parseFloat(cashReceived) - total < 0 ? "text-red-600 dark:text-red-400" : "text-blue-700 dark:text-blue-300"}`}>
+                  <div className="flex justify-between items-center text-[10px] pt-1.5 border-t border-blue-100 dark:border-blue-900">
+                    <span className="text-gray-600 dark:text-slate-300">Change Return:</span>
+                    <span className={`font-bold font-mono text-xs ${parseFloat(cashReceived) - total < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>
                       {parseFloat(cashReceived) - total < 0 ? `Short: ₱${Math.abs(parseFloat(cashReceived) - total).toFixed(2)}` : `₱${(parseFloat(cashReceived) - total).toFixed(2)}`}
                     </span>
                   </div>
@@ -1080,6 +1465,178 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                 className="flex-1 py-2 bg-gray-900 dark:bg-slate-700 text-white hover:bg-gray-800 dark:hover:bg-slate-600 font-bold rounded-lg tracking-wide shadow-xs text-xs transition-colors"
               >
                 Done / Reset
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Camera Barcode Scanner Modal */}
+      {showCameraScanner && (
+        <div 
+          onClick={() => setShowCameraScanner(false)}
+          className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in"
+        >
+          <div 
+            onClick={e => e.stopPropagation()}
+            className="bg-white dark:bg-slate-800 rounded-3xl max-w-sm w-full p-5 shadow-2xl border border-slate-200 dark:border-slate-700 space-y-4 relative"
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-blue-100 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 rounded-xl">
+                  <Camera className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-white">Camera Barcode Scanner</h3>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">Align barcode within the target box</p>
+                </div>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setShowCameraScanner(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Video Viewport with Scanning Target Overlay */}
+            <div className="relative aspect-square w-full rounded-2xl overflow-hidden bg-black flex items-center justify-center border-2 border-slate-800">
+              <video 
+                ref={videoRef} 
+                playsInline 
+                muted 
+                className="w-full h-full object-cover" 
+              />
+              
+              {/* Scan target overlay */}
+              <div className="absolute inset-8 border-2 border-dashed border-emerald-400/80 rounded-2xl pointer-events-none flex flex-col justify-between p-2">
+                <div className="w-full h-0.5 bg-emerald-400 shadow-md shadow-emerald-400/50 animate-scan-line" />
+                <div className="text-center text-[10px] font-bold text-emerald-400 bg-black/60 px-2 py-1 rounded-md mx-auto backdrop-blur-xs">
+                  Scanning live...
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-[11px] text-center text-slate-500 dark:text-slate-400">
+                Hold product steady in front of the lens. Scanned items are automatically added to the cart.
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowCameraScanner(false)}
+                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                Close Camera
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Multiple Manufacturer / Batch Option Selection Modal */}
+      {scanMatchOptions && (
+        <div 
+          onClick={() => setScanMatchOptions(null)}
+          className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in"
+        >
+          <div 
+            onClick={e => e.stopPropagation()}
+            className="bg-white dark:bg-slate-800 rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700 space-y-4 relative"
+          >
+            <div className="flex items-start justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
+              <div className="flex items-start gap-3">
+                <div className="p-2.5 bg-blue-100 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 rounded-2xl shrink-0">
+                  <Scan className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-white">Choose Manufacturer</h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    Scanned barcode <span className="font-mono font-bold text-blue-600 dark:text-blue-400">#{scanMatchOptions.code}</span> has {scanMatchOptions.options.length} registered options.
+                  </p>
+                </div>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setScanMatchOptions(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+              {scanMatchOptions.options.map((opt) => {
+                const isOutOfStock = opt.stock <= 0
+
+                return (
+                  <button
+                    key={`${opt.item.id}-${opt.batchLabel || opt.label}`}
+                    type="button"
+                    disabled={isOutOfStock}
+                    onClick={() => {
+                      addToCart(opt.item)
+                      triggerScanToast(`✓ Added ${opt.label}: ${opt.productName} (${opt.manufacturer}) • ₱${opt.price.toFixed(2)} to cart`, "success")
+                      setScanMatchOptions(null)
+                    }}
+                    className={`w-full text-left p-3.5 rounded-2xl border transition-all flex items-start justify-between gap-3 cursor-pointer ${
+                      isOutOfStock
+                        ? "bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800 opacity-60 cursor-not-allowed"
+                        : "bg-white dark:bg-slate-900/70 border-slate-200 dark:border-slate-700 hover:border-blue-500 hover:bg-blue-50/50 dark:hover:bg-blue-950/40 shadow-xs hover:shadow-md active:scale-98"
+                    }`}
+                  >
+                    <div className="space-y-1.5 min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="px-2 py-0.5 rounded-md bg-blue-600 text-white font-mono font-bold text-[10px] uppercase shadow-xs">
+                          {opt.label}
+                        </span>
+                        <p className="font-bold text-slate-900 dark:text-white text-xs truncate">{opt.productName}</p>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap text-[11px]">
+                        <span className="font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
+                          <Building2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                          {opt.manufacturer}
+                        </span>
+                        {opt.batchLabel && (
+                          <span className="font-mono text-[10px] text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/50 px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-800 font-bold">
+                            Lot: {opt.batchLabel}
+                          </span>
+                        )}
+                        {opt.expiryDate && (
+                          <span className="font-mono text-[10px] text-gray-500 dark:text-slate-400">
+                            Exp: {opt.expiryDate}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-2 font-mono">
+                        <span className="uppercase font-semibold text-blue-600 dark:text-blue-400">{opt.category}</span>
+                        <span>•</span>
+                        <span className={opt.stock <= (opt.item.minStock || 5) ? "text-red-500 font-bold" : "text-slate-400"}>
+                          {opt.stock} in stock
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="text-right shrink-0">
+                      <p className="font-bold text-slate-900 dark:text-white text-sm font-mono">₱{opt.price.toFixed(2)}</p>
+                      <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase bg-blue-50 dark:bg-blue-950/80 px-2 py-0.5 rounded-md mt-1 inline-block border border-blue-200 dark:border-blue-800">
+                        Select & Add
+                      </span>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setScanMatchOptions(null)}
+                className="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-xl font-bold transition-colors text-xs cursor-pointer"
+              >
+                Cancel
               </button>
             </div>
           </div>

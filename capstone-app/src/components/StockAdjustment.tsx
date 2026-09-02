@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from "react"
 import type { InventoryItem } from "../App"
 import { supabase } from "../utils/apiClient"
 import { downloadExcelWithAutoFit, parseSpreadsheetFile } from "../utils/excelUtils"
-import { Plus, Minus, Layers, AlertCircle, Trash2, Calendar, Download, Upload, FileSpreadsheet, Clock, CheckCircle2, X, Edit2 } from "lucide-react"
+import { Plus, Minus, Layers, AlertCircle, Trash2, Calendar, Download, Upload, FileSpreadsheet, Clock, CheckCircle2, X, Edit2, Search, Building2, Sparkles, Scan, Check, Barcode } from "lucide-react"
+import { BarcodePrintModal } from "./BarcodePrintModal"
 
 interface StockAdjustmentProps {
   currentOperator?: { username: string; displayName: string; systemRole: string } | null
@@ -16,12 +17,22 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
   const [query, setQuery] = useState("")
   const [catFilter, setCatFilter] = useState("all")
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null)
+  const [showBarcodeModal, setShowBarcodeModal] = useState(false)
   
   const [batchLabel, setBatchLabel] = useState("")
   const [batchQty, setBatchQty] = useState<string>("")
   const [batchCost, setBatchCost] = useState<string>("")
   const [batchPrice, setBatchPrice] = useState<string>("")
   const [expiryDate, setExpiryDate] = useState("")
+  const [itemManufacturer, setItemManufacturer] = useState<string>("")
+  const [showManufacturerSuggestions, setShowManufacturerSuggestions] = useState(false)
+  const manufacturerDropdownRef = useRef<HTMLDivElement>(null)
+  const [isUpdatingManufacturer, setIsUpdatingManufacturer] = useState(false)
+  const [scanToast, setScanToast] = useState<{ message: string; type: "success" | "warning"; id: number } | null>(null)
+  
+  const barcodeBufferRef = useRef<string>("")
+  const lastKeyTimeRef = useRef<number>(0)
+  const flushTimerRef = useRef<any>(null)
   
   const [isProcessing, setIsProcessing] = useState(false)
   const [isBulkUploading, setIsBulkUploading] = useState(false)
@@ -50,6 +61,136 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const dynamicCategories = categoriesList.filter(c => c !== "unmarked category")
+  const isAdmin = !currentOperator || currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin"
+  const safeInventory = Array.isArray(inventory) ? inventory : []
+
+  // Collect all distinct known manufacturer brands across database + standard suppliers
+  const allKnownManufacturers = Array.from(
+    new Set([
+      "Unilab", "Pascual", "RiteMed", "Sanofi", "GlaxoSmithKline", "Pfizer", "Generic / Phyto", "local",
+      ...safeInventory.flatMap(i => [
+        i.manufacturer,
+        ...(i.batches || []).map(b => b.manufacturer)
+      ]).filter((m): m is string => Boolean(m && typeof m === "string" && m.trim().length > 0))
+    ])
+  ).sort((a, b) => a.localeCompare(b))
+
+  const matchingManufacturers = itemManufacturer.trim()
+    ? allKnownManufacturers.filter(m => 
+        m.toLowerCase().includes(itemManufacturer.toLowerCase().trim()) &&
+        m.toLowerCase() !== itemManufacturer.toLowerCase().trim()
+      )
+    : allKnownManufacturers
+
+  // Close manufacturer auto-suggestion dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (manufacturerDropdownRef.current && !manufacturerDropdownRef.current.contains(e.target as Node)) {
+        setShowManufacturerSuggestions(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
+
+  // Auto-dismiss scan toast
+  useEffect(() => {
+    if (!scanToast) return
+    const timer = setTimeout(() => setScanToast(null), 3000)
+    return () => clearTimeout(timer)
+  }, [scanToast])
+
+  // Update product manufacturer brand directly from Inventory tab
+  const handleUpdateItemManufacturer = async (newBrand: string) => {
+    if (!selectedItem) return
+    setIsUpdatingManufacturer(true)
+    try {
+      setItemManufacturer(newBrand)
+      const numId = Number(selectedItem.id)
+      const targetId = !isNaN(numId) ? numId : selectedItem.id
+      
+      await supabase.from("inventory").update({ manufacturer: newBrand }).eq("id", targetId as any)
+      setSelectedItem(prev => prev ? { ...prev, manufacturer: newBrand } : null)
+      if (onLogAction) {
+        await onLogAction("UPDATE_MANUFACTURER", "INVENTORY", `Updated manufacturer of "${selectedItem.name}" to "${newBrand}"`)
+      }
+      await fetchInventory()
+      setScanToast({ message: `✓ Manufacturer set to "${newBrand}"`, type: "success", id: Date.now() })
+    } catch (e) {
+      console.error("Failed to update manufacturer:", e)
+    } finally {
+      setIsUpdatingManufacturer(false)
+    }
+  }
+
+  // Background Barcode Scanner in Inventory Tab
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement
+      const isSearchOrFormInput = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")
+
+      const now = Date.now()
+      const elapsed = now - lastKeyTimeRef.current
+      lastKeyTimeRef.current = now
+
+      if (e.key === "Enter" || e.key === "Tab") {
+        if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
+        const buffered = barcodeBufferRef.current.trim()
+        barcodeBufferRef.current = ""
+
+        if (buffered.length >= 2) {
+          const matched = safeInventory.find(i => {
+            if (!i) return false
+            const b = String(i.barcode || "").trim().toLowerCase()
+            const bd = b.replace(/\D/g, "")
+            const cd = buffered.replace(/\D/g, "")
+            return (b && b === buffered.toLowerCase()) || (cd.length >= 4 && bd === cd)
+          })
+          if (matched) {
+            setSelectedItem(matched)
+            setScanToast({ message: `✓ Found "${matched.name}" • Selected in Inventory`, type: "success", id: Date.now() })
+            e.preventDefault()
+            e.stopPropagation()
+          }
+        }
+        return
+      }
+
+      if (e.key.length > 1) return
+
+      if (elapsed > 110 && !isSearchOrFormInput) {
+        barcodeBufferRef.current = e.key
+      } else {
+        barcodeBufferRef.current += e.key
+      }
+
+      if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
+      flushTimerRef.current = setTimeout(() => {
+        const buffered = barcodeBufferRef.current.trim()
+        if (buffered.length >= 3) {
+          const matched = safeInventory.find(i => {
+            if (!i) return false
+            const b = String(i.barcode || "").trim().toLowerCase()
+            const bd = b.replace(/\D/g, "")
+            const cd = buffered.replace(/\D/g, "")
+            return (b && b === buffered.toLowerCase()) || (cd.length >= 4 && bd === cd)
+          })
+          if (matched) {
+            setSelectedItem(matched)
+            setItemManufacturer("")
+            setScanToast({ message: `✓ Found "${matched.name}" • Selected in Inventory`, type: "success", id: Date.now() })
+            barcodeBufferRef.current = ""
+          }
+        }
+      }, 95)
+    }
+
+    window.addEventListener("keydown", handleGlobalKeyDown, true)
+    return () => {
+      window.removeEventListener("keydown", handleGlobalKeyDown, true)
+      if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
+    }
+  }, [safeInventory])
 
   useEffect(() => {
     if (inventory && selectedItem) {
@@ -64,28 +205,29 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
     const handleSelectProduct = (e: any) => {
       const pName = e.detail?.name || e.detail
       const pId = e.detail?.id
-      if (!inventory || !Array.isArray(inventory)) return
-      const matched = inventory.find(i => (pId && String(i.id) === String(pId)) || (pName && String(i.name || "").toLowerCase().trim() === String(pName).toLowerCase().trim()))
+      if (!safeInventory.length) return
+      const matched = safeInventory.find(i => (pId && String(i.id) === String(pId)) || (pName && String(i.name || "").toLowerCase().trim() === String(pName).toLowerCase().trim()))
       if (matched) {
         setSelectedItem(matched)
-      } else if (pName) {
-        setSearchQuery(String(pName))
+        setItemManufacturer("")
       }
     }
 
     window.addEventListener("pinv_select_product", handleSelectProduct)
     return () => window.removeEventListener("pinv_select_product", handleSelectProduct)
-  }, [inventory])
+  }, [safeInventory])
 
   useEffect(() => {
     if (selectedItem) {
       const cleanedName = selectedItem.name.replace(/\s+/g, "").substring(0, 5).toUpperCase()
       const timestampString = Date.now().toString().slice(-4)
       setBatchLabel(`LOT-${cleanedName}-${timestampString}`)
+      setItemManufacturer("")
       setBatchCost("")
       setBatchPrice("")
     } else {
       setBatchLabel("")
+      setItemManufacturer("")
       setBatchCost("")
       setBatchPrice("")
     }
@@ -97,19 +239,58 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
     setErrorMessage(null)
   }, [selectedItem])
 
-  const filtered = inventory.filter(item => {
-    const matchSearch = item.name.toLowerCase().includes(query.toLowerCase()) || String(item.barcode).includes(query)
+  const filtered = safeInventory.filter(item => {
+    if (!item) return false
+    const name = String(item.name || "").toLowerCase()
+    const barcode = String(item.barcode || "").toLowerCase()
+    const manufacturer = String(item.manufacturer || "").toLowerCase()
+    const q = (query || "").toLowerCase()
+    const matchSearch = name.includes(q) || barcode.includes(q) || manufacturer.includes(q)
     const matchCat = catFilter === "all" || item.category === catFilter
     return matchSearch && matchCat
   })
 
   const handleDownloadStockTemplate = () => {
-    const headers = ["Product Name", "Minimum Stock", "Stock Quantity", "Expiration Date (MM/DD/YYYY or YYYY/DD/MM)"];
+    const headers = [
+      "Product Name",
+      "Manufacturer Brand",
+      "Cost",
+      "Price",
+      "Minimum Stock",
+      "Stock Quantity",
+      "Expiration Date (MM/DD/YYYY or YYYY/DD/MM)"
+    ];
     const rows: (string | number)[][] = [];
 
     inventory.forEach(item => {
       const minStockVal = item.minStock && item.minStock > 0 ? item.minStock : "";
-      rows.push([item.name, minStockVal, "", ""]);
+      if (item.batches && item.batches.length > 0) {
+        item.batches.forEach(batch => {
+          const batchManufacturer = batch.manufacturer || item.manufacturer || "";
+          const costVal = batch.cost !== undefined && batch.cost > 0 ? batch.cost : (item.cost || "");
+          const priceVal = batch.price !== undefined && batch.price > 0 ? batch.price : (item.price || "");
+
+          rows.push([
+            item.name,
+            batchManufacturer,
+            costVal,
+            priceVal,
+            minStockVal,
+            batch.stock !== undefined ? batch.stock : "",
+            batch.expiryDate || ""
+          ]);
+        });
+      } else {
+        rows.push([
+          item.name,
+          item.manufacturer || "",
+          item.cost || "",
+          item.price || "",
+          minStockVal,
+          item.stock !== undefined && item.stock > 0 ? item.stock : "",
+          ""
+        ]);
+      }
     });
 
     downloadExcelWithAutoFit("stock_entry_template", "Stock Entry Template", headers, rows);
@@ -283,9 +464,33 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
         if (!columns || columns.length < 1) continue
 
         const productName = columns[0]?.trim()
-        const minStockInput = parseFloat(columns[1])
-        const stockQtyInput = Math.floor(parseFloat(columns[2]) || 0)
-        const rawExpiry = columns[3]?.trim() || null
+        let manufacturerInput = ""
+        let costInput = 0
+        let priceInput = 0
+        let minStockInput = 0
+        let stockQtyInput = 0
+        let rawExpiry: string | null = null
+
+        if (columns.length >= 7) {
+          // 7-column format: [Product Name, Manufacturer, Cost, Price, Min Stock, Stock Qty, Expiry Date]
+          manufacturerInput = columns[1]?.trim() || ""
+          costInput = parseFloat(columns[2]) || 0
+          priceInput = parseFloat(columns[3]) || 0
+          minStockInput = parseFloat(columns[4])
+          stockQtyInput = Math.floor(parseFloat(columns[5]) || 0)
+          rawExpiry = columns[6]?.trim() || null
+        } else if (columns.length >= 5) {
+          // 5-column format: [Product Name, Manufacturer, Min Stock, Stock Qty, Expiry Date]
+          manufacturerInput = columns[1]?.trim() || ""
+          minStockInput = parseFloat(columns[2])
+          stockQtyInput = Math.floor(parseFloat(columns[3]) || 0)
+          rawExpiry = columns[4]?.trim() || null
+        } else {
+          // 4-column legacy format: [Product Name, Min Stock, Stock Qty, Expiry Date]
+          minStockInput = parseFloat(columns[1])
+          stockQtyInput = Math.floor(parseFloat(columns[2]) || 0)
+          rawExpiry = columns[3]?.trim() || null
+        }
         const expiryDate = parseDateToISO(rawExpiry)
 
         if (!productName) continue
@@ -299,13 +504,17 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
 
         if (stockQtyInput > 0) {
           const cleanedName = productName.replace(/\s+/g, "").substring(0, 5).toUpperCase()
-          const generatedBatchLabel = `BATCH-${cleanedName}-${Date.now().toString().slice(-4)}`
+          const rawBatchLabel = `BATCH-${cleanedName}-${Date.now().toString().slice(-4)}`
+          const storedBatchLabel = manufacturerInput 
+            ? `${rawBatchLabel} [${manufacturerInput}]`
+            : rawBatchLabel
+
           batchesToInsert.push({
             item_id: matchedItem.id,
-            batch_label: generatedBatchLabel,
+            batch_label: storedBatchLabel,
             stock: stockQtyInput,
-            cost: matchedItem.cost,
-            price: matchedItem.price,
+            cost: costInput > 0 ? costInput : matchedItem.cost,
+            price: priceInput > 0 ? priceInput : matchedItem.price,
             expiry_date: expiryDate
           })
         }
@@ -389,17 +598,24 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
 
     const parsedCost = parseFloat(batchCost) || 0
     const parsedPrice = parseFloat(batchPrice) || 0
+    const rawBatchName = batchLabel.trim().toUpperCase()
+    const batchManufacturer = itemManufacturer.trim()
 
-    const { error } = await supabase
-      .from("inventory_batches")
-      .insert({
-        item_id: Number(selectedItem.id),
-        batch_label: batchLabel.trim().toUpperCase(),
-        stock: parsedQty,
-        cost: parsedCost,
-        price: parsedPrice,
-        expiry_date: expiryDate || null
-      })
+    // Store per-batch manufacturer so each batch retains its own distinct brand
+    const storedBatchLabel = batchManufacturer 
+      ? `${rawBatchName} [${batchManufacturer}]`
+      : rawBatchName
+
+    const batchInsertPayload: any = {
+      item_id: Number(selectedItem.id),
+      batch_label: storedBatchLabel,
+      stock: parsedQty,
+      cost: parsedCost,
+      price: parsedPrice,
+      expiry_date: expiryDate || null
+    }
+
+    const { error } = await supabase.from("inventory_batches").insert(batchInsertPayload)
 
     if (error) {
       setErrorMessage("Database anomaly encountered while creating new product batch.")
@@ -408,7 +624,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
     }
 
     if (onLogAction) {
-      const logDetails = `Added new batch "${batchLabel.toUpperCase()}" with ${parsedQty} units at Cost: ₱${parsedCost.toFixed(2)}, Price: ₱${parsedPrice.toFixed(2)} for item "${selectedItem.name}" (Expiry: ${expiryDate || "None"})`
+      const logDetails = `Added new batch "${rawBatchName}" with ${parsedQty} units at Cost: ₱${parsedCost.toFixed(2)}, Price: ₱${parsedPrice.toFixed(2)} for item "${selectedItem.name}" (Manufacturer: ${batchManufacturer || "Unspecified"}, Expiry: ${expiryDate || "None"})`
       await onLogAction("ADD_BATCH", "INVENTORY_MANAGEMENT", logDetails)
     }
 
@@ -549,10 +765,24 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
     return `${m}m ${s}s remaining`
   }
 
-  const isAdmin = !currentOperator || currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin"
-
   return (
-    <div className="space-y-4 text-xs font-medium font-sans">
+    <div className="space-y-4 text-xs font-medium font-sans relative">
+      {/* Floating Scanner / Action Toast Notification */}
+      {scanToast && (
+        <div className="fixed top-4 right-4 z-50 animate-in slide-in-from-top-3 fade-in duration-200 pointer-events-none">
+          <div className={`px-4 py-2.5 rounded-xl shadow-2xl border backdrop-blur-md flex items-center gap-2.5 text-xs font-bold ${
+            scanToast.type === "success"
+              ? "bg-slate-900/95 text-emerald-300 border-emerald-500/40 shadow-emerald-950/40"
+              : "bg-slate-900/95 text-amber-300 border-amber-500/40 shadow-amber-950/40"
+          }`}>
+            <div className="p-1 rounded-full bg-emerald-500/20 text-emerald-400">
+              <Scan className="w-3.5 h-3.5" />
+            </div>
+            <span>{scanToast.message}</span>
+          </div>
+        </div>
+      )}
+
       {!isAdmin && (
         <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 rounded-xl text-amber-800 dark:text-amber-300 text-xs font-medium flex items-center justify-between">
           <span>🔒 <strong>Staff Read-Only View:</strong> Only Administrators can add batches, adjust stock levels, or bulk import inventory.</span>
@@ -570,6 +800,16 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowBarcodeModal(true)}
+            className="px-3.5 py-2 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 font-bold rounded-lg flex items-center gap-1.5 border border-blue-200 dark:border-blue-800 transition-colors cursor-pointer"
+            title="Generate & Print Scannable Barcode Labels or Export to Excel"
+          >
+            <Barcode className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+            Print / Export Barcodes
+          </button>
+
           <button
             type="button"
             onClick={handleDownloadStockTemplate}
@@ -612,21 +852,40 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 text-xs font-medium">
         
-        <div className="lg:col-span-1 bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700 shadow-xs space-y-4 flex flex-col h-[560px]">
-          <h3 className="font-bold text-gray-800 dark:text-white text-sm tracking-wide">Stock Registry Directory</h3>
+        {/* Stock Registry Directory */}
+        <div className="lg:col-span-1 bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700 shadow-xs space-y-4 flex flex-col h-[580px]">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-gray-800 dark:text-white text-sm tracking-wide">Stock Registry Directory</h3>
+            <span className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
+              <Scan className="w-3 h-3" /> Scanner Ready
+            </span>
+          </div>
           
           <div className="space-y-2">
-            <input 
-              type="text" 
-              placeholder="Search matching barcode or name..." 
-              value={query} 
-              onChange={e => setQuery(e.target.value)} 
-              className="w-full p-2 border rounded-lg text-xs bg-white dark:bg-slate-900 dark:border-slate-700 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500" 
-            />
+            <div className="relative flex items-center">
+              <Search className="w-4 h-4 text-gray-400 dark:text-slate-400 absolute left-3 pointer-events-none" />
+              <input 
+                type="text" 
+                placeholder="Search matching barcode, name, brand..." 
+                value={query} 
+                onChange={e => setQuery(e.target.value)} 
+                className="w-full pl-9 pr-8 p-2.5 border border-gray-200 dark:border-slate-700 rounded-xl text-xs bg-gray-50/50 dark:bg-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-gray-400" 
+              />
+              {query && (
+                <button 
+                  type="button" 
+                  onClick={() => setQuery("")}
+                  className="absolute right-2.5 p-1 rounded-full text-gray-400 hover:text-gray-600 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors"
+                  title="Clear search"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
             <select 
               value={catFilter} 
               onChange={e => setCatFilter(e.target.value)} 
-              className="w-full p-2 border rounded-lg uppercase bg-white dark:bg-slate-900 dark:border-slate-700 dark:text-white text-xs font-bold"
+              className="w-full p-2.5 border border-gray-200 dark:border-slate-700 rounded-xl uppercase bg-white dark:bg-slate-900 dark:text-white text-xs font-bold focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
             >
               <option value="all">All Categories</option>
               <option value="unmarked category">UNMARKED CATEGORY</option>
@@ -645,8 +904,11 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => setSelectedItem(item)}
-                    className={`w-full text-left p-3 border rounded-xl transition-all flex justify-between items-start gap-2 ${
+                    onClick={() => {
+                      setSelectedItem(item)
+                      setItemManufacturer("")
+                    }}
+                    className={`w-full text-left p-3 border rounded-xl transition-all flex justify-between items-start gap-2 cursor-pointer ${
                       isSelected 
                         ? 'border-blue-500 bg-blue-50/60 dark:bg-blue-950/40 dark:border-blue-500 shadow-xs' 
                         : 'border-gray-100 dark:border-slate-700/80 bg-white dark:bg-slate-900/50 hover:bg-gray-50 dark:hover:bg-slate-700/50'
@@ -654,12 +916,23 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                   >
                     <div className="min-w-0 flex-1">
                       <p className="font-bold text-gray-900 dark:text-white leading-snug break-words">{item.name}</p>
+                      
+                      {/* Barcode & Category */}
                       <p className="text-[10px] text-gray-400 dark:text-slate-400 font-mono mt-1 flex items-center gap-1.5 flex-wrap">
-                        <span>#{item.barcode}</span>
+                        <span>#{item.barcode || "No Barcode"}</span>
                         <span>•</span>
                         <span className="uppercase font-semibold text-blue-600 dark:text-blue-400">{item.category}</span>
                       </p>
+
+                      {/* Manufacturer Brand Name on Item Card if active batches exist */}
+                      {item.batches && item.batches.length > 0 && item.manufacturer && (
+                        <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium mt-1 flex items-center gap-1">
+                          <Building2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                          <span className="truncate">{item.manufacturer}</span>
+                        </p>
+                      )}
                     </div>
+
                     <div className="text-right flex-shrink-0">
                       <span className={`font-mono font-bold text-xs px-2.5 py-1 rounded-lg inline-block ${
                         isLow 
@@ -681,21 +954,30 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
             <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 border-dashed p-8 text-center text-gray-400 dark:text-slate-400 flex flex-col items-center justify-center flex-1 min-h-[400px]">
               <Layers className="w-8 h-8 text-gray-300 dark:text-slate-600 mb-2" />
               <p className="font-semibold text-sm text-gray-700 dark:text-slate-300">No Active Selection Made</p>
-              <p className="text-[11px] mt-0.5">Please click on any product profile row template from the side panel to adjust batch counts.</p>
+              <p className="text-[11px] mt-0.5">Please click on any product profile row template from the side panel to adjust batch counts or scan a barcode.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 flex-1 items-start">
               
               <div className="md:col-span-2 bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 shadow-xs p-4 space-y-4 min-h-[520px] flex flex-col">
                 <div className="border-b dark:border-slate-700 pb-3 flex flex-wrap justify-between items-start gap-2">
-                  <div className="space-y-1 max-w-full">
+                  <div className="space-y-1.5 max-w-full">
                     <div className="flex items-center gap-2 flex-wrap">
                       <h2 className="text-base font-bold text-gray-900 dark:text-white leading-tight">{selectedItem.name}</h2>
                     </div>
-                    <div className="flex items-center gap-2 flex-wrap text-[10px] text-gray-500 dark:text-slate-400 font-mono">
-                      <span>Barcode Token: #{selectedItem.barcode || "N/A"}</span>
-                      <span>•</span>
-                      <span>Manufacturer: {selectedItem.manufacturer || "Unspecified"}</span>
+                    
+                    {/* Barcode & Manufacturer Brand Badge in Header */}
+                    <div className="flex items-center gap-2 flex-wrap text-[11px] text-slate-600 dark:text-slate-300 font-mono">
+                      <span className="text-slate-500 dark:text-slate-400">Barcode: #{selectedItem.barcode || "N/A"}</span>
+                      {selectedItem.batches && selectedItem.batches.length > 0 && selectedItem.manufacturer && (
+                        <>
+                          <span>•</span>
+                          <span className="flex items-center gap-1 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 font-bold">
+                            <Building2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                            Manufacturer: {selectedItem.manufacturer}
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
                   <div className="text-right">
@@ -708,10 +990,17 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                 <div className="flex-1 overflow-y-auto space-y-3 pr-1">
                   <h4 className="font-bold text-gray-700 dark:text-slate-200 text-xs tracking-wide">Active Batch Assignments</h4>
                   
-                  {selectedItem.batches.length === 0 ? (
-                    <p className="text-gray-400 dark:text-slate-500 text-center py-12 bg-gray-50/50 dark:bg-slate-900/40 border border-dashed dark:border-slate-700 rounded-xl">No active batches assigned. Create a batch on the right to add stock quantities.</p>
-                  ) : (
-                    selectedItem.batches.map(batch => {
+                  {(() => {
+                    const activeBatches = (selectedItem.batches || []).filter(b => (Number(b.stock) || 0) > 0)
+                    if (activeBatches.length === 0) {
+                      return (
+                        <p className="text-gray-400 dark:text-slate-500 text-center py-12 bg-gray-50/50 dark:bg-slate-900/40 border border-dashed dark:border-slate-700 rounded-xl">
+                          No active batches assigned. Create a batch on the right to add stock quantities.
+                        </p>
+                      )
+                    }
+
+                    return activeBatches.map(batch => {
                       const diffDays = batch.expiryDate ? Math.ceil((new Date(batch.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : 999
                       const isRed = diffDays <= 0
                       const isOrange = diffDays > 0 && diffDays <= 90
@@ -730,7 +1019,15 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                       return (
                         <div key={batch.id} className="p-3.5 bg-gray-50 dark:bg-slate-900/60 border border-gray-100 dark:border-slate-700 rounded-xl space-y-2.5 transition-colors hover:bg-gray-100/60 dark:hover:bg-slate-900">
                           <div className="flex items-center justify-between gap-2 flex-wrap">
-                            <p className="font-bold text-gray-900 dark:text-white font-mono text-xs truncate">{batch.batchLabel}</p>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="font-bold text-gray-900 dark:text-white font-mono text-xs">{batch.batchLabel}</p>
+                              {(batch.manufacturer || selectedItem.manufacturer) && (
+                                <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
+                                  <Building2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                                  {batch.manufacturer || selectedItem.manufacturer}
+                                </span>
+                              )}
+                            </div>
                             
                             <div className="flex items-center gap-2">
                               <div className="flex items-center gap-1 text-gray-500 dark:text-slate-400 text-[10px]">
@@ -798,7 +1095,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                               <button 
                                 type="button" 
                                 onClick={() => handleModifyBatchStock(batch.id, batch.stock, -1, batch.batchLabel)}
-                                className="w-7 h-7 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 font-bold rounded-lg flex items-center justify-center hover:bg-red-50 dark:hover:bg-red-950 hover:text-red-600 transition-colors shadow-2xs"
+                                className="w-7 h-7 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 font-bold rounded-lg flex items-center justify-center hover:bg-red-50 dark:hover:bg-red-950 hover:text-red-600 transition-colors shadow-2xs cursor-pointer"
                                 title="Minus 1 Unit"
                               >
                                 <Minus className="w-3 h-3" />
@@ -843,7 +1140,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                               <button 
                                 type="button" 
                                 onClick={() => handleModifyBatchStock(batch.id, batch.stock, 1, batch.batchLabel)}
-                                className="w-7 h-7 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 font-bold rounded-lg flex items-center justify-center hover:bg-blue-50 dark:hover:bg-blue-950 hover:text-blue-600 transition-colors shadow-2xs"
+                                className="w-7 h-7 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 font-bold rounded-lg flex items-center justify-center hover:bg-blue-50 dark:hover:bg-blue-950 hover:text-blue-600 transition-colors shadow-2xs cursor-pointer"
                                 title="Add 1 Unit"
                               >
                                 <Plus className="w-3 h-3" />
@@ -853,7 +1150,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                         </div>
                       )
                     })
-                  )}
+                  })()}
                 </div>
               </div>
 
@@ -905,6 +1202,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                 </div>
               )}
 
+              {/* Provision New Batch and Manufacturer Selector */}
               <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700 shadow-xs space-y-4 h-fit">
                 <h4 className="font-bold text-gray-800 dark:text-white text-xs tracking-wide flex items-center gap-1.5 border-b dark:border-slate-700 pb-2">
                   <Plus className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
@@ -919,6 +1217,68 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                 )}
 
                 <form onSubmit={handleCreateBatch} className="space-y-3">
+                  <div className="space-y-1 relative" ref={manufacturerDropdownRef}>
+                    <div className="flex items-center justify-between">
+                      <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] tracking-wider">Manufacturer Brand Name</label>
+                      {itemManufacturer && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setItemManufacturer("")
+                            setShowManufacturerSuggestions(false)
+                          }}
+                          className="text-[9px] text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 font-bold cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                    
+                    <div className="relative">
+                      <input 
+                        type="text" 
+                        disabled={isProcessing}
+                        placeholder="e.g. Unilab, Pascual, Sanofi, local..."
+                        value={itemManufacturer} 
+                        onFocus={() => setShowManufacturerSuggestions(true)}
+                        onChange={e => {
+                          setItemManufacturer(e.target.value)
+                          setShowManufacturerSuggestions(true)
+                        }} 
+                        className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-900 dark:text-white font-medium focus:outline-none focus:ring-1 focus:ring-blue-500 font-sans" 
+                      />
+                    </div>
+
+                    {/* Auto-suggest dropdown when typing or focused */}
+                    {showManufacturerSuggestions && matchingManufacturers.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 z-30 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl overflow-hidden max-h-48 overflow-y-auto animate-in fade-in duration-100 font-sans">
+                        <div className="p-1.5 space-y-0.5">
+                          <p className="px-2 py-1 text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                            Suggested Brands ({matchingManufacturers.length})
+                          </p>
+                          {matchingManufacturers.map(brand => (
+                            <button
+                              key={brand}
+                              type="button"
+                              onMouseDown={e => {
+                                e.preventDefault()
+                                setItemManufacturer(brand)
+                                setShowManufacturerSuggestions(false)
+                              }}
+                              className="w-full text-left px-2.5 py-1.5 text-xs font-semibold rounded-lg text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-blue-950/60 hover:text-blue-600 dark:hover:text-blue-400 flex items-center justify-between transition-colors cursor-pointer"
+                            >
+                              <span className="flex items-center gap-1.5 truncate">
+                                <Building2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                                <span className="truncate">{brand}</span>
+                              </span>
+                              <span className="text-[9px] text-blue-600 dark:text-blue-400 uppercase font-bold shrink-0">Use</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="space-y-1">
                     <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] tracking-wider">Batch Lot Code Label *</label>
                     <input 
@@ -1064,6 +1424,13 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
           </div>
         </div>
       )}
+
+      {/* Scannable Barcode Labels Print & Export Modal */}
+      <BarcodePrintModal
+        isOpen={showBarcodeModal}
+        onClose={() => setShowBarcodeModal(false)}
+        inventory={inventory}
+      />
 
     </div>
   )

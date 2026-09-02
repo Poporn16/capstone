@@ -25,17 +25,64 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
 
   const fetchAttendanceFromDb = async () => {
     try {
-      const { data } = await supabase.from("staff_attendance").select("*").order("id", { ascending: false })
-      if (data) {
-        const formatted: AttendanceRecord[] = data.map((d: any) => ({
-          id: String(d.id),
-          username: d.username || "",
-          displayName: d.display_name || d.username || "",
-          systemRole: d.system_role || "staff",
-          timeIn: d.time_in,
-          timeOut: d.time_out || undefined,
-          durationMinutes: d.duration_minutes || undefined
-        }))
+      const [attRes, profRes] = await Promise.all([
+        supabase.from("staff_attendance").select("*").order("id", { ascending: false }),
+        supabase.from("operator_profiles").select("username, system_role, display_name")
+      ])
+
+      const profMap = new Map<string, { role: string; name: string }>()
+      if (profRes.data) {
+        profRes.data.forEach((p: any) => {
+          if (p.username) {
+            profMap.set(p.username.toLowerCase().trim(), {
+              role: p.system_role || "staff",
+              name: p.display_name || p.username
+            })
+          }
+        })
+      }
+
+      if (attRes.data) {
+        // Auto-cleanup any duplicate active shifts in database if they exist
+        const activeByUsers = new Map<string, any[]>()
+        attRes.data.forEach((d: any) => {
+          if (!d.time_out && d.username) {
+            const key = d.username.toLowerCase().trim()
+            if (!activeByUsers.has(key)) activeByUsers.set(key, [])
+            activeByUsers.get(key)!.push(d)
+          }
+        })
+
+        const duplicateIdsToDelete: number[] = []
+        activeByUsers.forEach(list => {
+          if (list.length > 1) {
+            // Keep the latest one (highest ID), mark the rest for deletion
+            list.sort((a, b) => Number(b.id) - Number(a.id))
+            list.slice(1).forEach(item => duplicateIdsToDelete.push(Number(item.id)))
+          }
+        })
+
+        if (duplicateIdsToDelete.length > 0) {
+          await supabase.from("staff_attendance").delete().in("id", duplicateIdsToDelete)
+        }
+
+        const validData = attRes.data.filter((d: any) => !duplicateIdsToDelete.includes(Number(d.id)))
+
+        const formatted: AttendanceRecord[] = validData.map((d: any) => {
+          const userKey = (d.username || "").toLowerCase().trim()
+          const matched = profMap.get(userKey)
+          const actualRole = matched?.role || d.system_role || (userKey.includes("superadmin") ? "superadmin" : "staff")
+          const actualDisplayName = d.display_name || matched?.name || d.username || "Operator"
+          return {
+            id: String(d.id),
+            username: d.username || "",
+            displayName: actualDisplayName,
+            systemRole: actualRole,
+            timeIn: d.time_in,
+            timeOut: d.time_out || undefined,
+            durationMinutes: d.duration_minutes || undefined
+          }
+        })
         setRecords(formatted)
         const currentActive = formatted.find(
           r => r.username.toLowerCase() === currentOperator.username.toLowerCase() && !r.timeOut
@@ -62,10 +109,12 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
   }, [currentOperator.username])
 
   const handleTimeIn = async () => {
+    if (activeSession) return
     const nowIso = new Date().toISOString()
     const { error } = await supabase.from("staff_attendance").insert([{
       username: currentOperator.username,
       display_name: currentOperator.displayName,
+      system_role: currentOperator.systemRole,
       time_in: nowIso
     }])
 

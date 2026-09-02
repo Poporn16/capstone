@@ -1,0 +1,11 @@
+{
+  "name": "capstone-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "bin": {
+    "graphify": "./scripts/graphify.js"
+  },
+  "scripts": {
+    "graphify": "node ./scripts/graphify.js"
+  }
+}

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Home, ShoppingCart, Package, Clock, ShieldAlert, LogOut, ClipboardList, Menu, X, Bell, AlertTriangle, Sun, Moon, ChevronLeft, ChevronRight, Flame, UserCheck, TrendingUp } from "lucide-react"
 import { Dashboard } from "./components/Dashboard"
 import { POSCheckout } from "./components/POSCheckout"
@@ -12,44 +12,20 @@ import { LoginScreen } from "./components/LoginScreen"
 import { StaffAttendanceModal } from "./components/StaffAttendanceModal"
 import { StaffAttendancePage } from "./components/StaffAttendancePage"
 import { supabase, broadcastChannel, triggerGlobalSync, fetchAllSupabaseRows } from "./utils/apiClient"
+import type { InventoryItem, SaleItem, Sale } from "./types"
 
-export interface InventoryItem {
-  id: string
-  name: string
-  category: string
-  price: number
-  cost: number
-  stock: number
-  minStock: number
-  barcode: string
-  manufacturer: string
-  batches: { id: string; batchLabel: string; stock: number; expiryDate: string; cost: number; price: number }[]
-}
+export type { InventoryItem, SaleItem, Sale }
 
-export interface SaleItem {
-  item: InventoryItem
-  quantity: number
-}
+const MAX_SESSION_AGE_MS = 12 * 60 * 60 * 1000 // 12 hours max session limit
 
-export interface Sale {
-  id: string
-  dbId?: string
-  date: Date
-  items: SaleItem[]
-  grossTotal: number
-  subtotal: number
-  discount: number
-  taxableBase: number
-  vat: number
-  total: number
-  cashReceived: number
-  change: number
-  paymentMethod: "cash" | "other"
-  onlineChannel?: string
-  discountLabel: string
-  customerName?: string
-  processedBy: string
-  isRefunded?: boolean
+export const clearSessionData = () => {
+  try {
+    sessionStorage.removeItem("pinv_session")
+    sessionStorage.removeItem("current_terminal_operator")
+    sessionStorage.removeItem("pinv_active_tab")
+    localStorage.removeItem("pinv_session")
+    localStorage.removeItem("current_terminal_operator")
+  } catch (e) {}
 }
 
 export default function App() {
@@ -86,6 +62,15 @@ export default function App() {
       const stored = sessionStorage.getItem("pinv_session") || sessionStorage.getItem("current_terminal_operator")
       if (stored) {
         const parsed = JSON.parse(stored)
+        
+        // Enforce 12-hour session expiry
+        const sessionTime = parsed.timestamp
+        if (sessionTime && (Date.now() - Number(sessionTime) > MAX_SESSION_AGE_MS)) {
+          console.warn("Stored session expired (> 12 hours). Clearing session.")
+          clearSessionData()
+          return null
+        }
+
         const targetObj = parsed.operator || parsed
         if (targetObj && (targetObj.username || targetObj.displayName)) {
           return {
@@ -117,7 +102,6 @@ export default function App() {
         operator,
         timestamp: Date.now()
       }))
-      sessionStorage.setItem("current_terminal_operator", JSON.stringify(operator))
     } catch (e) {}
   }
 
@@ -200,6 +184,48 @@ export default function App() {
     }
   }
 
+  const pendingTimeInUsers = useRef<Set<string>>(new Set())
+
+  const autoTimeInUser = async (operator: any) => {
+    if (!operator || !operator.username) return
+    const target = String(operator.username).trim().toLowerCase()
+    if (pendingTimeInUsers.current.has(target)) return
+    pendingTimeInUsers.current.add(target)
+
+    try {
+      const { data } = await supabase
+        .from("staff_attendance")
+        .select("id, time_in")
+        .ilike("username", target)
+        .is("time_out", null)
+        .order("id", { ascending: false })
+
+      if (data && data.length > 1) {
+        const extraIds = data.slice(1).map((r: any) => r.id)
+        await supabase.from("staff_attendance").delete().in("id", extraIds)
+        window.dispatchEvent(new Event("pinv_attendance_updated"))
+      } else if (!data || data.length === 0) {
+        await supabase.from("staff_attendance").insert([{
+          username: operator.username,
+          display_name: operator.displayName || operator.username,
+          system_role: operator.systemRole || "staff",
+          time_in: new Date().toISOString()
+        }])
+        window.dispatchEvent(new Event("pinv_attendance_updated"))
+      }
+    } catch (e) {
+      console.error("Auto time-in error:", e)
+    } finally {
+      pendingTimeInUsers.current.delete(target)
+    }
+  }
+
+  useEffect(() => {
+    if (currentOperator?.username) {
+      autoTimeInUser(currentOperator)
+    }
+  }, [currentOperator?.username])
+
   const clearAllUserHeartbeats = (uName: string) => {
     if (!uName) return
     const target = uName.trim().toLowerCase()
@@ -218,16 +244,6 @@ export default function App() {
     } catch (e) {}
   }
 
-  const clearSessionData = () => {
-    try {
-      sessionStorage.removeItem("pinv_session")
-      sessionStorage.removeItem("current_terminal_operator")
-      sessionStorage.removeItem("pinv_active_tab")
-      localStorage.removeItem("pinv_session")
-      localStorage.removeItem("current_terminal_operator")
-    } catch (e) {}
-  }
-
   const handleLogout = () => {
     const op = currentOperator
     if (op?.username) {
@@ -242,6 +258,28 @@ export default function App() {
     setCurrentOperator(null)
     setActiveTab("dashboard")
   }
+
+  // Periodic session expiration check (checks every minute while logged in)
+  useEffect(() => {
+    if (!currentOperator?.username) return
+
+    const checkSessionExpiry = () => {
+      try {
+        const stored = sessionStorage.getItem("pinv_session") || sessionStorage.getItem("current_terminal_operator")
+        if (stored) {
+          const parsed = JSON.parse(stored)
+          if (parsed.timestamp && (Date.now() - Number(parsed.timestamp) > MAX_SESSION_AGE_MS)) {
+            console.warn("Active session expired (> 12 hours). Logging out.")
+            handleLogout()
+          }
+        }
+      } catch (e) {}
+    }
+
+    checkSessionExpiry()
+    const interval = setInterval(checkSessionExpiry, 60000)
+    return () => clearInterval(interval)
+  }, [currentOperator])
 
   const deleteInventoryItem = async (idOrName: string) => {
     if (!idOrName) return
@@ -441,22 +479,43 @@ export default function App() {
     const items = await fetchAllSupabaseRows('inventory', '*')
     const batches = await fetchAllSupabaseRows('inventory_batches', '*', { column: 'id', ascending: true })
     const formattedData = items?.map(item => {
-      const itemBatches = batches?.filter(b => String(b.item_id) === String(item.id)).map(b => ({
-        id: String(b.id),
-        batchLabel: b.batch_label,
-        stock: Math.floor(Number(b.stock)) || 0,
-        expiryDate: b.expiry_date || "",
-        cost: Number(b.cost) || 0,
-        price: Number(b.price) || 0
-      })) || []
+      const allItemBatches = batches?.filter(b => String(b.item_id) === String(item.id)) || []
+      const activeBatches = allItemBatches.filter(b => (Number(b.stock) || 0) > 0)
+
+      const itemBatches = activeBatches.map(b => {
+        const rawLabel = String(b.batch_label || "")
+        const manuMatch = rawLabel.match(/\[(.*?)\]$/) || rawLabel.match(/::\s*(.+)$/)
+        const batchManufacturer = manuMatch ? manuMatch[1].trim() : (b.manufacturer || item.manufacturer || "")
+        const cleanLabel = rawLabel.replace(/\s*\[(.*?)\]$/, "").replace(/\s*::\s*.*$/, "").trim()
+
+        return {
+          id: String(b.id),
+          batchLabel: cleanLabel || rawLabel,
+          stock: Math.floor(Number(b.stock)) || 0,
+          expiryDate: b.expiry_date || "",
+          cost: Number(b.cost) || 0,
+          price: Number(b.price) || 0,
+          manufacturer: batchManufacturer
+        }
+      })
       const totalStock = itemBatches.reduce((sum, b) => sum + b.stock, 0)
-      const activeBatchWithPrice = itemBatches.find(b => b.stock > 0 && b.price > 0) || itemBatches[0]
+
+      // Find best available price and cost from active batches, historical batches, or base item
+      const priceBatch = activeBatches.find(b => Number(b.price) > 0) || allItemBatches.find(b => Number(b.price) > 0)
+      const costBatch = activeBatches.find(b => Number(b.cost) > 0) || allItemBatches.find(b => Number(b.cost) > 0)
+
+      const basePrice = Number(item.price) || 0
+      const baseCost = Number(item.cost) || 0
+
+      const resolvedPrice = priceBatch ? Number(priceBatch.price) : (basePrice > 0 ? basePrice : 0)
+      const resolvedCost = costBatch ? Number(costBatch.cost) : (baseCost > 0 ? baseCost : (resolvedPrice > 0 ? resolvedPrice * 0.65 : 0))
+
       return {
         id: String(item.id),
         name: item.name,
         category: item.category || "unmarked category",
-        price: activeBatchWithPrice ? activeBatchWithPrice.price : (Number(item.price) || 0),
-        cost: activeBatchWithPrice ? activeBatchWithPrice.cost : (Number(item.cost) || 0),
+        price: resolvedPrice,
+        cost: resolvedCost,
         stock: totalStock,
         minStock: Math.floor(Number(item.min_stock)) || 0,
         barcode: item.barcode || "",
@@ -481,25 +540,48 @@ export default function App() {
 
       const formattedFromView: Sale[] = sortedView.map((s: any, idx: number) => {
         const rawItems = Array.isArray(s.sale_items) ? s.sale_items : []
-        const mappedItems = rawItems.map((si: any) => ({
-          quantity: Math.floor(Number(si.quantity)) || 1,
-          item: {
-            id: String(si.inventory?.id || 0),
-            name: si.inventory?.name || "Product Item",
-            category: si.inventory?.category || "Uncategorized",
-            price: Number(si.unit_price) || Number(si.inventory?.price) || 0,
-            cost: 0,
-            stock: 0,
-            minStock: Number(si.inventory?.min_stock) || 0,
-            barcode: si.inventory?.barcode || "",
-            manufacturer: "",
-            batches: []
+        const totalSaleUnits = rawItems.reduce((sum: number, i: any) => sum + (Math.floor(Number(i.quantity)) || 1), 0) || 1
+        const avgItemRevenue = (Number(s.total) || Number(s.gross_total) || 0) / totalSaleUnits
+
+        const mappedItems = rawItems.map((si: any) => {
+          const itemQty = Math.floor(Number(si.quantity)) || 1
+          let itemPrice = Number(si.unit_price) || Number(si.price) || Number(si.unitPrice) || Number(si.item_price) || Number(si.inventory?.price) || 0
+          if (itemPrice <= 0 && avgItemRevenue > 0) {
+            itemPrice = avgItemRevenue
           }
-        }))
+          let itemCost = Number(si.unit_cost) || Number(si.cost) || Number(si.inventory?.cost) || 0
+          if (itemCost <= 0 && itemPrice > 0) {
+            itemCost = itemPrice * 0.65
+          }
+
+          return {
+            quantity: itemQty,
+            item: {
+              id: String(si.inventory?.id || si.item_id || 0),
+              name: si.inventory?.name || si.item_name || si.name || "Product Item",
+              category: si.inventory?.category || si.category || "Uncategorized",
+              price: itemPrice,
+              cost: itemCost,
+              stock: 0,
+              minStock: Number(si.inventory?.min_stock || 0),
+              barcode: si.inventory?.barcode || "",
+              manufacturer: "",
+              batches: []
+            }
+          }
+        })
 
         const rawPay = String(s.payment_method || "").trim()
         const isCash = !rawPay || rawPay.toLowerCase() === "cash"
         const onlineChan = !isCash ? (rawPay.includes(":") ? rawPay.split(":")[1] : (rawPay.toLowerCase() === "other" ? "" : rawPay)) : ""
+        let localChannelMap: Record<string, string> = {}
+        try {
+          localChannelMap = JSON.parse(localStorage.getItem("pinv_online_channel_map") || "{}")
+        } catch (e) {}
+
+        const resolvedOnlineChan = !isCash 
+          ? (onlineChan || s.online_channel || s.onlineChannel || localChannelMap[String(s.id)] || localChannelMap[String(idx + 1)] || "GCash") 
+          : ""
 
         return {
           id: String(idx + 1),
@@ -515,7 +597,7 @@ export default function App() {
           cashReceived: Number(s.cash_received) || Number(s.total) || 0,
           change: Number(s.change) || 0,
           paymentMethod: isCash ? "cash" : "other",
-          onlineChannel: onlineChan || s.online_channel || "",
+          onlineChannel: resolvedOnlineChan,
           discountLabel: s.discount_label || "NONE",
           processedBy: s.processed_by || "admin",
           isRefunded: Boolean(s.is_refunded)
@@ -539,13 +621,29 @@ export default function App() {
       return Number(a.id) - Number(b.id)
     })
 
+    let localChannelMap: Record<string, string> = {}
+    try {
+      localChannelMap = JSON.parse(localStorage.getItem("pinv_online_channel_map") || "{}")
+    } catch (e) {}
+
     const formattedSales: Sale[] = sortedSalesData.map((sale: any, idx: number) => {
-      const items = saleItemsData?.filter(si => String(si.sale_id) === String(sale.id)).map(si => {
+      const rawItems = saleItemsData?.filter(si => String(si.sale_id) === String(sale.id)) || []
+      const totalSaleUnits = rawItems.reduce((sum: number, i: any) => sum + (Math.floor(Number(i.quantity)) || 1), 0) || 1
+      const avgItemRevenue = (Number(sale.total) || Number(sale.gross_total) || 0) / totalSaleUnits
+
+      const items = rawItems.map((si: any) => {
         const inv = inventoryData?.find(inv => String(inv.id) === String(si.item_id))
         const batch = batchesData?.find(b => String(b.item_id) === String(si.item_id) && Number(b.price) > 0)
         const saleBatch = saleBatchesData?.find(sb => String(sb.sale_id) === String(sale.id) && String(sb.item_name).toLowerCase() === (inv?.name || "").toLowerCase())
 
-        const resolvedPrice = Number(si.unit_price) || Number(si.price) || Number(saleBatch?.unit_price) || Number(batch?.price) || Number(inv?.price) || 0
+        let resolvedPrice = Number(si.unit_price) || Number(si.price) || Number(saleBatch?.unit_price) || Number(batch?.price) || Number(inv?.price) || 0
+        if (resolvedPrice <= 0 && avgItemRevenue > 0) {
+          resolvedPrice = avgItemRevenue
+        }
+        let resolvedCost = Number(batch?.cost) || Number(inv?.cost) || 0
+        if (resolvedCost <= 0 && resolvedPrice > 0) {
+          resolvedCost = resolvedPrice * 0.65
+        }
 
         return {
           quantity: Math.floor(Number(si.quantity)) || 1,
@@ -554,7 +652,7 @@ export default function App() {
             name: inv?.name || saleBatch?.item_name || "Product Item",
             category: inv?.category || "Uncategorized",
             price: resolvedPrice,
-            cost: Number(batch?.cost) || Number(inv?.cost) || 0,
+            cost: resolvedCost,
             stock: 0,
             minStock: Number(inv?.min_stock) || 0,
             barcode: inv?.barcode || "",
@@ -566,6 +664,10 @@ export default function App() {
       const rawPay = String(sale.payment_method || "").trim()
       const isCash = !rawPay || rawPay.toLowerCase() === "cash"
       const onlineChan = !isCash ? (rawPay.includes(":") ? rawPay.split(":")[1] : (rawPay.toLowerCase() === "other" ? "" : rawPay)) : ""
+
+      const resolvedOnlineChan = !isCash
+        ? (onlineChan || sale.online_channel || sale.onlineChannel || localChannelMap[String(sale.id)] || localChannelMap[String(idx + 1)] || "GCash")
+        : ""
 
       const discLabel = sale.discount_label || "NONE"
       let localCustomerMap: Record<string, string> = {}
@@ -597,7 +699,7 @@ export default function App() {
         cashReceived: Number(sale.cash_received) || 0,
         change: Number(sale.change) || 0,
         paymentMethod: isCash ? "cash" : "other",
-        onlineChannel: onlineChan || sale.online_channel || "",
+        onlineChannel: resolvedOnlineChan,
         discountLabel: discLabel,
         customerName: extractedCustomerName,
         processedBy: sale.processed_by || "admin",
@@ -625,6 +727,7 @@ export default function App() {
       date: sale.date.toISOString(),
       total: sale.total,
       payment_method: payMethodValue,
+      online_channel: onlineChanValue,
       is_refunded: false,
       gross_total: sale.grossTotal,
       subtotal: sale.subtotal,
@@ -673,6 +776,7 @@ export default function App() {
         change: sale.change,
         discount_label: dbDiscountLabel,
         payment_method: payMethodValue,
+        online_channel: onlineChanValue,
         processed_by: currentOperator.username,
         is_refunded: false
       }).select('id').single()
@@ -681,11 +785,22 @@ export default function App() {
         saleId = fallbackSale.id
         // Try to update online_channel separately
         if (onlineChanValue && saleId) {
-          await supabase.from('sales').update({ online_channel: onlineChanValue }).eq('id', saleId)
+          try {
+            await supabase.from('sales').update({ online_channel: onlineChanValue }).eq('id', saleId)
+          } catch (e) {}
         }
       } else {
         console.error("All inserts failed:", fbErr?.message)
       }
+    }
+
+    if (onlineChanValue && saleId) {
+      try {
+        const channelMap = JSON.parse(localStorage.getItem("pinv_online_channel_map") || "{}")
+        channelMap[String(saleId)] = onlineChanValue
+        channelMap[String(sales.length + 1)] = onlineChanValue
+        localStorage.setItem("pinv_online_channel_map", JSON.stringify(channelMap))
+      } catch (e) {}
     }
 
     if (trimmedCustomer && saleId) {
@@ -752,10 +867,17 @@ export default function App() {
             const newStock = currentBatchStock - deductFromThis
             remainingDeduct -= deductFromThis
 
-            await supabase
-              .from('inventory_batches')
-              .update({ stock: newStock })
-              .eq('id', batch.id)
+            if (newStock <= 0) {
+              await supabase
+                .from('inventory_batches')
+                .delete()
+                .eq('id', batch.id)
+            } else {
+              await supabase
+                .from('inventory_batches')
+                .update({ stock: newStock })
+                .eq('id', batch.id)
+            }
           }
         } else {
           // Fallback: If item has no batch rows, attempt updating inventory table directly
@@ -865,9 +987,14 @@ export default function App() {
     .filter(i => (i.stock || 0) <= (i.minStock || 10))
     .sort((a, b) => (a.stock || 0) - (b.stock || 0))
   const expiringItems = inventory
-    .flatMap(item => (item.batches || []).map(b => ({ name: item.name, expiryDate: b.expiryDate, stock: b.stock })))
+    .flatMap(item => (item.batches || []).map(b => ({ 
+      name: item.name, 
+      expiryDate: b.expiryDate, 
+      stock: Number(b.stock) || 0,
+      itemStock: Number(item.stock) || 0 
+    })))
     .filter(b => {
-      if (!b.expiryDate || b.stock <= 0) return false
+      if (!b.expiryDate || b.stock <= 0 || b.itemStock <= 0) return false
       const diffDays = Math.ceil((new Date(b.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
       return diffDays <= 180
     })
@@ -892,33 +1019,68 @@ export default function App() {
     }
   }
 
+  const handleSelectSale = (saleId?: string) => {
+    setActiveTab("history")
+    setShowNotifications(false)
+    if (saleId) {
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("pinv_select_sale", {
+          detail: { id: saleId }
+        }))
+      }, 100)
+    }
+  }
+
   const totalNotificationCount = lowStockItems.length + expiringItems.length
 
   return (
     <div className={`h-screen max-h-screen overflow-hidden flex flex-col md:flex-row font-sans antialiased transition-colors duration-200 ${
-      theme === "dark" ? "bg-slate-900 text-slate-100" : "bg-[#ECE6DD] text-[#1f2937]"
+      theme === "dark" ? "bg-slate-900 text-slate-100" : "bg-[#ECE6DD] text-slate-800"
     }`}>
-      {isSidebarOpen && <div onClick={() => setIsSidebarOpen(false)} className="fixed inset-0 bg-black/40 z-40 md:hidden" />}
-      <aside className={`fixed md:sticky md:top-0 inset-y-0 left-0 z-50 ${isSidebarCollapsed ? "w-20 px-3 py-4" : "w-64 p-6"} bg-[#89A1A0] dark:bg-slate-800 h-screen max-h-screen flex flex-col justify-between shrink-0 border-r border-[#799190] dark:border-slate-700 transition-all duration-200 ease-in-out overflow-y-auto ${
+      {isSidebarOpen && <div onClick={() => setIsSidebarOpen(false)} className="fixed inset-0 bg-black/50 z-40 md:hidden backdrop-blur-xs" />}
+      <aside className={`fixed md:sticky md:top-0 inset-y-0 left-0 z-50 ${isSidebarCollapsed ? "w-20 px-3 py-4" : "w-64 p-5"} ${
+        theme === "dark" 
+          ? "bg-slate-900 text-slate-200 border-r border-slate-800" 
+          : "bg-[#89A1A0] text-slate-900 border-r border-[#758e8d]"
+      } h-screen max-h-screen flex flex-col justify-between shrink-0 transition-all duration-200 ease-in-out overflow-y-auto ${
         isSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
       }`}>
         <div className="space-y-6 flex-1 flex flex-col min-h-0">
           <div className="flex items-center justify-between shrink-0">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-white dark:bg-slate-700 rounded-xl shadow-xs border border-white/40 flex items-center justify-center p-0.5 shrink-0 overflow-hidden">
+              <div className="w-10 h-10 bg-white/60 dark:bg-white/10 rounded-xl shadow-xs border border-white/60 dark:border-white/20 flex items-center justify-center p-0.5 shrink-0 overflow-hidden">
                 <img 
-                  src="https://scontent.fmnl33-4.fna.fbcdn.net/v/t39.30808-6/401504104_122095038878121591_4438502913040853748_n.jpg?stp=dst-jpg_tt6&cstp=mx411x390&ctp=s411x390&_nc_cat=106&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=Ft95k5nEUhgQ7kNvwEdA8VD&_nc_oc=AdqjX8JO54H9u5fUgSwQABVjJrejNbGOQXYz6IeG81-a88_I02lrMRRwNEFxJTxpHQG4mOYKT7nZvrBkQ8vzMfdQ&_nc_zt=23&_nc_ht=scontent.fmnl33-4.fna&_nc_gid=upjDGk5QBMqMv2fhQRvKFA&_nc_ss=7b289&oh=00_AQCfN0WpxXHhMh2frLHZKz7eRSuVSEaGu9-fKhjBG1tzkw&oe=6A6B53F5" 
+                  src="https://scontent.fmnl33-1.fna.fbcdn.net/v/t39.30808-6/401504104_122095038878121591_4438502913040853748_n.jpg?stp=dst-jpg_tt6&cstp=mx411x390&ctp=s411x390&_nc_cat=106&_nc_map=urlgen_bucketless&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=HomS4dM_v2oQ7kNvwH-H5qh&_nc_oc=AdqpsHU4d8u3DZkN9_HhREwIDpoG7U8mtOeEqKUngK57kXhPzW8qAurno3fw2DbvFMeE9KS80EXkBvDhPK-JzxUG&_nc_zt=23&_nc_ht=scontent.fmnl33-1.fna&_nc_gid=Klpvs0eYzOZvmUEPFPYwJQ&_nc_ss=7b289&oh=00_AQEaraIvaryeHFJFJCXKyUidl9UArJfF7geCInPpXquTwA&oe=6A846075" 
                   alt="Malabon Pharmacy Logo" 
                   className="w-full h-full rounded-lg object-cover"
                 />
               </div>
-              {!isSidebarCollapsed && <span className="text-[#1c2d2c] dark:text-white font-semibold text-xl tracking-tight leading-tight">Pharmacy Inventory</span>}
+              {!isSidebarCollapsed && (
+                <div className="leading-tight">
+                  <span className={`font-bold text-base tracking-tight block ${theme === "dark" ? "text-white" : "text-slate-900"}`}>Pharmacy</span>
+                  <span className={`text-base font-bold tracking-tight block ${theme === "dark" ? "text-slate-300" : "text-slate-900"}`}>Inventory</span>
+                </div>
+              )}
             </div>
             <div className="flex items-center">
-              <button type="button" onClick={() => setIsSidebarCollapsed(c => !c)} className="hidden md:flex p-1.5 text-[#1c2d2c] dark:text-gray-300 rounded-lg hover:bg-white/20 dark:hover:bg-slate-700 transition-colors">
+              <button 
+                type="button" 
+                onClick={() => setIsSidebarCollapsed(c => !c)} 
+                className={`hidden md:flex p-1.5 rounded-lg transition-colors cursor-pointer ${
+                  theme === "dark" ? "text-slate-400 hover:text-white hover:bg-slate-800" : "text-slate-800 hover:text-slate-950 hover:bg-[#789291]"
+                }`}
+              >
                 {isSidebarCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
               </button>
-              <button type="button" onClick={() => setIsSidebarOpen(false)} className="md:hidden text-[#1c2d2c] dark:text-white p-1.5 rounded-lg hover:bg-white/20"><X className="w-6 h-6" /></button>
+              <button 
+                type="button" 
+                onClick={() => setIsSidebarOpen(false)} 
+                className={`md:hidden p-1.5 rounded-lg ${
+                  theme === "dark" ? "text-slate-400 hover:text-white hover:bg-slate-800" : "text-slate-800 hover:text-slate-950 hover:bg-[#789291]"
+                }`}
+              >
+                <X className="w-6 h-6" />
+              </button>
             </div>
           </div>
           <nav className="space-y-1.5 flex-1 overflow-y-auto pr-1">
@@ -926,27 +1088,44 @@ export default function App() {
               const Icon = tab.icon
               const isActive = activeTab === tab.id
               return (
-                <button key={tab.id} onClick={() => { setActiveTab(tab.id); setIsSidebarOpen(false) }} title={isSidebarCollapsed ? tab.label : undefined} className={`w-full flex items-center ${isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-4"} py-2.5 rounded-full text-xs font-semibold tracking-wide antialiased transition-all duration-150 ${
-                    isActive ? "bg-white text-gray-900 dark:bg-blue-600 dark:text-white shadow-md font-bold" : "text-[#1c2d2c] dark:text-slate-200 hover:bg-white/20 dark:hover:bg-slate-700/80 hover:text-black dark:hover:text-white"
-                  }`}>
-                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? "text-gray-900 dark:text-white" : "text-[#1c2d2c] dark:text-slate-300"}`} />
+                <button 
+                  key={tab.id} 
+                  onClick={() => { setActiveTab(tab.id); setIsSidebarOpen(false) }} 
+                  title={isSidebarCollapsed ? tab.label : undefined} 
+                  className={`w-full flex items-center ${isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3.5"} py-2.5 text-xs font-semibold tracking-wide antialiased transition-all duration-150 cursor-pointer ${
+                    isActive 
+                      ? theme === "dark"
+                        ? "bg-blue-600 text-white font-bold shadow-md shadow-blue-600/30 rounded-xl"
+                        : "bg-white text-slate-900 font-bold shadow-xs rounded-full"
+                      : theme === "dark"
+                        ? "text-slate-300 hover:bg-slate-800 hover:text-white rounded-xl"
+                        : "text-slate-800 hover:bg-[#789291] hover:text-slate-950 rounded-xl font-medium"
+                  }`}
+                >
+                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? (theme === "dark" ? "text-white" : "text-blue-600") : (theme === "dark" ? "text-slate-400" : "text-slate-700")}`} />
                   {!isSidebarCollapsed && <span>{tab.label}</span>}
                 </button>
               )
             })}
           </nav>
         </div>
-        <div className="pt-3 border-t border-black/10 dark:border-slate-700 flex flex-col gap-2 shrink-0">
+        <div className={`pt-3 border-t flex flex-col gap-2 shrink-0 ${
+          theme === "dark" ? "border-slate-800 text-slate-300" : "border-[#758e8d] text-slate-900"
+        }`}>
           {!isSidebarCollapsed && (
-            <div className="text-xs text-[#1c2d2c] dark:text-slate-200">
+            <div className="text-xs px-1">
               <p className="font-bold truncate max-w-[180px]">{currentOperator?.displayName}</p>
-              <p className="text-[10px] opacity-75 font-mono uppercase">{currentOperator?.systemRole}</p>
+              <p className={`text-[10px] font-mono uppercase ${theme === "dark" ? "text-slate-400" : "text-slate-700 font-bold"}`}>{currentOperator?.systemRole}</p>
             </div>
           )}
           <button 
             type="button" 
             onClick={handleLogout} 
-            className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-red-500/20 hover:bg-red-600 text-red-900 hover:text-white dark:text-red-300 dark:hover:text-white font-bold rounded-xl transition-all shadow-2xs text-xs"
+            className={`w-full flex items-center justify-center gap-2 py-2 px-3 font-bold rounded-xl transition-all text-xs cursor-pointer ${
+              theme === "dark" 
+                ? "bg-red-500/15 hover:bg-red-600 text-red-300 hover:text-white" 
+                : "bg-[#e5cccc] hover:bg-red-600 text-[#8b2326] hover:text-white"
+            }`}
             title="Log Out Session"
           >
             <LogOut className="w-4 h-4 shrink-0" />
@@ -955,10 +1134,12 @@ export default function App() {
         </div>
       </aside>
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
-        <header className="px-4 sm:px-8 pt-6 sm:pt-8 pb-4 flex items-center justify-between">
+        <header className={`px-4 sm:px-6 py-4 flex items-center justify-between shrink-0 ${
+          theme === "dark" ? "border-b border-slate-800 bg-slate-900/80" : "bg-transparent"
+        }`}>
           <div className="flex items-center gap-3">
-            <button type="button" onClick={() => setIsSidebarOpen(true)} className="md:hidden p-2 text-[#1c2d2c] dark:text-white bg-white dark:bg-slate-800 rounded-xl border border-gray-300 dark:border-slate-700 shadow-2xs"><Menu className="w-6 h-6" /></button>
-            <h1 className="text-xl sm:text-2xl font-normal text-[#1c2d2c] dark:text-white tracking-tight">
+            <button type="button" onClick={() => setIsSidebarOpen(true)} className="md:hidden p-1.5 text-slate-700 dark:text-white bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs"><Menu className="w-5 h-5" /></button>
+            <h1 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white tracking-tight">
               {activeTab === "dashboard" && "Dashboard"}
               {activeTab === "pos" && "Pos–Checkout"}
               {activeTab === "inventory" && "Item specs"}
@@ -970,23 +1151,23 @@ export default function App() {
               {activeTab === "super_admin" && "Super Admin"}
             </h1>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
             <button
               type="button"
               onClick={() => setShowAttendanceModal(true)}
-              className="px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-2xs transition-all flex items-center gap-1.5 active:scale-95"
+              className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs hover:shadow-md transition-all flex items-center gap-1.5 active:scale-95"
               title="Time In / Time Out Attendance"
             >
-              <Clock className="w-4 h-4" />
+              <Clock className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Time In / Out</span>
             </button>
-            <button type="button" onClick={() => setTheme(t => t === "light" ? "dark" : "light")} className="w-10 h-10 rounded-full bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 text-gray-800 dark:text-gray-200 flex items-center justify-center shadow-2xs hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
-              {theme === "light" ? <Moon className="w-5 h-5 text-gray-700" /> : <Sun className="w-5 h-5 text-amber-400" />}
+            <button type="button" onClick={() => setTheme(t => t === "light" ? "dark" : "light")} className="w-9 h-9 rounded-xl bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-xs hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+              {theme === "light" ? <Moon className="w-4 h-4 text-slate-700" /> : <Sun className="w-4 h-4 text-amber-400" />}
             </button>
             <div className="relative">
-              <button type="button" onClick={() => setShowNotifications(prev => !prev)} className="w-10 h-10 rounded-full bg-white dark:bg-slate-800 border border-red-300 dark:border-red-900 text-red-500 flex items-center justify-center shadow-2xs hover:bg-red-50 dark:hover:bg-slate-700 transition-colors">
-                <Bell className="w-5 h-5 text-red-500" />
-                {totalNotificationCount > 0 && <span className="absolute top-0 right-0 transform translate-x-1/3 -translate-y-1/3 bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full ring-2 ring-white dark:ring-slate-800">{totalNotificationCount}</span>}
+              <button type="button" onClick={() => setShowNotifications(prev => !prev)} className="w-9 h-9 rounded-xl bg-white dark:bg-slate-800 border border-red-200 dark:border-red-900/50 text-red-500 flex items-center justify-center shadow-xs hover:bg-red-50 dark:hover:bg-slate-700 transition-colors">
+                <Bell className="w-4 h-4 text-red-500" />
+                {totalNotificationCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-extrabold px-1 py-0.2 rounded-full ring-2 ring-white dark:ring-slate-900 animate-pulse">{totalNotificationCount}</span>}
               </button>
               {showNotifications && (
                 <div className="absolute right-0 mt-3 w-80 sm:w-96 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-slate-700 p-4 z-50 space-y-3 font-sans">
@@ -1022,12 +1203,12 @@ export default function App() {
             </div>
           </div>
         </header>
-        <main className="flex-1 px-4 sm:px-8 pb-8 overflow-y-auto">
-          {activeTab === "dashboard" && <Dashboard inventory={inventory} sales={sales} categoriesList={categoriesList} isAdminUser={isAdminUser} onSelectProduct={handleSelectStockProduct} />}
+        <main className="flex-1 px-4 sm:px-6 py-5 overflow-y-auto">
+          {activeTab === "dashboard" && <Dashboard inventory={inventory} sales={sales} isAdminUser={isAdminUser} onSelectProduct={handleSelectStockProduct} onSelectSale={handleSelectSale} />}
           {activeTab === "pos" && <POSCheckout inventory={inventory} sales={sales} categoriesList={categoriesList} onCompleteSale={addSale} />}
-          {activeTab === "inventory" && currentOperator && <InventoryManager currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} refreshCategories={fetchCategories} refreshInventory={fetchInventory} onUpdateInventory={updateInventoryItem} onDeleteProduct={deleteInventoryItem} onLogAction={logSystemAction} />}
-          {activeTab === "stock_adjust" && currentOperator && <StockAdjustment currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} fetchInventory={fetchInventory} onLogAction={logSystemAction} />}
-          {activeTab === "history" && currentOperator && <SalesHistory currentOperator={currentOperator} sales={sales} onToggleRefund={handleToggleRefund} />}
+          {activeTab === "inventory" && <InventoryManager currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} refreshCategories={fetchCategories} refreshInventory={fetchInventory} onUpdateInventory={updateInventoryItem} onDeleteProduct={deleteInventoryItem} onLogAction={logSystemAction} />}
+          {activeTab === "stock_adjust" && <StockAdjustment currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} fetchInventory={fetchInventory} onLogAction={logSystemAction} />}
+          {activeTab === "history" && <SalesHistory currentOperator={currentOperator} sales={sales} onToggleRefund={handleToggleRefund} />}
           {activeTab === "reports" && isAdminUser && <SalesReport sales={sales} inventory={inventory} categoriesList={categoriesList} />}
           {activeTab === "attendance" && isAdminUser && currentOperator && <StaffAttendancePage currentOperator={currentOperator} />}
           {activeTab === "admin_control" && (currentOperator?.systemRole === "admin" || currentOperator?.systemRole === "superadmin") && currentOperator && (

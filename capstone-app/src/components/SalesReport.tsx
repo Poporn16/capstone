@@ -1,7 +1,7 @@
-import { useState, useMemo, useEffect } from "react"
-import type { Sale, InventoryItem } from "../App"
+import { useState, useMemo } from "react"
+import type { Sale, InventoryItem } from "../types"
 import { downloadExcelWithAutoFit } from "../utils/excelUtils"
-import { supabase } from "../utils/apiClient"
+import { getCategoryStyles } from "../utils/categoryColors"
 import { TrendingUp, BarChart3, DollarSign, ShoppingBag, Download, Filter, Users, CreditCard, Layers, UserCheck, PackageCheck, Search } from "lucide-react"
 
 interface SalesReportProps {
@@ -17,31 +17,6 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
   const [activeReportTab, setActiveReportTab] = useState<"all" | "payment" | "cogs" | "category" | "cashier">("all")
   const [report1SearchQuery, setReport1SearchQuery] = useState("")
   const [report1CategoryFilter, setReport1CategoryFilter] = useState("all")
-  const [, setForceTick] = useState(0)
-
-  useEffect(() => {
-    const triggerRefresh = () => setForceTick(t => t + 1)
-
-    window.addEventListener("storage", triggerRefresh)
-    window.addEventListener("refresh_sales_data", triggerRefresh)
-    window.addEventListener("pinv_sale_completed", triggerRefresh)
-    window.addEventListener("pinv_registry_updated", triggerRefresh)
-
-    const channel = supabase
-      .channel("realtime-sales-report-channel")
-      .on("postgres_changes", { event: "*", schema: "public", table: "sales" }, () => {
-        triggerRefresh()
-      })
-      .subscribe()
-
-    return () => {
-      window.removeEventListener("storage", triggerRefresh)
-      window.removeEventListener("refresh_sales_data", triggerRefresh)
-      window.removeEventListener("pinv_sale_completed", triggerRefresh)
-      window.removeEventListener("pinv_registry_updated", triggerRefresh)
-      supabase.removeChannel(channel)
-    }
-  }, [])
 
   // Filter sales based on selected date frame
   const filteredSales = useMemo(() => {
@@ -164,6 +139,9 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
 
     filteredSales.forEach(s => {
       const itemsList = Array.isArray(s.items) ? s.items : []
+      const totalUnitsInThisSale = itemsList.reduce((sum, ci) => sum + (Number(ci.quantity) || 1), 0) || 1
+      const avgUnitRevenue = (Number(s.total) || Number(s.grossTotal) || 0) / totalUnitsInThisSale
+
       itemsList.forEach(si => {
         const name = si.item?.name || (si as any).name || (si as any).item_name || "Unlisted Item"
         const invMatch = invLookupMap.get(String(si.item?.id || (si as any).item_id).toLowerCase()) || invLookupMap.get(name.toLowerCase().trim())
@@ -171,11 +149,18 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
         const category = si.item?.category || invMatch?.category || "Uncategorized"
         const qty = Number(si.quantity) || 1
         
-        // Multi-level price fallback to prevent ₱0.00 revenue
-        const price = Number((si as any).unitPrice) || Number((si as any).unit_price) || Number((si as any).price) || Number(si.item?.price) || invMatch?.price || 0
-        const unitCost = invMatch?.cost || Number(si.item?.cost) || Number((si as any).cost) || 0
+        // Multi-level price & revenue resolution
+        let unitPrice = Number((si as any).unitPrice) || Number((si as any).unit_price) || Number((si as any).price) || Number(si.item?.price) || invMatch?.price || 0
+        if (unitPrice <= 0 && avgUnitRevenue > 0) {
+          unitPrice = avgUnitRevenue
+        }
+
+        let unitCost = invMatch?.cost || Number(si.item?.cost) || Number((si as any).cost) || 0
+        if (unitCost <= 0 && unitPrice > 0) {
+          unitCost = unitPrice * 0.65
+        }
         
-        const lineRev = price * qty
+        const lineRev = unitPrice * qty
         const lineCogs = unitCost * qty
 
         const existing = itemMap.get(name)
@@ -473,36 +458,42 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
 
       {/* Metric Highlights Overview Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white dark:bg-slate-800 p-4.5 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-xs space-y-1">
+        <div className="bg-white dark:bg-slate-800 p-4.5 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-xs space-y-1 card-hover">
           <div className="flex items-center justify-between text-gray-500 dark:text-slate-400">
             <span className="text-[10px] uppercase font-bold tracking-wider">Net Sales Revenue</span>
-            <DollarSign className="w-4 h-4 text-emerald-600" />
+            <div className="w-7 h-7 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+              <DollarSign className="w-4 h-4" />
+            </div>
           </div>
           <p className="text-xl font-extrabold text-gray-900 dark:text-white font-mono">
             ₱{overallMetrics.totalRevenue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
-          <p className="text-[10px] text-gray-500 font-medium">
+          <p className="text-[10px] text-gray-500 dark:text-slate-400 font-medium">
             {overallMetrics.totalTransactions} total checkouts
           </p>
         </div>
 
-        <div className="bg-white dark:bg-slate-800 p-4.5 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-xs space-y-1">
+        <div className="bg-white dark:bg-slate-800 p-4.5 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-xs space-y-1 card-hover">
           <div className="flex items-center justify-between text-gray-500 dark:text-slate-400">
             <span className="text-[10px] uppercase font-bold tracking-wider">Cost of Goods Sold (COGS)</span>
-            <PackageCheck className="w-4 h-4 text-orange-600" />
+            <div className="w-7 h-7 rounded-lg bg-orange-50 dark:bg-orange-950/60 text-orange-600 dark:text-orange-400 flex items-center justify-center">
+              <PackageCheck className="w-4 h-4" />
+            </div>
           </div>
           <p className="text-xl font-extrabold text-orange-600 dark:text-orange-400 font-mono">
             ₱{overallMetrics.totalCogs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
-          <p className="text-[10px] text-gray-500 font-medium">
+          <p className="text-[10px] text-gray-500 dark:text-slate-400 font-medium">
             Cost value of {overallMetrics.totalUnitsSold} items sold
           </p>
         </div>
 
-        <div className="bg-white dark:bg-slate-800 p-4.5 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-xs space-y-1">
+        <div className="bg-white dark:bg-slate-800 p-4.5 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-xs space-y-1 card-hover">
           <div className="flex items-center justify-between text-gray-500 dark:text-slate-400">
             <span className="text-[10px] uppercase font-bold tracking-wider">Gross Profit</span>
-            <TrendingUp className="w-4 h-4 text-blue-600" />
+            <div className="w-7 h-7 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+              <TrendingUp className="w-4 h-4" />
+            </div>
           </div>
           <p className="text-xl font-extrabold text-blue-600 dark:text-blue-400 font-mono">
             ₱{overallMetrics.grossProfit.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -512,10 +503,12 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
           </p>
         </div>
 
-        <div className="bg-white dark:bg-slate-800 p-4.5 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-xs space-y-1">
+        <div className="bg-white dark:bg-slate-800 p-4.5 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-xs space-y-1 card-hover">
           <div className="flex items-center justify-between text-gray-500 dark:text-slate-400">
             <span className="text-[10px] uppercase font-bold tracking-wider">Total Items Fulfillments</span>
-            <ShoppingBag className="w-4 h-4 text-purple-600" />
+            <div className="w-7 h-7 rounded-lg bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center">
+              <ShoppingBag className="w-4 h-4" />
+            </div>
           </div>
           <p className="text-xl font-extrabold text-gray-900 dark:text-white font-mono">
             {overallMetrics.totalUnitsSold.toLocaleString()} <span className="text-xs font-normal text-gray-400">pcs</span>
@@ -640,25 +633,28 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
                     </td>
                   </tr>
                 ) : (
-                  filteredReport1List.map((item, idx) => (
-                    <tr key={idx} className="hover:bg-gray-50/80 dark:hover:bg-slate-700/50 transition-colors">
-                      <td className="p-3 font-bold text-gray-900 dark:text-white">{item.name}</td>
-                      <td className="p-3">
-                        <span className="uppercase text-[9px] font-bold px-2 py-0.5 rounded bg-gray-100 dark:bg-slate-900 text-gray-700 dark:text-slate-300 border dark:border-slate-700">
-                          {item.category}
-                        </span>
-                      </td>
-                      <td className="p-3 text-right font-mono font-bold text-gray-800 dark:text-slate-200">{item.unitsSold} pcs</td>
-                      <td className="p-3 text-right font-mono font-bold text-gray-900 dark:text-white">₱{item.revenue.toFixed(2)}</td>
-                      <td className="p-3 text-right font-mono font-bold text-orange-600 dark:text-orange-400">₱{item.cogs.toFixed(2)}</td>
-                      <td className="p-3 text-right font-mono font-extrabold text-emerald-600 dark:text-emerald-400">₱{item.profit.toFixed(2)}</td>
-                      <td className="p-3 text-right font-mono font-extrabold">
-                        <span className={`px-2 py-0.5 rounded text-[10px] ${item.margin >= 30 ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'}`}>
-                          {item.margin.toFixed(1)}%
-                        </span>
-                      </td>
-                    </tr>
-                  ))
+                  filteredReport1List.map((item, idx) => {
+                    const catStyles = getCategoryStyles(item.category)
+                    return (
+                      <tr key={idx} className="hover:bg-gray-50/80 dark:hover:bg-slate-700/50 transition-colors">
+                        <td className="p-3 font-bold text-gray-900 dark:text-white">{item.name}</td>
+                        <td className="p-3">
+                          <span className={`uppercase text-[9px] font-extrabold px-2.5 py-0.5 rounded-full shadow-2xs ${catStyles.badge}`}>
+                            {item.category}
+                          </span>
+                        </td>
+                        <td className="p-3 text-right font-mono font-bold text-gray-800 dark:text-slate-200">{item.unitsSold} pcs</td>
+                        <td className="p-3 text-right font-mono font-bold text-gray-900 dark:text-white">₱{item.revenue.toFixed(2)}</td>
+                        <td className="p-3 text-right font-mono font-bold text-orange-600 dark:text-orange-400">₱{item.cogs.toFixed(2)}</td>
+                        <td className="p-3 text-right font-mono font-extrabold text-emerald-600 dark:text-emerald-400">₱{item.profit.toFixed(2)}</td>
+                        <td className="p-3 text-right font-mono font-extrabold">
+                          <span className={`px-2 py-0.5 rounded text-[10px] ${item.margin >= 30 ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'}`}>
+                            {item.margin.toFixed(1)}%
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })
                 )}
               </tbody>
             </table>
@@ -687,30 +683,32 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {itemsSoldByCategory.list.map((cat, idx) => {
               const pctOfUnits = overallMetrics.totalUnitsSold > 0 ? (cat.unitsSold / overallMetrics.totalUnitsSold) * 100 : 0
+              const catStyles = getCategoryStyles(cat.category)
               return (
-                <div key={idx} className="p-4 bg-gray-50/60 dark:bg-slate-900/60 rounded-xl border border-gray-200 dark:border-slate-700/80 space-y-2">
+                <div key={idx} className={`p-4 rounded-xl ${catStyles.border} ${catStyles.bg} space-y-2.5 shadow-2xs transition-all`}>
                   <div className="flex justify-between items-center">
-                    <span className="font-extrabold text-xs text-gray-900 dark:text-white uppercase tracking-wide">
-                      🏷️ {cat.category}
+                    <span className="font-extrabold text-xs text-gray-900 dark:text-white uppercase tracking-wide flex items-center gap-1.5">
+                      <span className={`w-2.5 h-2.5 rounded-full ${catStyles.dotColor} shrink-0`}></span>
+                      {cat.category}
                     </span>
-                    <span className="font-mono font-bold text-xs bg-purple-100 dark:bg-purple-950 text-purple-800 dark:text-purple-300 px-2 py-0.5 rounded">
+                    <span className={`font-mono font-bold text-xs px-2.5 py-0.5 rounded-full shadow-2xs ${catStyles.badge}`}>
                       {cat.unitsSold} Items Sold
                     </span>
                   </div>
 
                   {/* Progress Bar */}
-                  <div className="w-full bg-gray-200 dark:bg-slate-800 rounded-full h-2.5 overflow-hidden">
+                  <div className="w-full bg-gray-200/80 dark:bg-slate-800 rounded-full h-2.5 overflow-hidden">
                     <div
-                      style={{ width: `${pctOfUnits}%` }}
-                      className="bg-purple-600 h-full rounded-full transition-all duration-300"
+                      style={{ width: `${pctOfUnits}%`, backgroundColor: catStyles.borderHex }}
+                      className="h-full rounded-full transition-all duration-300"
                     />
                   </div>
 
                   <div className="flex justify-between items-center text-[10px] font-mono text-gray-600 dark:text-slate-400 pt-1">
-                    <span>Revenue: <strong className="text-gray-900 dark:text-white">₱{cat.revenue.toFixed(2)}</strong></span>
-                    <span>COGS: <strong className="text-orange-600">₱{cat.cogs.toFixed(2)}</strong></span>
-                    <span>Profit: <strong className="text-emerald-600">₱{cat.profit.toFixed(2)}</strong></span>
-                    <span>Share: <strong className="text-purple-600">{pctOfUnits.toFixed(1)}%</strong></span>
+                    <span>Revenue: <strong className="text-gray-900 dark:text-white font-mono">₱{cat.revenue.toFixed(2)}</strong></span>
+                    <span>COGS: <strong className="text-orange-600 font-mono">₱{cat.cogs.toFixed(2)}</strong></span>
+                    <span>Profit: <strong className="text-emerald-600 font-mono">₱{cat.profit.toFixed(2)}</strong></span>
+                    <span>Share: <strong className="text-blue-600 dark:text-blue-400 font-mono">{pctOfUnits.toFixed(1)}%</strong></span>
                   </div>
                 </div>
               )
