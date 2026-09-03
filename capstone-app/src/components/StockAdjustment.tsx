@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react"
 import type { InventoryItem } from "../App"
 import { supabase } from "../utils/apiClient"
 import { downloadExcelWithAutoFit, parseSpreadsheetFile } from "../utils/excelUtils"
+import { useBarcodeScanner, matchBarcodeToItem } from "../utils/barcodeScanner"
 import { Plus, Minus, Layers, AlertCircle, Trash2, Calendar, Download, Upload, FileSpreadsheet, Clock, CheckCircle2, X, Edit2, Search, Building2, Sparkles, Scan, Check, Barcode } from "lucide-react"
 import { BarcodePrintModal } from "./BarcodePrintModal"
 
@@ -29,10 +30,6 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
   const manufacturerDropdownRef = useRef<HTMLDivElement>(null)
   const [isUpdatingManufacturer, setIsUpdatingManufacturer] = useState(false)
   const [scanToast, setScanToast] = useState<{ message: string; type: "success" | "warning"; id: number } | null>(null)
-  
-  const barcodeBufferRef = useRef<string>("")
-  const lastKeyTimeRef = useRef<number>(0)
-  const flushTimerRef = useRef<any>(null)
   
   const [isProcessing, setIsProcessing] = useState(false)
   const [isBulkUploading, setIsBulkUploading] = useState(false)
@@ -124,73 +121,18 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
   }
 
   // Background Barcode Scanner in Inventory Tab
-  useEffect(() => {
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement
-      const isSearchOrFormInput = target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")
-
-      const now = Date.now()
-      const elapsed = now - lastKeyTimeRef.current
-      lastKeyTimeRef.current = now
-
-      if (e.key === "Enter" || e.key === "Tab") {
-        if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
-        const buffered = barcodeBufferRef.current.trim()
-        barcodeBufferRef.current = ""
-
-        if (buffered.length >= 2) {
-          const matched = safeInventory.find(i => {
-            if (!i) return false
-            const b = String(i.barcode || "").trim().toLowerCase()
-            const bd = b.replace(/\D/g, "")
-            const cd = buffered.replace(/\D/g, "")
-            return (b && b === buffered.toLowerCase()) || (cd.length >= 4 && bd === cd)
-          })
-          if (matched) {
-            setSelectedItem(matched)
-            setScanToast({ message: `✓ Found "${matched.name}" • Selected in Inventory`, type: "success", id: Date.now() })
-            e.preventDefault()
-            e.stopPropagation()
-          }
-        }
-        return
+  useBarcodeScanner({
+    onScan: (buffered) => {
+      const matched = matchBarcodeToItem(safeInventory, buffered)
+      if (matched) {
+        setSelectedItem(matched)
+        setItemManufacturer("")
+        setScanToast({ message: `✓ Found "${matched.name}" • Selected in Inventory`, type: "success", id: Date.now() })
+        return true
       }
-
-      if (e.key.length > 1) return
-
-      if (elapsed > 110 && !isSearchOrFormInput) {
-        barcodeBufferRef.current = e.key
-      } else {
-        barcodeBufferRef.current += e.key
-      }
-
-      if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
-      flushTimerRef.current = setTimeout(() => {
-        const buffered = barcodeBufferRef.current.trim()
-        if (buffered.length >= 3) {
-          const matched = safeInventory.find(i => {
-            if (!i) return false
-            const b = String(i.barcode || "").trim().toLowerCase()
-            const bd = b.replace(/\D/g, "")
-            const cd = buffered.replace(/\D/g, "")
-            return (b && b === buffered.toLowerCase()) || (cd.length >= 4 && bd === cd)
-          })
-          if (matched) {
-            setSelectedItem(matched)
-            setItemManufacturer("")
-            setScanToast({ message: `✓ Found "${matched.name}" • Selected in Inventory`, type: "success", id: Date.now() })
-            barcodeBufferRef.current = ""
-          }
-        }
-      }, 95)
+      return false
     }
-
-    window.addEventListener("keydown", handleGlobalKeyDown, true)
-    return () => {
-      window.removeEventListener("keydown", handleGlobalKeyDown, true)
-      if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
-    }
-  }, [safeInventory])
+  })
 
   useEffect(() => {
     if (inventory && selectedItem) {
@@ -637,44 +579,114 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
   }
 
   const handleModifyBatchStock = async (batchId: string, currentStock: number, delta: number, batchName: string) => {
+    // Only allow negative delta (deduction). No addition to existing batches!
+    if (delta > 0) return
     const nextStock = currentStock + delta
     if (nextStock < 0 || !selectedItem) return
+
+    const deductedQty = Math.abs(delta)
+    const activeBatch = (selectedItem.batches || []).find(b => String(b.id) === String(batchId))
+    const unitPrice = Number(activeBatch?.price || selectedItem.price) || 0
 
     if (nextStock === 0) {
       await handleDeleteBatch(batchId, batchName)
     } else {
       await supabase.from("inventory_batches").update({ stock: nextStock }).eq("id", Number(batchId))
-      
-      if (onLogAction) {
-        const actionTag = delta > 0 ? "INCREMENT_STOCK" : "DECREMENT_STOCK"
-        const direction = delta > 0 ? "Increased" : "Decreased"
-        await onLogAction(actionTag, "INVENTORY_MANAGEMENT", `${direction} batch "${batchName}" stock by ${Math.abs(delta)} unit(s) for item "${selectedItem.name}". New batch stock: ${nextStock}`)
-      }
-      await fetchInventory()
     }
+
+    // Cache deduction for immediate reflection in Stock Logs
+    try {
+      const cache = JSON.parse(localStorage.getItem("pinv_stock_deductions_cache") || "[]")
+      cache.unshift({
+        id: `deduct_${Date.now()}_${batchId}`,
+        batch_tag: `DEDUCT: ${batchName}`,
+        summary_name: selectedItem.name,
+        total_items: 1,
+        total_stock: -deductedQty,
+        total_val: -(deductedQty * unitPrice),
+        created_at: new Date().toISOString(),
+        isDeduction: true,
+        operator: currentOperator?.username || "admin",
+        items: [{
+          name: selectedItem.name,
+          label: batchName,
+          stock: -deductedQty,
+          price: unitPrice
+        }]
+      })
+      localStorage.setItem("pinv_stock_deductions_cache", JSON.stringify(cache.slice(0, 150)))
+    } catch (e) {}
+
+    if (onLogAction) {
+      await onLogAction(
+        "MANUAL_STOCK_DEDUCT",
+        "BATCH_STOCK_LOG",
+        `Deducted ${deductedQty} unit(s) from batch "${batchName}" for item "${selectedItem.name}". Stock adjusted from ${currentStock} to ${nextStock}. Details: {"item_name":"${selectedItem.name}","batch_label":"${batchName}","quantity_deducted":${deductedQty},"unit_price":${unitPrice},"previous_stock":${currentStock},"new_stock":${nextStock}}`
+      )
+    }
+    await fetchInventory()
   }
 
   const handleDirectInputChange = async (batchId: string, currentStock: number, typedValue: string, batchName: string) => {
     if (!selectedItem) return
     
     if (typedValue === "") {
-      await supabase.from("inventory_batches").update({ stock: 0 }).eq("id", Number(batchId))
-      await fetchInventory()
       return
     }
 
     let nextStock = Math.floor(parseInt(typedValue) || 0)
     if (nextStock < 0) nextStock = 0
 
+    // STRICT: Only minus/deduction allowed! Cannot increase existing batch stock
+    if (nextStock > currentStock) {
+      alert(`⚠️ Existing stock can only be deducted, not increased (Current stock: ${currentStock}). To add new stock, please create a new stock batch or use bulk ingestion.`)
+      return
+    }
+
+    if (nextStock === currentStock) {
+      return
+    }
+
+    const deductedQty = currentStock - nextStock
+    const activeBatch = (selectedItem.batches || []).find(b => String(b.id) === String(batchId))
+    const unitPrice = Number(activeBatch?.price || selectedItem.price) || 0
+
     if (nextStock === 0) {
       await handleDeleteBatch(batchId, batchName)
     } else {
       await supabase.from("inventory_batches").update({ stock: nextStock }).eq("id", Number(batchId))
-      if (onLogAction) {
-        await onLogAction("DIRECT_STOCK_EDIT", "INVENTORY_MANAGEMENT", `Overwrote batch "${batchName}" stock level from ${currentStock} to ${nextStock} for item "${selectedItem.name}"`)
-      }
-      await fetchInventory()
     }
+
+    try {
+      const cache = JSON.parse(localStorage.getItem("pinv_stock_deductions_cache") || "[]")
+      cache.unshift({
+        id: `deduct_${Date.now()}_${batchId}`,
+        batch_tag: `DEDUCT: ${batchName}`,
+        summary_name: selectedItem.name,
+        total_items: 1,
+        total_stock: -deductedQty,
+        total_val: -(deductedQty * unitPrice),
+        created_at: new Date().toISOString(),
+        isDeduction: true,
+        operator: currentOperator?.username || "admin",
+        items: [{
+          name: selectedItem.name,
+          label: batchName,
+          stock: -deductedQty,
+          price: unitPrice
+        }]
+      })
+      localStorage.setItem("pinv_stock_deductions_cache", JSON.stringify(cache.slice(0, 150)))
+    } catch (e) {}
+
+    if (onLogAction) {
+      await onLogAction(
+        "MANUAL_STOCK_DEDUCT",
+        "BATCH_STOCK_LOG",
+        `Deducted ${deductedQty} unit(s) from batch "${batchName}" for item "${selectedItem.name}". Stock adjusted from ${currentStock} to ${nextStock}. Details: {"item_name":"${selectedItem.name}","batch_label":"${batchName}","quantity_deducted":${deductedQty},"unit_price":${unitPrice},"previous_stock":${currentStock},"new_stock":${nextStock}}`
+      )
+    }
+    await fetchInventory()
   }
 
   const handleUpdateBatchCost = async (batchId: string, typedCost: string, batchName: string) => {
@@ -1107,7 +1119,12 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                                 onChange={e => {
                                   const inputVal = e.target.value
                                   const cleanVal = inputVal.replace(/[^0-9]/g, "")
-                                  setLocalQuantities(prev => ({ ...prev, [batch.id]: cleanVal }))
+                                  const num = parseInt(cleanVal, 10)
+                                  if (!Number.isNaN(num) && num > batch.stock) {
+                                    setLocalQuantities(prev => ({ ...prev, [batch.id]: String(batch.stock) }))
+                                  } else {
+                                    setLocalQuantities(prev => ({ ...prev, [batch.id]: cleanVal }))
+                                  }
                                 }}
                                 onBlur={() => {
                                   const finalVal = localQuantities[batch.id]
@@ -1135,16 +1152,8 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                                   }
                                 }}
                                 className="w-14 text-center font-mono font-bold text-xs text-gray-900 dark:text-white bg-white dark:bg-slate-800 border dark:border-slate-700 h-7 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                title={`Current stock: ${batch.stock} (can only deduct)`}
                               />
-                              
-                              <button 
-                                type="button" 
-                                onClick={() => handleModifyBatchStock(batch.id, batch.stock, 1, batch.batchLabel)}
-                                className="w-7 h-7 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 font-bold rounded-lg flex items-center justify-center hover:bg-blue-50 dark:hover:bg-blue-950 hover:text-blue-600 transition-colors shadow-2xs cursor-pointer"
-                                title="Add 1 Unit"
-                              >
-                                <Plus className="w-3 h-3" />
-                              </button>
                             </div>
                           </div>
                         </div>

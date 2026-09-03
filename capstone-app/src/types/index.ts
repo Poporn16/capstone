@@ -21,9 +21,23 @@ export interface InventoryItem {
   batches: InventoryBatch[]
 }
 
+export interface ScanOption {
+  item: InventoryItem
+  batch?: InventoryBatch
+  label: string
+  productName: string
+  manufacturer: string
+  category: string
+  stock: number
+  price: number
+  expiryDate?: string
+  batchLabel?: string
+}
+
 export interface SaleItem {
   item: InventoryItem
   quantity: number
+  batch?: InventoryBatch
 }
 
 export interface Sale {

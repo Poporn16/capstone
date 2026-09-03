@@ -3,6 +3,7 @@ import type { InventoryItem } from "../App"
 import { supabase, triggerGlobalSync, fetchAllSupabaseRows } from "../utils/apiClient"
 import { downloadExcelWithAutoFit, parseSpreadsheetFile } from "../utils/excelUtils"
 import { getCategoryStyles } from "../utils/categoryColors"
+import { useBarcodeScanner, matchBarcodeToItem } from "../utils/barcodeScanner"
 import { Search, FolderPlus, Download, Upload, FileSpreadsheet, X, Trash2, Edit2, Clock, CheckCircle2, Scan, Barcode } from "lucide-react"
 import { BarcodePrintModal } from "./BarcodePrintModal"
 
@@ -25,7 +26,7 @@ export function InventoryManager({
   refreshInventory, 
   onUpdateInventory, 
   onDeleteProduct,
-  onLogAction 
+  onLogAction
 }: InventoryManagerProps) {
   const [query, setQuery] = useState("")
   const [catFilter, setCatFilter] = useState("all")
@@ -37,9 +38,6 @@ export function InventoryManager({
   const [newCatInput, setNewCatInput] = useState("")
   const [isBulkUploading, setIsBulkUploading] = useState(false)
   const [scanToast, setScanToast] = useState<{ message: string; type: "success" | "warning"; id: number } | null>(null)
-  const barcodeBufferRef = useRef<string>("")
-  const lastKeyTimeRef = useRef<number>(0)
-  const flushTimerRef = useRef<any>(null)
   const [importProgress, setImportProgress] = useState<{
     active: boolean
     totalRows: number
@@ -600,18 +598,13 @@ export function InventoryManager({
   }
 
   // Automatic Background Barcode Scanner for Item Specs (Wedge Mode / Clabel C986)
+  // Automatic Background Barcode Scanner for Item Specs (Wedge Mode / Clabel C986)
   const handleSpecsBarcodeScan = (scannedCode: string) => {
     const clean = scannedCode.trim()
     if (!clean) return
 
     // Search if this barcode already exists in inventory
-    const matched = safeInventory.find(i => {
-      if (!i) return false
-      const b = String(i.barcode || "").trim().toLowerCase()
-      const bd = b.replace(/\D/g, "")
-      const cd = clean.replace(/\D/g, "")
-      return (b && b === clean.toLowerCase()) || (cd.length >= 4 && bd === cd)
-    })
+    const matched = matchBarcodeToItem(safeInventory, clean)
 
     if (editingItem) {
       // User is in "Modify Specifications Template" modal
@@ -639,61 +632,15 @@ export function InventoryManager({
   }
 
   // Global KeyDown listener for Hardware Scanner in Item Specs
-  useEffect(() => {
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement
-      const isSearchInput = target && target.getAttribute("placeholder")?.includes("Search product")
-
-      const now = Date.now()
-      const elapsed = now - lastKeyTimeRef.current
-      lastKeyTimeRef.current = now
-
-      // Hardware scanners terminate with Enter, Tab, or Nothing
-      if (e.key === "Enter" || e.key === "Tab") {
-        if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
-        const buffered = barcodeBufferRef.current.trim()
-        barcodeBufferRef.current = ""
-
-        if (buffered.length >= 2) {
-          handleSpecsBarcodeScan(buffered)
-          e.preventDefault()
-          e.stopPropagation()
-        }
-        return
-      }
-
-      // Ignore modifier keys
-      if (e.key.length > 1) {
-        return
-      }
-
-      // Fast keystrokes indicate scanner hardware (< 80ms)
-      if (elapsed > 110 && !isSearchInput) {
-        barcodeBufferRef.current = e.key
-      } else {
-        barcodeBufferRef.current += e.key
-      }
-
-      // Auto-flush debounce timer for suffix-less scanners (Clabel C986)
-      if (flushTimerRef.current) {
-        clearTimeout(flushTimerRef.current)
-      }
-
-      flushTimerRef.current = setTimeout(() => {
-        const buffered = barcodeBufferRef.current.trim()
-        if (buffered.length >= 3) {
-          handleSpecsBarcodeScan(buffered)
-          barcodeBufferRef.current = ""
-        }
-      }, 95)
+  useBarcodeScanner({
+    onScan: (buffered) => {
+      handleSpecsBarcodeScan(buffered)
+      return true
+    },
+    isSearchOrScanInput: (target) => {
+      return Boolean(target && target.getAttribute("placeholder")?.includes("Search product"))
     }
-
-    window.addEventListener("keydown", handleGlobalKeyDown, true)
-    return () => {
-      window.removeEventListener("keydown", handleGlobalKeyDown, true)
-      if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
-    }
-  }, [editingItem, showAdd, inventory, isAdmin])
+  })
 
   const calculateImportEta = (processed: number, total: number, startTime: number) => {
     if (processed <= 0 || !startTime) return "Calculating..."

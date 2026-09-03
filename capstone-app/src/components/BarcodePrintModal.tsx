@@ -12,7 +12,7 @@ interface BarcodePrintModalProps {
 
 interface PrintableLabelItem {
   id: string
-  itemId: number
+  itemId: string
   name: string
   barcode: string
   category: string

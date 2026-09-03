@@ -12,11 +12,11 @@ html, body {
 
 :root {
   --font-size: 13.5px;
-  --background: #f8fafc;
+  --background: #ECE6DD;
   --foreground: oklch(0.145 0 0);
-  --card: #ffffff;
+  --card: #FAF8F5;
   --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
+  --popover: #FAF8F5;
   --popover-foreground: oklch(0.145 0 0);
   --primary: #2563eb;
   --primary-foreground: oklch(1 0 0);
@@ -155,5 +155,30 @@ input:focus, select:focus, textarea:focus {
 
 .animate-scan-line {
   animation: scan-line 2.5s ease-in-out infinite;
+}
+
+/* =========================================================
+   LIGHT THEME CARDS & PANELS: WARM OFF-WHITE / CREAM (#FAF8F5)
+   Replaces stark pure white with a soft, eye-friendly cream
+   that harmonizes with the #ECE6DD background.
+   ========================================================= */
+html:not(.dark) .bg-white {
+  background-color: #FAF8F5 !important;
+}
+
+html:not(.dark) .bg-white\/95 {
+  background-color: rgba(250, 248, 245, 0.95) !important;
+}
+
+html:not(.dark) .bg-white\/90 {
+  background-color: rgba(250, 248, 245, 0.9) !important;
+}
+
+html:not(.dark) .bg-white\/80 {
+  background-color: rgba(250, 248, 245, 0.8) !important;
+}
+
+html:not(.dark) .bg-white\/60 {
+  background-color: rgba(250, 248, 245, 0.6) !important;
 }
 

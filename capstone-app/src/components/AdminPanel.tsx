@@ -878,9 +878,21 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     }
   }
 
+  const [salesVoidStatusMap, setSalesVoidStatusMap] = useState<Map<number, boolean>>(new Map())
+
   const fetchBatchSalesHistory = async () => {
-    const data = await fetchAllSupabaseRows("sale_item_batches", "*", { column: "id", ascending: false })
-    if (data) setBatchSales(data)
+    const [batchData, salesData] = await Promise.all([
+      fetchAllSupabaseRows("sale_item_batches", "*", { column: "id", ascending: false }),
+      fetchAllSupabaseRows("sales", "id, is_refunded")
+    ])
+    if (batchData) setBatchSales(batchData)
+    if (salesData) {
+      const vMap = new Map<number, boolean>()
+      salesData.forEach((s: any) => {
+        vMap.set(Number(s.id), Boolean(s.is_refunded))
+      })
+      setSalesVoidStatusMap(vMap)
+    }
   }
 
   const fetchProfiles = async () => {
@@ -1031,6 +1043,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
       item_name: string
       total_qty: number
       total_price: number
+      isRefunded?: boolean
       batches: { label: string; qty: number; price: number; item: string }[]
       created_at: string
     }>()
@@ -1038,6 +1051,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     batchSales.forEach(row => {
       const existing = map.get(row.sale_id)
       const lineCost = row.quantity_deducted * Number(row.unit_price)
+      const isRefunded = salesVoidStatusMap.get(Number(row.sale_id)) || false
 
       if (existing) {
         existing.total_qty += row.quantity_deducted
@@ -1058,6 +1072,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
           item_name: row.item_name,
           total_qty: row.quantity_deducted,
           total_price: lineCost,
+          isRefunded,
           batches: [{
             label: row.batch_label,
             qty: row.quantity_deducted,
@@ -1124,7 +1139,20 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
 
   const [selectedStockVoucher, setSelectedStockVoucher] = useState<any | null>(null)
 
-  const groupStockAdditions = () => {
+  const groupStockLogs = () => {
+    const list: {
+      id: string
+      batch_tag: string
+      summary_name: string
+      total_items: number
+      total_stock: number
+      total_val: number
+      created_at: string
+      isDeduction?: boolean
+      operator?: string
+      items: { name: string; label: string; stock: number; price: number }[]
+    }[] = []
+
     const map = new Map<string, {
       id: string
       batch_tag: string
@@ -1173,10 +1201,66 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
       }
     })
 
-    return Array.from(map.values())
+    list.push(...Array.from(map.values()))
+
+    // Parse manual stock deductions from localStorage cache and system_audit_logs
+    const deductionLogs: any[] = []
+
+    try {
+      const cached = JSON.parse(localStorage.getItem("pinv_stock_deductions_cache") || "[]")
+      if (Array.isArray(cached)) {
+        deductionLogs.push(...cached)
+      }
+    } catch (e) {}
+
+    logs.forEach(l => {
+      if (l.action_type === "MANUAL_STOCK_DEDUCT" || l.action_type === "DECREMENT_STOCK") {
+        let parsedDetails: any = null
+        try {
+          const jsonMatch = l.details_summary.match(/\{.*\}/)
+          if (jsonMatch) {
+            parsedDetails = JSON.parse(jsonMatch[0])
+          }
+        } catch (e) {}
+
+        const qtyMatch = l.details_summary.match(/(?:Deducted|Decreased.*?by)\s+(\d+)\s+unit/i)
+        const batchMatch = l.details_summary.match(/batch\s+"([^"]+)"/i)
+        const itemMatch = l.details_summary.match(/(?:for\s+item|of)\s+"([^"]+)"/i)
+
+        const qty = parsedDetails?.quantity_deducted || (qtyMatch ? parseInt(qtyMatch[1], 10) : 1)
+        const batchLabel = parsedDetails?.batch_label || (batchMatch ? batchMatch[1] : "BATCH")
+        const itemName = parsedDetails?.item_name || (itemMatch ? itemMatch[1] : "Stock Item")
+        const unitPrice = Number(parsedDetails?.unit_price) || 0
+
+        const alreadyExists = deductionLogs.some(d => d.logId === l.id || (Math.abs(new Date(d.created_at).getTime() - new Date(l.created_at).getTime()) < 3000 && d.batch_tag === `DEDUCT: ${batchLabel}`))
+        if (!alreadyExists) {
+          deductionLogs.push({
+            logId: l.id,
+            id: `deduct_${l.id}`,
+            batch_tag: `DEDUCT: ${batchLabel}`,
+            summary_name: itemName,
+            total_items: 1,
+            total_stock: -Math.abs(qty),
+            total_val: -Math.abs(qty * unitPrice),
+            created_at: l.created_at,
+            isDeduction: true,
+            operator: l.operator_username,
+            items: [{
+              name: itemName,
+              label: batchLabel,
+              stock: -Math.abs(qty),
+              price: unitPrice
+            }]
+          })
+        }
+      }
+    })
+
+    list.push(...deductionLogs)
+    return list.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
   }
 
-  const groupedStockAdditions = groupStockAdditions()
+  const groupedStockAdditions = groupStockLogs()
 
   const [batchDateFrame, setBatchDateFrame] = useState<"all" | "today" | "week" | "month" | "custom">("all");
   const [batchStartDate, setBatchStartDate] = useState<string>("");
@@ -1782,12 +1866,12 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
             </div>
           </div>
 
-          {/* Realtime Batch Sales & Stock Additions Logs Table */}
+          {/* Realtime Batch Sales & Stock Logs Table */}
           <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 shadow-xs p-5 space-y-4">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b dark:border-slate-700 pb-3">
               <h3 className="font-bold text-gray-900 dark:text-white text-sm flex items-center gap-2">
                 <ShoppingBag className="w-4 h-4 text-green-600 dark:text-green-400" />
-                Batch History & Stock Additions Logs
+                Batch History & Stock Logs
                 <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse ml-1" title="Realtime Active" />
               </h3>
               
@@ -1805,14 +1889,14 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                     onClick={() => setBatchTabMode("creation")}
                     className={`px-3 py-1 rounded-md font-bold transition-all ${batchTabMode === "creation" ? 'bg-white dark:bg-slate-700 text-blue-700 dark:text-blue-400 shadow-2xs' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}
                   >
-                    Stock Additions
+                    Stock Logs
                   </button>
                 </div>
 
                 <button
                   type="button"
                   onClick={fetchAllAdminData}
-                  className="text-gray-400 hover:text-gray-600 p-1"
+                  className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1"
                 >
                   <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
                 </button>
@@ -1844,7 +1928,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                   className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-2xs transition-colors"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  Export {batchTabMode === "sales" ? "Batch Sales" : "Stock Additions"} Excel/CSV
+                  Export {batchTabMode === "sales" ? "Batch Sales" : "Stock Logs"} Excel/CSV
                 </button>
               </div>
 
@@ -1859,7 +1943,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
 
               <input
                 type="text"
-                placeholder={batchTabMode === "sales" ? "Search batch sales by Sale ID, Item Name, Batch Label..." : "Search stock creation batches by Item Name, Batch Label, Expiry..."}
+                placeholder={batchTabMode === "sales" ? "Search batch sales by Sale ID, Item Name, Batch Label..." : "Search stock batches or deductions by Item Name, Batch Label..."}
                 value={batchSearchQuery}
                 onChange={e => setBatchSearchQuery(e.target.value)}
                 className="w-full p-2 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-white rounded-lg text-xs"
@@ -1887,10 +1971,23 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                       </tr>
                     ) : (
                       filteredGroupedBatchSales.map(sale => (
-                        <tr key={sale.sale_id} className="hover:bg-gray-50/50 dark:hover:bg-slate-700/50">
-                          <td className="py-2.5 px-3 font-bold text-blue-600 dark:text-blue-400">#{sale.sale_id}</td>
-                          <td className="py-2.5 px-3 text-center font-bold text-gray-800 dark:text-slate-200">{sale.total_qty} pc</td>
-                          <td className="py-2.5 px-3 text-right font-bold text-green-700 dark:text-green-400">₱{sale.total_price.toFixed(2)}</td>
+                        <tr key={sale.sale_id} className={`hover:bg-gray-50/50 dark:hover:bg-slate-700/50 ${sale.isRefunded ? 'opacity-65 bg-red-50/20 dark:bg-red-950/20' : ''}`}>
+                          <td className="py-2.5 px-3 font-bold">
+                            <span className={sale.isRefunded ? 'text-gray-400 dark:text-slate-500 line-through' : 'text-blue-600 dark:text-blue-400'}>
+                              #{sale.sale_id}
+                            </span>
+                            {sale.isRefunded && (
+                              <span className="ml-1.5 px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-950/80 text-red-600 dark:text-red-400 text-[8px] font-bold">
+                                VOIDED
+                              </span>
+                            )}
+                          </td>
+                          <td className={`py-2.5 px-3 text-center font-bold ${sale.isRefunded ? 'text-gray-400 dark:text-slate-500 line-through' : 'text-gray-800 dark:text-slate-200'}`}>
+                            {sale.total_qty} pc
+                          </td>
+                          <td className={`py-2.5 px-3 text-right font-bold ${sale.isRefunded ? 'text-gray-400 dark:text-slate-500 line-through' : 'text-green-700 dark:text-green-400'}`}>
+                            ₱{sale.total_price.toFixed(2)}
+                          </td>
                           <td className="py-2.5 px-3 text-right text-gray-400 dark:text-gray-400 text-[10px] font-sans whitespace-nowrap">
                             {formatDateString(sale.created_at)}
                           </td>
@@ -1898,7 +1995,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                             <button
                               type="button"
                               onClick={() => setSelectedBatchReceiptSaleId(sale.sale_id)}
-                              className="text-blue-500 hover:text-blue-700 p-1"
+                              className="text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 p-1 cursor-pointer"
                               title="View Batch Receipt"
                             >
                               <Eye className="w-3.5 h-3.5 inline" />
@@ -1911,7 +2008,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                 </table>
               ) : (
                 <table className="w-full text-left border-collapse">
-                  <thead className="bg-gray-50/90 text-[10px] text-gray-500 font-bold uppercase sticky top-0 backdrop-blur-xs z-10 border-b">
+                  <thead className="bg-gray-50/90 dark:bg-slate-900 text-[10px] text-gray-500 dark:text-slate-400 font-bold uppercase sticky top-0 backdrop-blur-xs z-10 border-b dark:border-slate-700">
                     <tr>
                       <th className="py-2.5 px-3">Batch Event Tag</th>
                       <th className="py-2.5 px-3">Products Included</th>
@@ -1921,42 +2018,68 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                       <th className="py-2.5 px-3 text-center">Voucher</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y font-mono text-[11px] bg-white">
+                  <tbody className="divide-y dark:divide-slate-700 font-mono text-[11px] bg-white dark:bg-slate-800">
                     {filteredStockAdditions.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="py-12 text-center text-gray-400 font-sans">
-                          No stock creation batches logged.
+                        <td colSpan={6} className="py-12 text-center text-gray-400 dark:text-slate-500 font-sans">
+                          No stock batches or deduction logs recorded.
                         </td>
                       </tr>
                     ) : (
-                      filteredStockAdditions.map(group => (
-                        <tr key={group.id} className="hover:bg-gray-50/50">
-                          <td className="py-2.5 px-3 font-bold text-indigo-600">{group.batch_tag}</td>
-                          <td className="py-2.5 px-3 font-sans">
-                            <p className="font-bold text-gray-900 leading-tight">{group.summary_name}</p>
-                            {group.total_items > 1 && (
-                              <span className="text-[9px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded font-mono border border-indigo-100 mt-0.5 inline-block font-bold">
-                                {group.total_items} items in bulk batch
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-2.5 px-3 text-center font-bold text-gray-800">{group.total_stock} pc</td>
-                          <td className="py-2.5 px-3 text-right font-bold text-green-700">₱{group.total_val.toFixed(2)}</td>
-                          <td className="py-2.5 px-3 text-right text-gray-400 text-[10px] font-sans whitespace-nowrap">
-                            {formatDateString(group.created_at)}
-                          </td>
-                          <td className="py-2.5 px-3 text-center">
-                            <button
-                              type="button"
-                              onClick={() => setSelectedStockVoucher(group)}
-                              className="text-blue-500 hover:text-blue-700 p-1"
-                              title="View Stock Addition Breakdown Voucher"
-                            >
-                              <Eye className="w-3.5 h-3.5 inline" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))
+                      filteredStockAdditions.map(group => {
+                        const isDeduct = Boolean(group.isDeduction || group.total_stock < 0)
+                        return (
+                          <tr key={group.id} className="hover:bg-gray-50/50 dark:hover:bg-slate-700/50">
+                            <td className="py-2.5 px-3 font-bold">
+                              {isDeduct ? (
+                                <span className="text-red-600 dark:text-red-400 flex items-center gap-1.5 flex-wrap">
+                                  <span className="px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-950/80 text-red-700 dark:text-red-300 text-[9px] font-bold">DEDUCT</span>
+                                  {group.batch_tag}
+                                </span>
+                              ) : (
+                                <span className="text-indigo-600 dark:text-indigo-400">
+                                  {group.batch_tag}
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 font-sans">
+                              <p className="font-bold text-gray-900 dark:text-white leading-tight">{group.summary_name}</p>
+                              {group.total_items > 1 && (
+                                <span className="text-[9px] bg-indigo-50 text-indigo-700 dark:bg-indigo-950/80 dark:text-indigo-300 px-1.5 py-0.5 rounded font-mono border border-indigo-100 dark:border-indigo-800 mt-0.5 inline-block font-bold">
+                                  {group.total_items} items in bulk batch
+                                </span>
+                              )}
+                            </td>
+                            <td className={`py-2.5 px-3 text-center font-bold ${
+                              isDeduct 
+                                ? 'text-red-600 dark:text-red-400' 
+                                : 'text-gray-800 dark:text-slate-200'
+                            }`}>
+                              {isDeduct ? `${group.total_stock} pc` : `${group.total_stock} pc`}
+                            </td>
+                            <td className={`py-2.5 px-3 text-right font-bold ${
+                              isDeduct 
+                                ? 'text-red-600 dark:text-red-400' 
+                                : 'text-green-700 dark:text-green-400'
+                            }`}>
+                              {isDeduct ? `-₱${Math.abs(group.total_val).toFixed(2)}` : `₱${group.total_val.toFixed(2)}`}
+                            </td>
+                            <td className="py-2.5 px-3 text-right text-gray-400 dark:text-slate-400 text-[10px] font-sans whitespace-nowrap">
+                              {formatDateString(group.created_at)}
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedStockVoucher(group)}
+                                className="text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 p-1 cursor-pointer"
+                                title="View Stock Event Voucher"
+                              >
+                                <Eye className="w-3.5 h-3.5 inline" />
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })
                     )}
                   </tbody>
                 </table>
@@ -2032,47 +2155,47 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
 
       {/* Batch Breakdown Receipt Modal */}
       {selectedBatchReceiptSaleId && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-md w-full p-6 font-mono text-[11px] text-gray-800 space-y-4 shadow-xl border">
-            <div className="flex justify-between items-start border-b pb-3">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white dark:bg-slate-800 rounded-xl max-w-md w-full p-6 font-mono text-[11px] text-gray-800 dark:text-slate-100 space-y-4 shadow-xl border dark:border-slate-700">
+            <div className="flex justify-between items-start border-b dark:border-slate-700 pb-3">
               <div>
-                <h3 className="font-bold text-sm text-gray-900">Malabon Pharmacy and Clinic</h3>
-                <p className="text-gray-500 text-[10px]">Batch Breakdown Receipt #{selectedBatchReceiptSaleId}</p>
+                <h3 className="font-bold text-sm text-gray-900 dark:text-white">Malabon Pharmacy and Clinic</h3>
+                <p className="text-gray-500 dark:text-slate-400 text-[10px]">Batch Breakdown Receipt #{selectedBatchReceiptSaleId}</p>
               </div>
               <button
                 type="button"
                 onClick={() => setSelectedBatchReceiptSaleId(null)}
-                className="text-gray-400 hover:text-gray-600 p-1"
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-white p-1 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="border-b border-dashed pb-3 space-y-2">
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider font-sans">Batch Deductions Itemized:</p>
+            <div className="border-b dark:border-slate-700 border-dashed pb-3 space-y-2">
+              <p className="text-[10px] font-bold text-gray-400 dark:text-slate-400 uppercase tracking-wider font-sans">Batch Deductions Itemized:</p>
               {selectedReceiptBatches.map(b => (
-                <div key={b.id} className="p-2.5 bg-gray-50 rounded-lg border border-gray-100 flex justify-between items-center font-mono">
+                <div key={b.id} className="p-2.5 bg-gray-50 dark:bg-slate-900/60 rounded-lg border border-gray-100 dark:border-slate-700 flex justify-between items-center font-mono">
                   <div>
-                    <p className="font-bold text-gray-900">{b.batch_label}</p>
-                    <p className="text-[10px] text-gray-500 font-sans mt-0.5">{b.item_name}</p>
+                    <p className="font-bold text-gray-900 dark:text-white">{b.batch_label}</p>
+                    <p className="text-[10px] text-gray-500 dark:text-slate-400 font-sans mt-0.5">{b.item_name}</p>
                   </div>
                   <div className="text-right">
-                    <p className="font-bold text-gray-900">{b.quantity_deducted} pc</p>
-                    <p className="text-green-700 font-bold text-[10px]">₱{Number(b.unit_price).toFixed(2)}</p>
+                    <p className="font-bold text-gray-900 dark:text-white">{b.quantity_deducted} pc</p>
+                    <p className="text-green-700 dark:text-green-400 font-bold text-[10px]">₱{Number(b.unit_price).toFixed(2)}</p>
                   </div>
                 </div>
               ))}
             </div>
 
-            <div className="flex justify-between border-t pt-2 font-bold text-sm text-gray-900">
+            <div className="flex justify-between border-t dark:border-slate-700 pt-2 font-bold text-sm text-gray-900 dark:text-white">
               <span>Batch Total Value:</span>
-              <span className="text-blue-600 font-mono">₱{receiptTotal.toFixed(2)}</span>
+              <span className="text-blue-600 dark:text-blue-400 font-mono">₱{receiptTotal.toFixed(2)}</span>
             </div>
 
             <button
               type="button"
               onClick={() => setSelectedBatchReceiptSaleId(null)}
-              className="w-full py-2 bg-gray-900 text-white hover:bg-gray-800 font-bold rounded-lg tracking-wide shadow-xs"
+              className="w-full py-2 bg-gray-900 dark:bg-slate-700 text-white hover:bg-gray-800 dark:hover:bg-slate-600 font-bold rounded-lg tracking-wide shadow-xs cursor-pointer"
             >
               Close Receipt Voucher
             </button>
@@ -2080,53 +2203,68 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
         </div>
       )}
 
-      {/* Stock Addition Breakdown Voucher Modal */}
+      {/* Stock Addition or Deduction Breakdown Voucher Modal */}
       {selectedStockVoucher && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-md w-full p-6 font-mono text-[11px] text-gray-800 space-y-4 shadow-xl border">
-            <div className="flex justify-between items-start border-b pb-3">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white dark:bg-slate-800 rounded-xl max-w-md w-full p-6 font-mono text-[11px] text-gray-800 dark:text-slate-100 space-y-4 shadow-xl border dark:border-slate-700">
+            <div className="flex justify-between items-start border-b dark:border-slate-700 pb-3">
               <div>
-                <h3 className="font-bold text-sm text-gray-900">Malabon Pharmacy and Clinic</h3>
-                <p className="text-gray-500 text-[10px]">Stock Addition Voucher ({selectedStockVoucher.batch_tag})</p>
+                <h3 className="font-bold text-sm text-gray-900 dark:text-white">Malabon Pharmacy and Clinic</h3>
+                <p className="text-gray-500 dark:text-slate-400 text-[10px]">
+                  {selectedStockVoucher.isDeduction ? "Stock Deduction Voucher" : "Stock Addition Voucher"} ({selectedStockVoucher.batch_tag})
+                </p>
               </div>
               <button
                 type="button"
                 onClick={() => setSelectedStockVoucher(null)}
-                className="text-gray-400 hover:text-gray-600 p-1"
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-white p-1 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="bg-gray-50 rounded-xl p-3 border border-gray-100 space-y-2 max-h-72 overflow-y-auto">
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider font-sans border-b pb-1">
-                BATCH CREATION ITEMIZATIONS ({selectedStockVoucher.items.length}):
+            <div className="bg-gray-50 dark:bg-slate-900/60 rounded-xl p-3 border border-gray-100 dark:border-slate-700 space-y-2 max-h-72 overflow-y-auto">
+              <p className="text-[10px] font-bold text-gray-400 dark:text-slate-400 uppercase tracking-wider font-sans border-b dark:border-slate-700 pb-1">
+                {selectedStockVoucher.isDeduction ? "STOCK DEDUCTION DETAILS:" : `BATCH CREATION ITEMIZATIONS (${selectedStockVoucher.items.length}):`}
               </p>
-              <div className="divide-y divide-gray-200/60">
+              <div className="divide-y divide-gray-200/60 dark:divide-slate-700">
                 {selectedStockVoucher.items.map((item: any, idx: number) => (
                   <div key={idx} className="flex justify-between items-center py-2 font-mono">
                     <div>
-                      <span className="font-bold text-indigo-600 text-[10px] block">{item.label}</span>
-                      <span className="text-[11px] text-gray-900 font-bold font-sans">{item.name}</span>
+                      <span className={`font-bold text-[10px] block ${selectedStockVoucher.isDeduction ? 'text-red-600 dark:text-red-400' : 'text-indigo-600 dark:text-indigo-400'}`}>
+                        {item.label}
+                      </span>
+                      <span className="text-[11px] text-gray-900 dark:text-white font-bold font-sans">{item.name}</span>
+                      {selectedStockVoucher.operator && (
+                        <span className="text-[10px] text-gray-500 dark:text-slate-400 block font-sans">
+                          Operator: @{selectedStockVoucher.operator}
+                        </span>
+                      )}
                     </div>
                     <div className="text-right">
-                      <span className="font-bold text-gray-900 block">{item.stock} pc</span>
-                      <span className="text-green-700 font-bold text-[10px]">₱{Number(item.price).toFixed(2)}</span>
+                      <span className={`font-bold block ${selectedStockVoucher.isDeduction ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'}`}>
+                        {item.stock} pc
+                      </span>
+                      <span className={`font-bold text-[10px] ${selectedStockVoucher.isDeduction ? 'text-red-500 dark:text-red-400' : 'text-green-700 dark:text-green-400'}`}>
+                        {selectedStockVoucher.isDeduction ? `-₱${Math.abs(item.stock * item.price).toFixed(2)}` : `₱${Number(item.price).toFixed(2)}`}
+                      </span>
                     </div>
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="flex justify-between border-t pt-2 font-bold text-sm text-gray-900">
-              <span>Total Stock Added Value:</span>
-              <span className="text-blue-600 font-mono">₱{selectedStockVoucher.total_val.toFixed(2)}</span>
+            <div className="flex justify-between border-t dark:border-slate-700 pt-2 font-bold text-sm text-gray-900 dark:text-white">
+              <span>{selectedStockVoucher.isDeduction ? "Total Deducted Value:" : "Total Stock Added Value:"}</span>
+              <span className={`font-mono ${selectedStockVoucher.isDeduction ? 'text-red-600 dark:text-red-400' : 'text-blue-600 dark:text-blue-400'}`}>
+                {selectedStockVoucher.isDeduction ? `-₱${Math.abs(selectedStockVoucher.total_val).toFixed(2)}` : `₱${selectedStockVoucher.total_val.toFixed(2)}`}
+              </span>
             </div>
 
             <button
               type="button"
               onClick={() => setSelectedStockVoucher(null)}
-              className="w-full py-3 bg-[#0F172A] hover:bg-slate-800 text-white font-bold rounded-xl tracking-wide shadow-md text-xs transition-colors"
+              className="w-full py-3 bg-[#0F172A] dark:bg-slate-700 hover:bg-slate-800 dark:hover:bg-slate-600 text-white font-bold rounded-xl tracking-wide shadow-md text-xs transition-colors cursor-pointer"
             >
               Close Receipt Voucher
             </button>

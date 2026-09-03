@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef } from "react"
-import type { InventoryItem, Sale, NamedPerson, InventoryBatch } from "../types"
+import { useState, useEffect } from "react"
+import type { InventoryItem, InventoryBatch, Sale, NamedPerson } from "../types"
 import { supabase } from "../utils/apiClient"
 import { getCategoryStyles } from "../utils/categoryColors"
+import { findMatchingInventoryOptions, getItemManufacturerOptions, useBarcodeScanner, type ScanOption } from "../utils/barcodeScanner"
 import { ArrowLeft, Printer, CreditCard, X, Users, Search, Check, Sparkles, Scan, Barcode, CheckCircle2, AlertCircle, AlertTriangle, Building2 } from "lucide-react"
 
-export type { NamedPerson }
+export type { NamedPerson, ScanOption }
 
 interface POSCheckoutProps {
   inventory: InventoryItem[]
@@ -16,19 +17,7 @@ interface POSCheckoutProps {
 interface CartItem {
   item: InventoryItem
   quantity: number
-}
-
-export interface ScanOption {
-  item: InventoryItem
   batch?: InventoryBatch
-  label: string
-  productName: string
-  manufacturer: string
-  category: string
-  stock: number
-  price: number
-  expiryDate?: string
-  batchLabel?: string
 }
 
 type DiscountType = "none" | "senior" | "pwd" | "naac" | "soloparent" | "custom"
@@ -56,9 +45,6 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
   const [namedPersonsRegistry, setNamedPersonsRegistry] = useState<NamedPerson[]>([])
 
   // Barcode scanner state
-  const barcodeBufferRef = useRef<string>("")
-  const lastKeyTimeRef = useRef<number>(0)
-  const flushTimerRef = useRef<any>(null)
   const [quickScanInput, setQuickScanInput] = useState<string>("")
   const [scanToast, setScanToast] = useState<{ message: string; type: "success" | "warning" | "error"; id: number } | null>(null)
   const [scanMatchOptions, setScanMatchOptions] = useState<{ code: string; options: ScanOption[] } | null>(null)
@@ -176,84 +162,35 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
     return totalBatchPrice
   }
 
-  const addToCart = (item: InventoryItem) => {
-    setCart(prev => {
-      const existing = prev.find(ci => ci.item.id === item.id)
-      if (existing) {
-        return existing.quantity < item.stock
-          ? prev.map(ci => ci.item.id === item.id ? { ...ci, quantity: ci.quantity + 1 } : ci)
-          : prev
-      }
-      return item.stock > 0 ? [...prev, { item, quantity: 1 }] : prev
-    })
+  const getCartItemKey = (ci: CartItem) => {
+    if (ci.batch) {
+      return `${ci.item.id}_${ci.batch.id || ci.batch.batchLabel}`
+    }
+    return String(ci.item.id)
   }
 
-  // Helper to match all inventory items and batches by barcode, digits, SKU, or batch label
-  const findMatchingInventoryOptions = (rawCode: string): { options: ScanOption[]; hasDifferentManufacturers: boolean } => {
-    const cleanCode = (rawCode || "").trim().toLowerCase()
-    if (!cleanCode) return { options: [], hasDifferentManufacturers: false }
-
-    const digitsOnly = cleanCode.replace(/\D/g, "")
-
-    const matchedItems = inventory.filter(item => {
-      if (!item) return false
-      const b = String(item.barcode || "").trim().toLowerCase()
-      const bd = b.replace(/\D/g, "")
-      const itemId = String(item.id || "").trim().toLowerCase()
-
-      if (b && b === cleanCode) return true
-      if (digitsOnly.length >= 3 && bd && (bd === digitsOnly || (digitsOnly.length >= 6 && (bd.endsWith(digitsOnly) || digitsOnly.endsWith(bd))))) return true
-      if (itemId === cleanCode) return true
-      if (item.batches?.some(batch => String(batch.batchLabel || "").trim().toLowerCase() === cleanCode)) return true
-      return false
-    })
-
-    const rawOptions: ScanOption[] = []
-
-    matchedItems.forEach(item => {
-      const activeBatches = (item.batches || []).filter(b => (Number(b.stock) || 0) > 0)
-
-      if (activeBatches.length > 0) {
-        activeBatches.forEach(b => {
-          rawOptions.push({
-            item,
-            batch: b,
-            label: "",
-            productName: item.name,
-            manufacturer: b.manufacturer || item.manufacturer || "Generic / Phyto",
-            category: item.category,
-            stock: b.stock,
-            price: b.price > 0 ? b.price : (item.price > 0 ? item.price : 0),
-            expiryDate: b.expiryDate,
-            batchLabel: b.batchLabel
-          })
-        })
-      } else {
-        rawOptions.push({
-          item,
-          label: "",
-          productName: item.name,
-          manufacturer: item.manufacturer || "Generic / Phyto",
-          category: item.category,
-          stock: item.stock,
-          price: item.price || 0
-        })
+  const addToCart = (item: InventoryItem, selectedBatch?: InventoryBatch) => {
+    setCart(prev => {
+      const matchFn = (ci: CartItem) => {
+        if (selectedBatch) {
+          return ci.item.id === item.id && (
+            (selectedBatch.id && ci.batch?.id === selectedBatch.id) ||
+            (selectedBatch.batchLabel && ci.batch?.batchLabel === selectedBatch.batchLabel)
+          )
+        }
+        return ci.item.id === item.id && !ci.batch
       }
+
+      const existing = prev.find(matchFn)
+      const maxStock = selectedBatch ? selectedBatch.stock : item.stock
+
+      if (existing) {
+        return existing.quantity < maxStock
+          ? prev.map(ci => matchFn(ci) ? { ...ci, quantity: ci.quantity + 1 } : ci)
+          : prev
+      }
+      return maxStock > 0 ? [...prev, { item, quantity: 1, batch: selectedBatch }] : prev
     })
-
-    // Check unique normalized manufacturer names
-    const distinctManufacturers = new Set(
-      rawOptions.map(opt => (opt.manufacturer || "Generic / Phyto").trim().toLowerCase())
-    )
-
-    const hasDifferentManufacturers = distinctManufacturers.size > 1
-
-    const finalOptions = rawOptions.map((opt, idx) => ({
-      ...opt,
-      label: idx === 0 ? "Option A" : idx === 1 ? "Option B" : idx === 2 ? "Option C" : `Option ${idx + 1}`
-    }))
-
-    return { options: finalOptions, hasDifferentManufacturers }
   }
 
   // Barcode Scanner Core Processor (only prompts if there are 2+ different manufacturers)
@@ -261,7 +198,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
     const cleanCode = (rawCode || "").trim()
     if (!cleanCode) return false
 
-    const { options, hasDifferentManufacturers } = findMatchingInventoryOptions(cleanCode)
+    const { options, hasDifferentManufacturers } = findMatchingInventoryOptions(inventory, cleanCode)
 
     if (options.length === 0) {
       triggerScanToast(`Unrecognized Barcode "${rawCode.trim()}"`, "warning")
@@ -281,7 +218,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
       return false
     }
 
-    addToCart(singleOpt.item)
+    addToCart(singleOpt.item, singleOpt.batch)
     triggerScanToast(`✓ Scanned: ${singleOpt.productName} (${singleOpt.manufacturer}) • ₱${singleOpt.price.toFixed(2)} added`, "success")
     return true
   }
@@ -290,7 +227,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
     const trimmed = val.trim()
     // Auto-detect if scanned barcode was typed into the search bar
     if (trimmed.length >= 4) {
-      const { options, hasDifferentManufacturers } = findMatchingInventoryOptions(trimmed)
+      const { options, hasDifferentManufacturers } = findMatchingInventoryOptions(inventory, trimmed)
 
       if (hasDifferentManufacturers && options.length > 1) {
         setScanMatchOptions({ code: trimmed, options })
@@ -299,7 +236,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
       } else if (options.length > 0) {
         const singleOpt = options[0]
         if (singleOpt.stock > 0) {
-          addToCart(singleOpt.item)
+          addToCart(singleOpt.item, singleOpt.batch)
           triggerScanToast(`✓ Scanned: ${singleOpt.productName} • ₱${singleOpt.price.toFixed(2)} added to cart`, "success")
           setQuery("")
           setDisplayLimit(20)
@@ -316,7 +253,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
     setQuickScanInput(val)
     const trimmed = val.trim()
     if (trimmed.length >= 4) {
-      const { options, hasDifferentManufacturers } = findMatchingInventoryOptions(trimmed)
+      const { options, hasDifferentManufacturers } = findMatchingInventoryOptions(inventory, trimmed)
 
       if (hasDifferentManufacturers && options.length > 1) {
         setScanMatchOptions({ code: trimmed, options })
@@ -325,7 +262,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
       } else if (options.length > 0) {
         const singleOpt = options[0]
         if (singleOpt.stock > 0) {
-          addToCart(singleOpt.item)
+          addToCart(singleOpt.item, singleOpt.batch)
           triggerScanToast(`✓ Scanned: ${singleOpt.productName} • ₱${singleOpt.price.toFixed(2)} added to cart`, "success")
           setQuickScanInput("")
         }
@@ -334,92 +271,45 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
   }
 
   // Automatic Background Hardware Barcode Scanner Listener (Wedge Mode for Clabel & All Scanners)
-  useEffect(() => {
-    const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement
-      const isSearchOrScanInput = target && (target.getAttribute("data-barcode-scanner") === "true" || target.getAttribute("placeholder")?.includes("Search product"))
-
-      const now = Date.now()
-      const elapsed = now - lastKeyTimeRef.current
-      lastKeyTimeRef.current = now
-
-      // Hardware scanners might end with Enter, Tab, or Nothing (suffix-less)
-      if (e.key === "Enter" || e.key === "Tab") {
-        if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
-        const buffered = barcodeBufferRef.current.trim()
-        barcodeBufferRef.current = ""
-
-        if (buffered.length >= 2) {
-          const success = processScannedBarcode(buffered)
-          if (success) {
-            setQuery("")
-            setQuickScanInput("")
-            e.preventDefault()
-            e.stopPropagation()
-          }
-        }
-        return
+  useBarcodeScanner({
+    onScan: (buffered) => {
+      const success = processScannedBarcode(buffered)
+      if (success) {
+        setQuery(prev => (prev.trim() === buffered ? "" : prev))
+        setQuickScanInput("")
       }
-
-      // Ignore modifier keys (Shift, Alt, Control, Meta, CapsLock)
-      if (e.key.length > 1) {
-        return
-      }
-
-      // Scanner hardware sends characters in rapid succession (< 80ms)
-      if (elapsed > 110 && !isSearchOrScanInput) {
-        barcodeBufferRef.current = e.key
-      } else {
-        barcodeBufferRef.current += e.key
-      }
-
-      // AUTO-FLUSH DEBOUNCE TIMER (Crucial for scanners like Clabel C986 that have no Enter suffix)
-      if (flushTimerRef.current) {
-        clearTimeout(flushTimerRef.current)
-      }
-
-      flushTimerRef.current = setTimeout(() => {
-        const buffered = barcodeBufferRef.current.trim()
-        if (buffered.length >= 3) {
-          // Check if this fast buffered string matches an item in inventory
-          const success = processScannedBarcode(buffered)
-          if (success) {
-            barcodeBufferRef.current = ""
-            setQuery(prev => (prev.trim() === buffered ? "" : prev))
-            setQuickScanInput("")
-          }
-        }
-      }, 95)
+      return success
+    },
+    isSearchOrScanInput: (target) => {
+      if (!target) return false
+      return (
+        target.getAttribute("data-barcode-scanner") === "true" ||
+        Boolean(target.getAttribute("placeholder")?.includes("Search product"))
+      )
     }
-
-    window.addEventListener("keydown", handleGlobalKeyDown, true)
-    return () => {
-      window.removeEventListener("keydown", handleGlobalKeyDown, true)
-      if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
-    }
-  }, [inventory])
+  })
 
 
-  const handleManualQtyChange = (id: string, value: string, maxStock: number) => {
+  const handleManualQtyChange = (cartKey: string, value: string, maxStock: number) => {
     if (value === "" || value === "0") {
-      setCart(prev => prev.map(ci => ci.item.id === id ? { ...ci, quantity: 0 } : ci))
+      setCart(prev => prev.map(ci => getCartItemKey(ci) === cartKey ? { ...ci, quantity: 0 } : ci))
       return
     }
     let parsed = parseInt(value, 10)
     if (Number.isNaN(parsed)) return
     if (parsed < 0) parsed = 0
     if (parsed > maxStock) parsed = maxStock
-    setCart(prev => prev.map(ci => ci.item.id === id ? { ...ci, quantity: parsed } : ci))
+    setCart(prev => prev.map(ci => getCartItemKey(ci) === cartKey ? { ...ci, quantity: parsed } : ci))
   }
 
-  const handleQtyBlur = (id: string) => {
-    setCart(prev => prev.map(ci => ci.item.id === id && ci.quantity <= 0 ? { ...ci, quantity: 1 } : ci))
+  const handleQtyBlur = (cartKey: string) => {
+    setCart(prev => prev.map(ci => getCartItemKey(ci) === cartKey && ci.quantity <= 0 ? { ...ci, quantity: 1 } : ci))
   }
 
-  const updateQtyDelta = (id: string, delta: number, maxStock: number) => {
+  const updateQtyDelta = (cartKey: string, delta: number, maxStock: number) => {
     setCart(prev => {
       return prev.map(ci => {
-        if (ci.item.id !== id) return ci
+        if (getCartItemKey(ci) !== cartKey) return ci
         const next = ci.quantity + delta
         if (next < 1) return null
         if (next > maxStock) return ci
@@ -428,7 +318,41 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
     })
   }
 
-  const subtotal = cart.reduce((s, ci) => s + getItemBatchAwarePrice(ci.item, ci.quantity), 0)
+  const getCartItemUnitPrice = (ci: CartItem): number => {
+    if (ci.batch && ci.batch.price > 0) return ci.batch.price
+    return getItemBatchAwarePrice(ci.item, 1)
+  }
+
+  const getCartItemLineTotal = (ci: CartItem): number => {
+    if (ci.batch && ci.batch.price > 0) return ci.batch.price * ci.quantity
+    return getItemBatchAwarePrice(ci.item, ci.quantity)
+  }
+
+  const handleItemCardClick = (item: InventoryItem) => {
+    // Check batches of THIS specific product only
+    const { options, hasDifferentManufacturers } = getItemManufacturerOptions(item)
+
+    // If this product has multiple batches with different manufacturers, open the Options modal!
+    if (hasDifferentManufacturers && options.length > 1) {
+      const codeOrName = (item.barcode || item.name || "").trim()
+      setScanMatchOptions({ code: codeOrName, options })
+      return
+    }
+
+    // Single manufacturer: directly add to cart
+    const singleOpt = options[0]
+    if (singleOpt && singleOpt.stock > 0) {
+      addToCart(item, singleOpt.batch)
+      triggerScanToast(`✓ Added: ${singleOpt.productName} (${singleOpt.manufacturer}) • ₱${singleOpt.price.toFixed(2)} to cart`, "success")
+    } else if (item.stock > 0) {
+      addToCart(item)
+      triggerScanToast(`✓ Added: ${item.name} • ₱${(item.price || 0).toFixed(2)} to cart`, "success")
+    } else {
+      triggerScanToast(`⚠️ "${item.name}" is OUT OF STOCK!`, "error")
+    }
+  }
+
+  const subtotal = cart.reduce((s, ci) => s + getCartItemLineTotal(ci), 0)
   const isStatutoryDiscount = ["senior", "pwd", "soloparent", "naac"].includes(discountType)
   let computedDiscount = 0, vat = 0, total = subtotal
 
@@ -550,7 +474,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
       if (invItem && invItem.stock > 0) {
         const qtyToAdd = Math.min(si.quantity || 1, invItem.stock)
         for (let k = 0; k < qtyToAdd; k++) {
-          addToCart(invItem)
+          addToCart(invItem, si.batch)
         }
       }
     })
@@ -684,6 +608,28 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                 placeholder="Search product name or code.." 
                 value={query} 
                 onChange={e => handleQueryChange(e.target.value)} 
+                onKeyDown={e => {
+                  if (e.key === "Enter") {
+                    const trimmed = query.trim()
+                    if (trimmed) {
+                      const { options, hasDifferentManufacturers } = findMatchingInventoryOptions(inventory, trimmed)
+                      if (hasDifferentManufacturers && options.length > 1) {
+                        setScanMatchOptions({ code: trimmed, options })
+                        setQuery("")
+                        e.preventDefault()
+                      } else if (options.length > 0) {
+                        const singleOpt = options[0]
+                        if (singleOpt.stock > 0) {
+                          addToCart(singleOpt.item, singleOpt.batch)
+                          triggerScanToast(`✓ Scanned: ${singleOpt.productName} • ₱${singleOpt.price.toFixed(2)} added to cart`, "success")
+                          setQuery("")
+                          setDisplayLimit(20)
+                          e.preventDefault()
+                        }
+                      }
+                    }
+                  }
+                }}
                 className="w-full px-4 py-2.5 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-800 dark:text-white rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-gray-400 font-medium" 
               />
               {query && (
@@ -766,12 +712,13 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                 {getItemsInGroup(selectedGenericGroup).map(item => {
                   const displayUnitPrice = getItemBatchAwarePrice(item, 1)
                   const catStyle = getCategoryStyles(item.category)
+                  const { hasDifferentManufacturers: itemHasDiff } = getItemManufacturerOptions(item)
 
                   return (
                     <button 
                       key={item.id} 
                       type="button" 
-                      onClick={() => addToCart(item)}
+                      onClick={() => handleItemCardClick(item)}
                       disabled={item.stock === 0}
                       className={`relative text-left p-3 rounded-2xl ${catStyle.border} ${catStyle.bg} transition-all flex flex-col justify-between min-h-[110px] cursor-pointer ${
                         item.stock === 0 
@@ -780,9 +727,14 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                       }`}
                     >
                       <div className="flex justify-between items-center gap-1.5">
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${catStyle.badge}`}>
-                          {item.category || "Unmarked"}
-                        </span>
+                        <div className="flex items-center gap-1">
+                          {itemHasDiff && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-indigo-600 text-white text-[8px] font-black uppercase tracking-wider">Options</span>
+                          )}
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${catStyle.badge}`}>
+                            {item.category || "Unmarked"}
+                          </span>
+                        </div>
                         <span className={`px-2 py-0.5 rounded-full font-mono text-[9px] font-bold ${
                           item.stock === 0 
                             ? 'bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300' 
@@ -820,6 +772,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                   const totalStock = getGroupTotalStock(groupName)
                   const hasVariants = itemsInGroup.length > 1
                   const primaryItem = itemsInGroup[0]
+                  const hasManufacturerOptions = !hasVariants && primaryItem && getItemManufacturerOptions(primaryItem).hasDifferentManufacturers
                   const displayUnitPrice = primaryItem ? getItemBatchAwarePrice(primaryItem, 1) : 0
                   const catStyle = getCategoryStyles(primaryItem?.category || "")
 
@@ -831,7 +784,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                         if (hasVariants) {
                           setSelectedGenericGroup(groupName)
                         } else if (primaryItem) {
-                          addToCart(primaryItem)
+                          handleItemCardClick(primaryItem)
                         }
                       }}
                       disabled={totalStock === 0}
@@ -843,9 +796,11 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                     >
                       <div className="flex justify-between items-center gap-1">
                         <div className="flex items-center gap-1 truncate">
-                          {hasVariants && (
+                          {hasVariants ? (
                             <span className="px-1.5 py-0.5 rounded-md bg-blue-600 text-white text-[8px] font-black uppercase tracking-wider">Group</span>
-                          )}
+                          ) : hasManufacturerOptions ? (
+                            <span className="px-1.5 py-0.5 rounded-md bg-indigo-600 text-white text-[8px] font-black uppercase tracking-wider">Options</span>
+                          ) : null}
                           <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider truncate ${catStyle.badge}`}>
                             {primaryItem?.category || "Unmarked"}
                           </span>
@@ -923,26 +878,35 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                       </div>
 
                     {groupItems.map((ci, itemIdx) => {
-                      const itemTotal = getItemBatchAwarePrice(ci.item, ci.quantity)
+                      const cartKey = getCartItemKey(ci)
+                      const maxStock = ci.batch ? ci.batch.stock : ci.item.stock
+                      const itemTotal = getCartItemLineTotal(ci)
                       const avgUnitPrice = itemTotal / (ci.quantity || 1)
                       return (
-                        <div key={ci.item.id} className={`flex justify-between items-center px-2.5 py-1.5 bg-white dark:bg-slate-800 ${itemIdx < groupItems.length - 1 ? 'border-b border-dashed border-gray-100 dark:border-slate-700' : ''}`}>
+                        <div key={cartKey} className={`flex justify-between items-center px-2.5 py-1.5 bg-white dark:bg-slate-800 ${itemIdx < groupItems.length - 1 ? 'border-b border-dashed border-gray-100 dark:border-slate-700' : ''}`}>
                           <div className="flex-1 min-w-0 pr-2">
                             <p className="font-bold text-gray-900 dark:text-white truncate text-[10px]">{ci.item.name}</p>
-                            <p className="text-gray-400 font-mono text-[9px]">₱{avgUnitPrice.toFixed(2)} / pc</p>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-gray-400 font-mono text-[9px]">₱{avgUnitPrice.toFixed(2)} / pc</span>
+                              {ci.batch && (
+                                <span className="text-[9px] font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-1.5 py-0.5 rounded border border-blue-200/60 dark:border-blue-800/60">
+                                  {ci.batch.manufacturer || ci.batch.batchLabel || "Batch"}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           <div className="flex items-center gap-1">
-                            <button type="button" onClick={() => updateQtyDelta(ci.item.id, -1, ci.item.stock)} className="w-5 h-5 border bg-gray-50 dark:bg-slate-700 rounded font-bold hover:bg-gray-100 flex items-center justify-center text-gray-700 dark:text-gray-200 text-xs">-</button>
+                            <button type="button" onClick={() => updateQtyDelta(cartKey, -1, maxStock)} className="w-5 h-5 border bg-gray-50 dark:bg-slate-700 rounded font-bold hover:bg-gray-100 flex items-center justify-center text-gray-700 dark:text-gray-200 text-xs">-</button>
                             <input
                               type="text"
                               value={ci.quantity === 0 ? "" : ci.quantity}
                               onFocus={e => e.target.select()}
-                              onChange={e => handleManualQtyChange(ci.item.id, e.target.value, ci.item.stock)}
-                              onBlur={() => handleQtyBlur(ci.item.id)}
+                              onChange={e => handleManualQtyChange(cartKey, e.target.value, maxStock)}
+                              onBlur={() => handleQtyBlur(cartKey)}
                               className="w-10 text-center border rounded font-mono font-bold text-gray-900 dark:text-white bg-white dark:bg-slate-900 text-xs py-0.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                             />
-                            <button type="button" onClick={() => updateQtyDelta(ci.item.id, 1, ci.item.stock)} className="w-5 h-5 border bg-gray-50 dark:bg-slate-700 rounded font-bold hover:bg-gray-100 flex items-center justify-center text-gray-700 dark:text-gray-200 text-xs">+</button>
-                            <button type="button" onClick={() => setCart(prev => prev.filter(i => i.item.id !== ci.item.id))} className="text-red-400 ml-0.5 font-bold text-xs hover:text-red-600">×</button>
+                            <button type="button" onClick={() => updateQtyDelta(cartKey, 1, maxStock)} className="w-5 h-5 border bg-gray-50 dark:bg-slate-700 rounded font-bold hover:bg-gray-100 flex items-center justify-center text-gray-700 dark:text-gray-200 text-xs">+</button>
+                            <button type="button" onClick={() => setCart(prev => prev.filter(i => getCartItemKey(i) !== cartKey))} className="text-red-400 ml-0.5 font-bold text-xs hover:text-red-600">×</button>
                           </div>
                         </div>
                       )
@@ -1326,10 +1290,13 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
             {/* Scrollable Receipt Items List */}
             <div className="border-t border-b border-dashed border-gray-200 dark:border-slate-700 py-2.5 space-y-1.5 max-h-[32vh] overflow-y-auto pr-1">
               {lastSale.items.map((ci: any, idx: number) => {
-                const itemLineTotal = getItemBatchAwarePrice(ci.item, ci.quantity)
+                const itemLineTotal = ci.batch && ci.batch.price > 0 ? ci.batch.price * ci.quantity : getItemBatchAwarePrice(ci.item, ci.quantity)
                 return (
                   <div key={idx} className="flex justify-between items-start text-xs border-b border-gray-100 dark:border-slate-800 pb-1 last:border-0">
-                    <span className="pr-4 leading-tight">{ci.quantity}x {ci.item.name}</span>
+                    <span className="pr-4 leading-tight">
+                      {ci.quantity}x {ci.item.name}
+                      {ci.batch?.manufacturer ? ` (${ci.batch.manufacturer})` : ''}
+                    </span>
                     <span className="font-bold whitespace-nowrap">₱{itemLineTotal.toFixed(2)}</span>
                   </div>
                 )
@@ -1405,9 +1372,13 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                   <Scan className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-sm text-slate-900 dark:text-white">Choose Manufacturer</h3>
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-white">Choose Manufacturer Option</h3>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                    Scanned barcode <span className="font-mono font-bold text-blue-600 dark:text-blue-400">#{scanMatchOptions.code}</span> has {scanMatchOptions.options.length} registered options.
+                    {scanMatchOptions.code ? (
+                      <>Product <span className="font-mono font-bold text-blue-600 dark:text-blue-400">"{scanMatchOptions.code}"</span> has {scanMatchOptions.options.length} manufacturer options available.</>
+                    ) : (
+                      <>This product has {scanMatchOptions.options.length} manufacturer options available.</>
+                    )}
                   </p>
                 </div>
               </div>
@@ -1430,7 +1401,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                     type="button"
                     disabled={isOutOfStock}
                     onClick={() => {
-                      addToCart(opt.item)
+                      addToCart(opt.item, opt.batch)
                       triggerScanToast(`✓ Added ${opt.label}: ${opt.productName} (${opt.manufacturer}) • ₱${opt.price.toFixed(2)} to cart`, "success")
                       setScanMatchOptions(null)
                     }}

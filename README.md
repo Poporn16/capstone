@@ -80,6 +80,7 @@ capstone/
 │   │   ├── utils/
 │   │   │   ├── apiClient.ts              # Supabase client & global sync broadcast helper
 │   │   │   ├── barcodeGenerator.ts       # Code-128 SVG & Excel font code generator
+│   │   │   ├── barcodeScanner.ts         # Global hardware & wedge barcode scanner event listener
 │   │   │   ├── categoryColors.ts         # Deterministic category theme & color definitions
 │   │   │   └── excelUtils.ts             # Excel workbook generator & parser utilities
 │   │   ├── styles/
