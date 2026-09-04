@@ -55,6 +55,7 @@ export interface Sale {
   change: number
   paymentMethod: "cash" | "other"
   onlineChannel?: string
+  referenceNumber?: string
   discountLabel: string
   customerName?: string
   processedBy: string

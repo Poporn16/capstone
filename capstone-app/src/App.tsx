@@ -527,8 +527,27 @@ export default function App() {
   }
 
   const fetchSales = async () => {
-    // 1. Try querying view_sales_history if available
-    const { data: viewData, error: viewErr } = await supabase.from('view_sales_history').select('*').range(0, 99999)
+    let localChannelMap: Record<string, string> = {}
+    let localRefMap: Record<string, string> = {}
+    let localCustomerMap: Record<string, string> = {}
+    try {
+      localChannelMap = JSON.parse(localStorage.getItem("pinv_online_channel_map") || "{}")
+      localRefMap = JSON.parse(localStorage.getItem("pinv_ref_number_map") || "{}")
+      localCustomerMap = JSON.parse(localStorage.getItem("pinv_customer_sales_map") || "{}")
+    } catch (e) {}
+
+    // Fetch view_sales_history along with inventory, batches, and sale_item_batches in parallel
+    const [
+      { data: viewData, error: viewErr },
+      { data: inventoryData },
+      { data: batchesData },
+      { data: saleBatchesData }
+    ] = await Promise.all([
+      supabase.from('view_sales_history').select('*').range(0, 99999),
+      supabase.from('inventory').select('*').range(0, 99999),
+      supabase.from('inventory_batches').select('*').range(0, 99999),
+      supabase.from('sale_item_batches').select('*').range(0, 99999)
+    ])
     
     if (viewData && !viewErr && viewData.length > 0) {
       const sortedView = [...viewData].sort((a: any, b: any) => {
@@ -554,34 +573,58 @@ export default function App() {
             itemCost = itemPrice * 0.65
           }
 
+          const inv = inventoryData?.find((i: any) => String(i.id) === String(si.inventory?.id || si.item_id) || i.name.toLowerCase() === (si.inventory?.name || si.item_name || "").toLowerCase())
+          const saleBatch = saleBatchesData?.find((sb: any) => String(sb.sale_id) === String(s.id) && String(sb.item_name).toLowerCase() === (inv?.name || si.inventory?.name || "").toLowerCase())
+          const batch = batchesData?.find((b: any) => (saleBatch && b.batch_label === saleBatch.batch_label) || (String(b.item_id) === String(inv?.id) && Number(b.price) > 0))
+
+          const rawBatchLabel = String(saleBatch?.batch_label || batch?.batch_label || "")
+          const manuMatch = rawBatchLabel.match(/\[(.*?)\]$/) || rawBatchLabel.match(/::\s*(.+)$/)
+          const resolvedManufacturer = (manuMatch ? manuMatch[1].trim() : "") || batch?.manufacturer || inv?.manufacturer || ""
+
           return {
             quantity: itemQty,
             item: {
-              id: String(si.inventory?.id || si.item_id || 0),
-              name: si.inventory?.name || si.item_name || si.name || "Product Item",
-              category: si.inventory?.category || si.category || "Uncategorized",
+              id: String(si.inventory?.id || si.item_id || inv?.id || 0),
+              name: si.inventory?.name || si.item_name || inv?.name || "Product Item",
+              category: si.inventory?.category || inv?.category || "Uncategorized",
               price: itemPrice,
               cost: itemCost,
               stock: 0,
-              minStock: Number(si.inventory?.min_stock || 0),
-              barcode: si.inventory?.barcode || "",
-              manufacturer: "",
+              minStock: Number(si.inventory?.min_stock || inv?.min_stock || 0),
+              barcode: si.inventory?.barcode || inv?.barcode || "",
+              manufacturer: resolvedManufacturer,
               batches: []
-            }
+            },
+            batch: (batch || saleBatch) ? {
+              id: String(batch?.id || 0),
+              batchLabel: saleBatch?.batch_label || batch?.batch_label || "DEFAULT",
+              stock: Number(batch?.stock || 0),
+              expiryDate: batch?.expiry_date || "",
+              cost: itemCost,
+              price: itemPrice,
+              manufacturer: resolvedManufacturer
+            } : undefined
           }
         })
 
         const rawPay = String(s.payment_method || "").trim()
         const isCash = !rawPay || rawPay.toLowerCase() === "cash"
         const onlineChan = !isCash ? (rawPay.includes(":") ? rawPay.split(":")[1] : (rawPay.toLowerCase() === "other" ? "" : rawPay)) : ""
-        let localChannelMap: Record<string, string> = {}
-        try {
-          localChannelMap = JSON.parse(localStorage.getItem("pinv_online_channel_map") || "{}")
-        } catch (e) {}
 
         const resolvedOnlineChan = !isCash 
           ? (onlineChan || s.online_channel || s.onlineChannel || localChannelMap[String(s.id)] || localChannelMap[String(idx + 1)] || "GCash") 
           : ""
+
+        const discLabel = s.discount_label || "NONE"
+        let extractedCustomerName = s.customer_name || s.customerName || localCustomerMap[String(s.id)] || localCustomerMap[String(idx + 1)] || undefined
+        if (!extractedCustomerName && discLabel.includes("(") && discLabel.includes(")")) {
+          const match = discLabel.match(/\(([^)]+)\)/)
+          if (match && match[1] && !["20%", "10%", "5%", "100%"].includes(match[1].trim())) {
+            extractedCustomerName = match[1].trim()
+          }
+        }
+
+        const resolvedRefNumber = s.reference_number || s.referenceNumber || localRefMap[String(s.id)] || localRefMap[String(idx + 1)] || undefined
 
         return {
           id: String(idx + 1),
@@ -598,7 +641,9 @@ export default function App() {
           change: Number(s.change) || 0,
           paymentMethod: isCash ? "cash" : "other",
           onlineChannel: resolvedOnlineChan,
-          discountLabel: s.discount_label || "NONE",
+          referenceNumber: resolvedRefNumber,
+          discountLabel: discLabel,
+          customerName: extractedCustomerName,
           processedBy: s.processed_by || "admin",
           isRefunded: Boolean(s.is_refunded)
         }
@@ -610,9 +655,6 @@ export default function App() {
     // 2. Standard multi-table query fallback
     const { data: salesData } = await supabase.from('sales').select('*').range(0, 99999)
     const { data: saleItemsData } = await supabase.from('sale_items').select('*').range(0, 99999)
-    const { data: inventoryData } = await supabase.from('inventory').select('*').range(0, 99999)
-    const { data: batchesData } = await supabase.from('inventory_batches').select('*').range(0, 99999)
-    const { data: saleBatchesData } = await supabase.from('sale_item_batches').select('*').range(0, 99999)
 
     const sortedSalesData = [...(salesData || [])].sort((a: any, b: any) => {
       const timeA = new Date(a.date || a.created_at || 0).getTime()
@@ -620,11 +662,6 @@ export default function App() {
       if (timeA !== timeB) return timeA - timeB
       return Number(a.id) - Number(b.id)
     })
-
-    let localChannelMap: Record<string, string> = {}
-    try {
-      localChannelMap = JSON.parse(localStorage.getItem("pinv_online_channel_map") || "{}")
-    } catch (e) {}
 
     const formattedSales: Sale[] = sortedSalesData.map((sale: any, idx: number) => {
       const rawItems = saleItemsData?.filter(si => String(si.sale_id) === String(sale.id)) || []
@@ -645,6 +682,10 @@ export default function App() {
           resolvedCost = resolvedPrice * 0.65
         }
 
+        const rawBatchLabel = String(saleBatch?.batch_label || batch?.batch_label || "")
+        const manuMatch = rawBatchLabel.match(/\[(.*?)\]$/) || rawBatchLabel.match(/::\s*(.+)$/)
+        const resolvedManufacturer = (manuMatch ? manuMatch[1].trim() : "") || batch?.manufacturer || inv?.manufacturer || ""
+
         return {
           quantity: Math.floor(Number(si.quantity)) || 1,
           item: {
@@ -656,9 +697,18 @@ export default function App() {
             stock: 0,
             minStock: Number(inv?.min_stock) || 0,
             barcode: inv?.barcode || "",
-            manufacturer: inv?.manufacturer || "",
+            manufacturer: resolvedManufacturer,
             batches: []
-          }
+          },
+          batch: batch ? {
+            id: String(batch.id),
+            batchLabel: saleBatch?.batch_label || batch.batch_label || "DEFAULT",
+            stock: Number(batch.stock) || 0,
+            expiryDate: batch.expiry_date || "",
+            cost: resolvedCost,
+            price: resolvedPrice,
+            manufacturer: resolvedManufacturer
+          } : undefined
         }
       }) || []
       const rawPay = String(sale.payment_method || "").trim()
@@ -685,6 +735,8 @@ export default function App() {
         }
       }
 
+      const resolvedRefNumber = sale.reference_number || sale.referenceNumber || localRefMap[String(sale.id)] || localRefMap[String(idx + 1)] || undefined
+
       return {
         id: String(idx + 1),
         dbId: String(sale.id),
@@ -700,6 +752,7 @@ export default function App() {
         change: Number(sale.change) || 0,
         paymentMethod: isCash ? "cash" : "other",
         onlineChannel: resolvedOnlineChan,
+        referenceNumber: resolvedRefNumber,
         discountLabel: discLabel,
         customerName: extractedCustomerName,
         processedBy: sale.processed_by || "admin",
@@ -800,6 +853,15 @@ export default function App() {
         channelMap[String(saleId)] = onlineChanValue
         channelMap[String(sales.length + 1)] = onlineChanValue
         localStorage.setItem("pinv_online_channel_map", JSON.stringify(channelMap))
+      } catch (e) {}
+    }
+
+    if (sale.referenceNumber && saleId) {
+      try {
+        const refMap = JSON.parse(localStorage.getItem("pinv_ref_number_map") || "{}")
+        refMap[String(saleId)] = sale.referenceNumber
+        refMap[String(sales.length + 1)] = sale.referenceNumber
+        localStorage.setItem("pinv_ref_number_map", JSON.stringify(refMap))
       } catch (e) {}
     }
 
@@ -920,7 +982,11 @@ export default function App() {
       console.warn("Sale items insert/stock deduction exception:", e)
     }
 
-    const payLabel = sale.paymentMethod === "other" ? (sale.onlineChannel ? `ONLINE (${sale.onlineChannel})` : "ONLINE PAYMENT") : "CASH"
+    const payLabel = sale.paymentMethod === "other"
+      ? (sale.onlineChannel
+          ? `ONLINE (${sale.onlineChannel}${sale.referenceNumber ? ` - Ref: ${sale.referenceNumber}` : ''})`
+          : (sale.referenceNumber ? `ONLINE (Ref: ${sale.referenceNumber})` : "ONLINE PAYMENT"))
+      : "CASH"
     await logSystemAction("CREATE_SALE", "POS_CHECKOUT", `Processed sale #${saleId || Date.now()} via ${payLabel} (Total: ₱${sale.total.toFixed(2)})`)
 
     await fetchInventory()
@@ -1463,7 +1529,7 @@ export default function App() {
           {activeTab === "pos" && <POSCheckout inventory={inventory} sales={sales} categoriesList={categoriesList} onCompleteSale={addSale} />}
           {activeTab === "inventory" && <InventoryManager currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} refreshCategories={fetchCategories} refreshInventory={fetchInventory} onUpdateInventory={updateInventoryItem} onDeleteProduct={deleteInventoryItem} onLogAction={logSystemAction} />}
           {activeTab === "stock_adjust" && <StockAdjustment currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} fetchInventory={fetchInventory} onLogAction={logSystemAction} />}
-          {activeTab === "history" && <SalesHistory currentOperator={currentOperator} sales={sales} onToggleRefund={handleToggleRefund} />}
+          {activeTab === "history" && <SalesHistory inventory={inventory} currentOperator={currentOperator} sales={sales} onToggleRefund={handleToggleRefund} />}
           {activeTab === "reports" && isAdminUser && <SalesReport sales={sales} inventory={inventory} categoriesList={categoriesList} />}
           {activeTab === "attendance" && isAdminUser && currentOperator && <StaffAttendancePage currentOperator={currentOperator} />}
           {activeTab === "admin_control" && (currentOperator?.systemRole === "admin" || currentOperator?.systemRole === "superadmin") && currentOperator && (

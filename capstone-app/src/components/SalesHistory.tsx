@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import type { Sale } from "../App";
+import type { InventoryItem } from "../types";
 import { downloadExcelWithAutoFit, downloadMultiSheetSalesWorkbook, type SalesExportData } from "../utils/excelUtils";
 import { Search, RotateCcw, FileText, Download, User, Printer, X } from "lucide-react";
 import { supabase } from "../utils/apiClient";
@@ -7,6 +8,7 @@ import { supabase } from "../utils/apiClient";
 interface SalesHistoryProps {
   currentOperator?: { username: string; displayName: string; systemRole: string } | null;
   sales: Sale[];
+  inventory?: InventoryItem[];
   onToggleRefund: (saleId: string, currentStatus: boolean) => void;
 }
 
@@ -16,7 +18,7 @@ type PaymentRoute = "all" | "cash" | "other" | "gcash" | "paymaya" | "bdo" | "bp
 
 const ONLINE_CHANNELS = ["gcash", "paymaya", "bdo", "bpi", "card", "bank transfer"] as const
 
-export function SalesHistory({ currentOperator, sales, onToggleRefund }: SalesHistoryProps) {
+export function SalesHistory({ currentOperator, sales, inventory = [], onToggleRefund }: SalesHistoryProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [dateFrame, setDateFrame] = useState<DateFrame>("all");
   const [startDate, setStartDate] = useState<string>("");
@@ -201,8 +203,8 @@ export function SalesHistory({ currentOperator, sales, onToggleRefund }: SalesHi
       const payStr = s.paymentMethod === "cash" 
         ? "Cash" 
         : channelStr 
-          ? `Online (${channelStr})` 
-          : "Online";
+          ? (s.referenceNumber ? `Online (${channelStr} - Ref: ${s.referenceNumber})` : `Online (${channelStr})`)
+          : (s.referenceNumber ? `Online (Ref: ${s.referenceNumber})` : "Online");
 
       const rawCustomer = s.customerName || (s.discountLabel && s.discountLabel.includes("(") ? s.discountLabel.split("(")[1]?.replace(")", "").trim() : null);
       const isWalkIn = !rawCustomer || ["walk-in", "walk-in customer", "regular customer", "walkin", "none"].includes(rawCustomer.trim().toLowerCase());
@@ -584,6 +586,11 @@ export function SalesHistory({ currentOperator, sales, onToggleRefund }: SalesHi
                             ? `ONLINE / ${sale.onlineChannel.toUpperCase()}`
                             : 'ONLINE'}
                       </span>
+                      {sale.referenceNumber && (
+                        <span className="block text-[8px] font-mono text-gray-500 dark:text-gray-400 mt-0.5 whitespace-nowrap">
+                          Ref: {sale.referenceNumber}
+                        </span>
+                      )}
                     </td>
                     <td className="p-4">
                       <span className={`px-2.5 py-0.5 rounded-full font-bold text-[9px] ${sale.isRefunded ? 'bg-red-100 dark:bg-red-900/60 text-red-600 dark:text-red-300' : 'bg-green-100 dark:bg-green-900/60 text-green-600 dark:text-green-300'}`}>
@@ -708,9 +715,28 @@ export function SalesHistory({ currentOperator, sales, onToggleRefund }: SalesHi
                 const itemPrice = ci.item.price > 0 ? ci.item.price : fallbackUnitPrice
                 const lineTotal = itemPrice * ci.quantity
 
+                // Cascading manufacturer lookup: batch -> batch label [Brand] -> item -> inventory product -> inventory batches
+                const matchedInv = (inventory || []).find(i => 
+                  String(i.id) === String(ci.item?.id) || 
+                  i.name.trim().toLowerCase() === (ci.item?.name || "").trim().toLowerCase()
+                )
+                const rawBatchLabel = ci.batch?.batchLabel || ""
+                const batchManuMatch = rawBatchLabel.match(/\[(.*?)\]$/) || rawBatchLabel.match(/::\s*(.+)$/)
+
+                const itemManufacturer = 
+                  ci.batch?.manufacturer || 
+                  (batchManuMatch ? batchManuMatch[1].trim() : "") ||
+                  ci.item?.manufacturer || 
+                  matchedInv?.manufacturer || 
+                  matchedInv?.batches?.find((b: any) => b.manufacturer)?.manufacturer || 
+                  ""
+
                 return (
                   <div key={idx} className="flex justify-between items-start text-xs border-b border-gray-100 dark:border-slate-800 pb-1 last:border-0">
-                    <span className="pr-4 leading-tight">{ci.quantity}x {ci.item.name}</span>
+                    <span className="pr-4 leading-tight">
+                      {ci.quantity}x {ci.item.name}
+                      {itemManufacturer ? ` (${itemManufacturer})` : ''}
+                    </span>
                     <span className="font-bold whitespace-nowrap">₱{lineTotal.toFixed(2)}</span>
                   </div>
                 )
@@ -748,6 +774,12 @@ export function SalesHistory({ currentOperator, sales, onToggleRefund }: SalesHi
                     ? `ONLINE / ${selectedInvoice.onlineChannel.toUpperCase()}`
                     : "ONLINE PAYMENT"}
               </span></div>
+              {selectedInvoice.paymentMethod === "other" && selectedInvoice.referenceNumber && (
+                <div className="flex justify-between font-mono text-[10px]">
+                  <span>Reference No:</span>
+                  <span className="font-bold text-gray-900 dark:text-white">{selectedInvoice.referenceNumber}</span>
+                </div>
+              )}
               <div className="flex justify-between"><span>Cash Tendered Amount:</span><span>₱{(selectedInvoice.cashReceived || selectedInvoice.total).toFixed(2)}</span></div>
               <div className="flex justify-between font-bold text-blue-800 dark:text-blue-300"><span>Change Return Cash:</span><span>₱{selectedInvoice.change?.toFixed(2) || "0.00"}</span></div>
               <div className="flex justify-between pt-1 border-t border-gray-200 dark:border-slate-700 mt-1 font-bold">

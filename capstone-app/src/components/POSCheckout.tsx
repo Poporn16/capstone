@@ -29,6 +29,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
   const [activeCategoryTab, setActiveCategoryTab] = useState<string>("all")
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "other">("cash")
   const [onlineChannel, setOnlineChannel] = useState<OnlineChannel>("GCash")
+  const [referenceNumber, setReferenceNumber] = useState<string>("")
   const [showReceipt, setShowReceipt] = useState(false)
   const [showOthersModal, setShowOthersModal] = useState(false)
   const [lastSale, setLastSale] = useState<any>(null)
@@ -514,6 +515,12 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
       }
     }
 
+    // Validation Error: Online Payment Reference Number is strictly required before checkout
+    if (paymentMethod === "other" && !referenceNumber.trim()) {
+      alert("Validation Error: Please enter the Reference Number for the online payment before proceeding to checkout.")
+      return
+    }
+
     if (!cart.length || (paymentMethod === "cash" && numericCash < total)) return
 
     const fullCustomerName = trimmedCustomer
@@ -558,6 +565,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
       change: paymentMethod === "cash" ? Math.max(0, numericCash - total) : 0,
       paymentMethod,
       onlineChannel: paymentMethod === "other" ? onlineChannel : null,
+      referenceNumber: paymentMethod === "other" ? referenceNumber.trim() : undefined,
       discountLabel: getDiscountLabel(),
       customerName: fullCustomerName || undefined
     }
@@ -566,6 +574,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
     setLastSale(saleRecord)
     setCart([])
     setCashReceived("")
+    setReferenceNumber("")
     setDiscountType("none")
     setCustomDiscountPercent(0)
     setCustomerName("")
@@ -1196,7 +1205,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
               </div>
 
               {paymentMethod === "other" && (
-                <div className="p-2 bg-blue-50/70 dark:bg-blue-950/40 rounded-xl border border-blue-200 dark:border-blue-900/50 space-y-1">
+                <div className="p-2.5 bg-blue-50/70 dark:bg-blue-950/40 rounded-xl border border-blue-200 dark:border-blue-900/50 space-y-2">
                   <span className="block text-[9px] font-bold text-blue-800 dark:text-blue-300 uppercase tracking-wider">Select Online Payment Provider:</span>
                   <div className="grid grid-cols-3 gap-1">
                     {(["GCash", "PayMaya", "BDO", "BPI", "Bank Transfer", "Card"] as const).map(ch => (
@@ -1210,12 +1219,31 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                       </button>
                     ))}
                   </div>
+
+                  {/* Reference Number Entry */}
+                  <div className="pt-2 border-t border-blue-200/60 dark:border-blue-900/40 space-y-1">
+                    <label className="flex items-center justify-between text-[9px] font-bold text-blue-900 dark:text-blue-300 uppercase tracking-wider">
+                      <span>Reference Number <span className="text-red-500">*</span>:</span>
+                      <span className="text-[8px] text-gray-500 font-normal">Required before checkout</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder={`Enter ${onlineChannel} reference / ref no...`}
+                      value={referenceNumber}
+                      onChange={e => setReferenceNumber(e.target.value)}
+                      className="w-full px-2.5 py-1.5 text-xs font-mono font-bold bg-white dark:bg-slate-800 border border-blue-300 dark:border-blue-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-800 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-500 shadow-2xs"
+                    />
+                  </div>
                 </div>
               )}
             <button 
               type="button" 
               onClick={completeSale} 
-              disabled={cart.length === 0 || (paymentMethod === "cash" && (parseFloat(cashReceived) || 0) < total)} 
+              disabled={
+                cart.length === 0 || 
+                (paymentMethod === "cash" && (parseFloat(cashReceived) || 0) < total) ||
+                (paymentMethod === "other" && !referenceNumber.trim())
+              } 
               className="w-full py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl font-bold shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed text-xs tracking-wide uppercase shrink-0"
             >
               Complete Sale Transaction
@@ -1295,7 +1323,6 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                   <div key={idx} className="flex justify-between items-start text-xs border-b border-gray-100 dark:border-slate-800 pb-1 last:border-0">
                     <span className="pr-4 leading-tight">
                       {ci.quantity}x {ci.item.name}
-                      {ci.batch?.manufacturer ? ` (${ci.batch.manufacturer})` : ''}
                     </span>
                     <span className="font-bold whitespace-nowrap">₱{itemLineTotal.toFixed(2)}</span>
                   </div>
@@ -1304,12 +1331,19 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
             </div>
 
             <div className="space-y-1 text-gray-600 dark:text-slate-300">
-              {lastSale.customerName && (
-                <div className="flex justify-between text-blue-800 dark:text-blue-300 font-bold border-b border-gray-100 dark:border-slate-800 pb-1">
-                  <span>Customer:</span>
-                  <span>{lastSale.customerName}</span>
-                </div>
-              )}
+              {(() => {
+                const cleanCustomerName = (lastSale.customerName || "")
+                  .replace(/\s*\(ID:.*?\)/gi, "")
+                  .replace(/\s*ID:.*$/gi, "")
+                  .trim()
+                if (!cleanCustomerName) return null
+                return (
+                  <div className="flex justify-between text-blue-800 dark:text-blue-300 font-bold border-b border-gray-100 dark:border-slate-800 pb-1">
+                    <span>Customer:</span>
+                    <span>{cleanCustomerName}</span>
+                  </div>
+                )
+              })()}
               <div className="flex justify-between"><span>Gross Total Base:</span><span>₱{lastSale.grossTotal?.toFixed(2) || lastSale.total.toFixed(2)}</span></div>
               {lastSale.discount > 0 && (
                 <div className="flex justify-between text-green-700 dark:text-green-400 font-bold">
@@ -1333,6 +1367,12 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                     : "CASH"}
                 </span>
               </div>
+              {lastSale.paymentMethod === "other" && lastSale.referenceNumber && (
+                <div className="flex justify-between text-[10px] text-gray-600 dark:text-slate-300">
+                  <span>Reference No:</span>
+                  <span className="font-mono font-bold text-gray-900 dark:text-white">{lastSale.referenceNumber}</span>
+                </div>
+              )}
             </div>
 
             <div className="flex gap-2 pt-2 border-t border-gray-200 dark:border-slate-700">
