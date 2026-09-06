@@ -270,10 +270,18 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
             systemRole: actualRole,
             timeIn: d.time_in,
             timeOut: d.time_out || undefined,
-            durationMinutes: d.duration_minutes || undefined
+            durationMinutes: d.duration_minutes ? Math.min(d.duration_minutes, 12 * 60) : undefined
           }
         })
-        setAttendanceLogs(formatted)
+        const sorted = formatted.sort((a: any, b: any) => {
+          const aActive = !a.timeOut ? 1 : 0
+          const bActive = !b.timeOut ? 1 : 0
+          if (aActive !== bActive) return bActive - aActive
+          const aTime = a.timeIn ? new Date(a.timeIn).getTime() : 0
+          const bTime = b.timeIn ? new Date(b.timeIn).getTime() : 0
+          return bTime - aTime
+        })
+        setAttendanceLogs(sorted)
       }
     } catch (e) {
       console.error("Failed to load attendance logs in AdminPanel", e)

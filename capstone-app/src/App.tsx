@@ -152,6 +152,9 @@ export default function App() {
     return () => window.removeEventListener("wheel", handleWheelHorizontalScroll)
   }, [])
 
+  const MAX_SHIFT_MINUTES = 12 * 60 // 12 hours maximum shift limit
+  const MAX_SHIFT_MS = MAX_SHIFT_MINUTES * 60 * 1000
+
   const clockOutUser = async (uName: string) => {
     if (!uName) return
     const target = uName.trim().toLowerCase()
@@ -163,16 +166,20 @@ export default function App() {
         .is("time_out", null)
 
       if (data && data.length > 0) {
-        const nowIso = new Date().toISOString()
+        const nowMs = Date.now()
         for (const record of data) {
           const inTime = new Date(record.time_in).getTime()
-          const outTime = new Date(nowIso).getTime()
-          const durationMinutes = Math.max(1, Math.round((outTime - inTime) / (1000 * 60)))
+          const isStale = !isNaN(inTime) && (nowMs - inTime > MAX_SHIFT_MS)
+          const cappedOutTime = isStale ? inTime + MAX_SHIFT_MS : nowMs
+          const outIso = new Date(cappedOutTime).toISOString()
+          const durationMinutes = isStale
+            ? MAX_SHIFT_MINUTES
+            : Math.max(1, Math.round((nowMs - inTime) / (1000 * 60)))
 
           await supabase
             .from("staff_attendance")
             .update({
-              time_out: nowIso,
+              time_out: outIso,
               duration_minutes: durationMinutes
             })
             .eq("id", record.id)
@@ -200,19 +207,44 @@ export default function App() {
         .is("time_out", null)
         .order("id", { ascending: false })
 
-      if (data && data.length > 1) {
-        const extraIds = data.slice(1).map((r: any) => r.id)
-        await supabase.from("staff_attendance").delete().in("id", extraIds)
-        window.dispatchEvent(new Event("pinv_attendance_updated"))
-      } else if (!data || data.length === 0) {
+      const nowMs = Date.now()
+      let hasValidActiveShift = false
+
+      if (data && data.length > 0) {
+        // Auto-close any stale active shifts older than 12 hours
+        for (const r of data) {
+          const inTime = new Date(r.time_in).getTime()
+          if (!isNaN(inTime) && (nowMs - inTime > MAX_SHIFT_MS)) {
+            const cappedOutTime = new Date(inTime + MAX_SHIFT_MS).toISOString()
+            await supabase
+              .from("staff_attendance")
+              .update({
+                time_out: cappedOutTime,
+                duration_minutes: MAX_SHIFT_MINUTES
+              })
+              .eq("id", r.id)
+          } else {
+            hasValidActiveShift = true
+          }
+        }
+
+        // Clean up duplicate open shifts if any exist
+        if (data.length > 1) {
+          const extraIds = data.slice(1).map((r: any) => r.id)
+          await supabase.from("staff_attendance").delete().in("id", extraIds)
+        }
+      }
+
+      // If there was no valid active shift from within the last 12 hours, start a fresh shift
+      if (!hasValidActiveShift) {
         await supabase.from("staff_attendance").insert([{
           username: operator.username,
           display_name: operator.displayName || operator.username,
           system_role: operator.systemRole || "staff",
           time_in: new Date().toISOString()
         }])
-        window.dispatchEvent(new Event("pinv_attendance_updated"))
       }
+      window.dispatchEvent(new Event("pinv_attendance_updated"))
     } catch (e) {
       console.error("Auto time-in error:", e)
     } finally {
@@ -1531,7 +1563,7 @@ export default function App() {
           {activeTab === "stock_adjust" && <StockAdjustment currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} fetchInventory={fetchInventory} onLogAction={logSystemAction} />}
           {activeTab === "history" && <SalesHistory inventory={inventory} currentOperator={currentOperator} sales={sales} onToggleRefund={handleToggleRefund} />}
           {activeTab === "reports" && isAdminUser && <SalesReport sales={sales} inventory={inventory} categoriesList={categoriesList} />}
-          {activeTab === "attendance" && isAdminUser && currentOperator && <StaffAttendancePage currentOperator={currentOperator} />}
+          {activeTab === "attendance" && isAdminUser && currentOperator && <StaffAttendancePage currentOperator={currentOperator} onLogAction={logSystemAction} />}
           {activeTab === "admin_control" && (currentOperator?.systemRole === "admin" || currentOperator?.systemRole === "superadmin") && currentOperator && (
             <AdminPanel
               currentOperator={currentOperator}

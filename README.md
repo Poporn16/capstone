@@ -31,8 +31,10 @@ A modern, full-featured **Point of Sale (POS)**, **Inventory**, and **Batch Mana
 - **Clean Numeric Formatting**: Numbers and stock quantities are exported cleanly without currency pollution.
 
 ### ⏱️ Staff Attendance & Time Clock
-- **Time In / Time Out Modal**: Quick staff attendance clock-in/out modal accessible directly from the top header.
-- **Attendance Records Table**: Dedicated attendance history log with status tracking, work duration calculation, and Excel audit export.
+- **Time In / Time Out Modal**: Quick staff attendance clock-in/out modal with live shift status detection directly from the top header.
+- **Attendance Directory & Analytics**: Dedicated attendance history log with role badges, shift duration calculations, suspicious shift flagging (<5 min), and 12-hour auto-capping.
+- **Shift Validation & Deletion Controls**: Admin tools to flag/re-approve questionable records and permanently delete erroneous logs.
+- **Excel Audit Export**: Full-fidelity export of staff attendance logs to `.xlsx` spreadsheets for payroll and compliance reporting.
 
 ### 📈 Sales Analytics & Multi-Sheet Reporting
 - **Multi-Sheet Sales Workbooks**: Exports transactions and line-item details into multi-tab `.xlsx` workbooks.
@@ -40,6 +42,7 @@ A modern, full-featured **Point of Sale (POS)**, **Inventory**, and **Batch Mana
 
 ### 🛡️ Admin Panel & System Governance
 - **Role-Based Access Control**: Strict permissions separating Super Admin, Admin, and Cashier/Staff operations.
+- **Bcrypt Security & Auto-Migration**: Modern bcrypt password hashing with automatic transparent inline migration for legacy accounts (`passwordUtils.ts`).
 - **Real-Time Cross-Tab Sync**: Multi-tab synchronization using the `BroadcastChannel` API and Supabase Realtime channels.
 - **System Audit Logs**: Comprehensive activity logging for product creations, stock adjustments, price changes, and user management.
 
@@ -53,6 +56,7 @@ A modern, full-featured **Point of Sale (POS)**, **Inventory**, and **Batch Mana
 - **Styling**: [Tailwind CSS 4](https://tailwindcss.com/)
 - **Icons**: [Lucide React](https://lucide.dev/)
 - **Spreadsheet Processing**: [SheetJS (xlsx)](https://sheetjs.com/)
+- **Cryptography**: [bcryptjs](https://github.com/dcodeIO/bcrypt.js)
 - **Typography**: [Inter Variable Font](https://fontsource.org/fonts/inter)
 
 ---
@@ -82,7 +86,8 @@ capstone/
 │   │   │   ├── barcodeGenerator.ts       # Code-128 SVG & Excel font code generator
 │   │   │   ├── barcodeScanner.ts         # Global hardware & wedge barcode scanner event listener
 │   │   │   ├── categoryColors.ts         # Deterministic category theme & color definitions
-│   │   │   └── excelUtils.ts             # Excel workbook generator & parser utilities
+│   │   │   ├── excelUtils.ts             # Excel workbook generator & parser utilities
+│   │   │   └── passwordUtils.ts          # Bcrypt hashing & credential verification with auto-migration
 │   │   ├── styles/
 │   │   │   └── index.css                 # Global CSS & Tailwind configuration
 │   │   ├── App.tsx                       # Main shell, navigation sidebar, & theme provider

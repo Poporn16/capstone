@@ -43,6 +43,30 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
       }
 
       if (attRes.data) {
+        const MAX_SHIFT_MINUTES = 12 * 60
+        const MAX_SHIFT_MS = MAX_SHIFT_MINUTES * 60 * 1000
+        const nowMs = Date.now()
+
+        // Auto-close stale active shifts older than 12 hours in database
+        const staleRecords = attRes.data.filter((d: any) => {
+          if (d.time_out) return false
+          const inT = new Date(d.time_in).getTime()
+          return !isNaN(inT) && (nowMs - inT > MAX_SHIFT_MS)
+        })
+
+        if (staleRecords.length > 0) {
+          for (const s of staleRecords) {
+            const inT = new Date(s.time_in).getTime()
+            const cappedOut = new Date(inT + MAX_SHIFT_MS).toISOString()
+            s.time_out = cappedOut
+            s.duration_minutes = MAX_SHIFT_MINUTES
+            await supabase.from("staff_attendance").update({
+              time_out: cappedOut,
+              duration_minutes: MAX_SHIFT_MINUTES
+            }).eq("id", s.id)
+          }
+        }
+
         // Auto-cleanup any duplicate active shifts in database if they exist
         const activeByUsers = new Map<string, any[]>()
         attRes.data.forEach((d: any) => {
@@ -73,6 +97,7 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
           const matched = profMap.get(userKey)
           const actualRole = matched?.role || d.system_role || (userKey.includes("superadmin") ? "superadmin" : "staff")
           const actualDisplayName = d.display_name || matched?.name || d.username || "Operator"
+          const safeDuration = d.duration_minutes ? Math.min(d.duration_minutes, MAX_SHIFT_MINUTES) : undefined
           return {
             id: String(d.id),
             username: d.username || "",
@@ -80,11 +105,19 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
             systemRole: actualRole,
             timeIn: d.time_in,
             timeOut: d.time_out || undefined,
-            durationMinutes: d.duration_minutes || undefined
+            durationMinutes: safeDuration
           }
         })
-        setRecords(formatted)
-        const currentActive = formatted.find(
+        const sorted = formatted.sort((a, b) => {
+          const aActive = !a.timeOut ? 1 : 0
+          const bActive = !b.timeOut ? 1 : 0
+          if (aActive !== bActive) return bActive - aActive
+          const aTime = a.timeIn ? new Date(a.timeIn).getTime() : 0
+          const bTime = b.timeIn ? new Date(b.timeIn).getTime() : 0
+          return bTime - aTime
+        })
+        setRecords(sorted)
+        const currentActive = sorted.find(
           r => r.username.toLowerCase() === currentOperator.username.toLowerCase() && !r.timeOut
         )
         setActiveSession(currentActive || null)
@@ -142,10 +175,17 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
   const handleTimeOut = async () => {
     if (!activeSession) return
 
-    const timeOutIso = new Date().toISOString()
+    const MAX_SHIFT_MINUTES = 12 * 60
+    const MAX_SHIFT_MS = MAX_SHIFT_MINUTES * 60 * 1000
+
+    const nowMs = Date.now()
     const inTime = new Date(activeSession.timeIn).getTime()
-    const outTime = new Date(timeOutIso).getTime()
-    const durationMinutes = Math.max(1, Math.round((outTime - inTime) / (1000 * 60)))
+    const isStale = !isNaN(inTime) && (nowMs - inTime > MAX_SHIFT_MS)
+    const outTimeMs = isStale ? inTime + MAX_SHIFT_MS : nowMs
+    const timeOutIso = new Date(outTimeMs).toISOString()
+    const durationMinutes = isStale
+      ? MAX_SHIFT_MINUTES
+      : Math.max(1, Math.round((nowMs - inTime) / (1000 * 60)))
 
     const numId = Number(activeSession.id)
     if (!isNaN(numId)) {
@@ -158,7 +198,7 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
     await fetchAttendanceFromDb()
     window.dispatchEvent(new Event("pinv_attendance_updated"))
 
-    const formattedTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    const formattedTime = new Date(outTimeMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     const hours = Math.floor(durationMinutes / 60)
     const mins = durationMinutes % 60
     const durationStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`
@@ -178,9 +218,16 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
     setTimeout(() => setNotification(null), 3000)
   }
 
-  const userRecords = records.filter(
-    r => r.username.toLowerCase() === currentOperator.username.toLowerCase()
-  )
+  const userRecords = records
+    .filter(r => r.username.toLowerCase() === currentOperator.username.toLowerCase())
+    .sort((a, b) => {
+      const aActive = !a.timeOut ? 1 : 0
+      const bActive = !b.timeOut ? 1 : 0
+      if (aActive !== bActive) return bActive - aActive
+      const aTime = a.timeIn ? new Date(a.timeIn).getTime() : 0
+      const bTime = b.timeIn ? new Date(b.timeIn).getTime() : 0
+      return bTime - aTime
+    })
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
