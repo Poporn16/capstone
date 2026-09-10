@@ -1411,7 +1411,7 @@ export default function App() {
               <div className="w-10 h-10 bg-white/60 dark:bg-white/10 rounded-xl shadow-xs border border-white/60 dark:border-white/20 flex items-center justify-center p-0.5 shrink-0 overflow-hidden">
                 {!logoImgError ? (
                   <img 
-                    src="../public/icon.jpg" 
+                    src="/icon.jpg" 
                     alt="Malabon Pharmacy Logo" 
                     className="w-full h-full rounded-lg object-cover"
                     onError={() => setLogoImgError(true)}
