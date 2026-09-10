@@ -56,6 +56,7 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
   const [showAttendanceModal, setShowAttendanceModal] = useState(false)
+  const [logoImgError, setLogoImgError] = useState(false)
 
   const [currentOperator, setCurrentOperator] = useState<{ username: string; displayName: string; systemRole: string } | null>(() => {
     try {
@@ -653,6 +654,9 @@ export default function App() {
           const match = discLabel.match(/\(([^)]+)\)/)
           if (match && match[1] && !["20%", "10%", "5%", "100%"].includes(match[1].trim())) {
             extractedCustomerName = match[1].trim()
+            if (/\(ID:\s*[^)]+$/i.test(extractedCustomerName)) {
+              extractedCustomerName = `${extractedCustomerName})`
+            }
           }
         }
 
@@ -764,6 +768,9 @@ export default function App() {
         const match = discLabel.match(/\(([^)]+)\)/)
         if (match && match[1] && !["20%", "10%", "5%", "100%"].includes(match[1].trim())) {
           extractedCustomerName = match[1].trim()
+          if (/\(ID:\s*[^)]+$/i.test(extractedCustomerName)) {
+            extractedCustomerName = `${extractedCustomerName})`
+          }
         }
       }
 
@@ -1393,7 +1400,7 @@ export default function App() {
       {isSidebarOpen && <div onClick={() => setIsSidebarOpen(false)} className="fixed inset-0 bg-black/50 z-40 md:hidden backdrop-blur-xs" />}
       <aside className={`fixed md:sticky md:top-0 inset-y-0 left-0 z-50 ${isSidebarCollapsed ? "w-20 px-3 py-4" : "w-64 p-5"} ${
         theme === "dark" 
-          ? "bg-slate-900 text-slate-200 border-r border-slate-800" 
+          ? "bg-[#131F1E] text-slate-200 border-r border-[#1C2E2C]" 
           : "bg-[#89A1A0] text-slate-900 border-r border-[#758e8d]"
       } h-screen max-h-screen flex flex-col justify-between shrink-0 transition-all duration-200 ease-in-out overflow-y-auto ${
         isSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
@@ -1402,11 +1409,18 @@ export default function App() {
           <div className="flex items-center justify-between shrink-0">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-white/60 dark:bg-white/10 rounded-xl shadow-xs border border-white/60 dark:border-white/20 flex items-center justify-center p-0.5 shrink-0 overflow-hidden">
-                <img 
-                  src="https://scontent.fmnl33-1.fna.fbcdn.net/v/t39.30808-6/401504104_122095038878121591_4438502913040853748_n.jpg?stp=dst-jpg_tt6&cstp=mx411x390&ctp=s411x390&_nc_cat=106&_nc_map=urlgen_bucketless&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=HomS4dM_v2oQ7kNvwH-H5qh&_nc_oc=AdqpsHU4d8u3DZkN9_HhREwIDpoG7U8mtOeEqKUngK57kXhPzW8qAurno3fw2DbvFMeE9KS80EXkBvDhPK-JzxUG&_nc_zt=23&_nc_ht=scontent.fmnl33-1.fna&_nc_gid=Klpvs0eYzOZvmUEPFPYwJQ&_nc_ss=7b289&oh=00_AQEaraIvaryeHFJFJCXKyUidl9UArJfF7geCInPpXquTwA&oe=6A846075" 
-                  alt="Malabon Pharmacy Logo" 
-                  className="w-full h-full rounded-lg object-cover"
-                />
+                {!logoImgError ? (
+                  <img 
+                    src="../public/icon.jpg" 
+                    alt="Malabon Pharmacy Logo" 
+                    className="w-full h-full rounded-lg object-cover"
+                    onError={() => setLogoImgError(true)}
+                  />
+                ) : (
+                  <div className="w-full h-full rounded-lg bg-[#1b5e59] flex items-center justify-center text-white font-bold text-xs tracking-wider shadow-inner">
+                    MP
+                  </div>
+                )}
               </div>
               {!isSidebarCollapsed && (
                 <div className="leading-tight">
@@ -1420,7 +1434,7 @@ export default function App() {
                 type="button" 
                 onClick={() => setIsSidebarCollapsed(c => !c)} 
                 className={`hidden md:flex p-1.5 rounded-lg transition-colors cursor-pointer ${
-                  theme === "dark" ? "text-slate-400 hover:text-white hover:bg-slate-800" : "text-slate-800 hover:text-slate-950 hover:bg-[#789291]"
+                  theme === "dark" ? "text-slate-400 hover:text-white hover:bg-[#1C2E2C]" : "text-slate-800 hover:text-slate-950 hover:bg-[#789291]"
                 }`}
               >
                 {isSidebarCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
@@ -1429,14 +1443,14 @@ export default function App() {
                 type="button" 
                 onClick={() => setIsSidebarOpen(false)} 
                 className={`md:hidden p-1.5 rounded-lg ${
-                  theme === "dark" ? "text-slate-400 hover:text-white hover:bg-slate-800" : "text-slate-800 hover:text-slate-950 hover:bg-[#789291]"
+                  theme === "dark" ? "text-slate-400 hover:text-white hover:bg-[#1C2E2C]" : "text-slate-800 hover:text-slate-950 hover:bg-[#789291]"
                 }`}
               >
                 <X className="w-6 h-6" />
               </button>
             </div>
           </div>
-          <nav className="space-y-1.5 flex-1 overflow-y-auto pr-1">
+          <nav className="space-y-1 flex-1 overflow-y-auto pr-1">
             {navigationTabs.map(tab => {
               const Icon = tab.icon
               const isActive = activeTab === tab.id
@@ -1445,40 +1459,36 @@ export default function App() {
                   key={tab.id} 
                   onClick={() => { setActiveTab(tab.id); setIsSidebarOpen(false) }} 
                   title={isSidebarCollapsed ? tab.label : undefined} 
-                  className={`w-full flex items-center ${isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3.5"} py-2.5 text-xs font-semibold tracking-wide antialiased transition-all duration-150 cursor-pointer ${
+                  className={`w-full flex items-center ${isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3.5"} py-2.5 text-xs font-semibold tracking-wide antialiased transition-all duration-150 cursor-pointer rounded-xl ${
                     isActive 
                       ? theme === "dark"
-                        ? "bg-blue-600 text-white font-bold shadow-md shadow-blue-600/30 rounded-xl"
-                        : "bg-white text-slate-900 font-bold shadow-xs rounded-full"
+                        ? "bg-[#1b5e59] text-white font-bold shadow-md shadow-[#1b5e59]/30"
+                        : "bg-white text-slate-900 font-bold shadow-xs"
                       : theme === "dark"
-                        ? "text-slate-300 hover:bg-slate-800 hover:text-white rounded-xl"
-                        : "text-slate-800 hover:bg-[#789291] hover:text-slate-950 rounded-xl font-medium"
+                        ? "text-slate-300 hover:bg-[#1C2E2C] hover:text-white font-medium"
+                        : "text-slate-800 hover:bg-[#789291] hover:text-slate-950 font-medium"
                   }`}
                 >
-                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? (theme === "dark" ? "text-white" : "text-blue-600") : (theme === "dark" ? "text-slate-400" : "text-slate-700")}`} />
+                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? (theme === "dark" ? "text-white" : "text-[#1b5e59]") : (theme === "dark" ? "text-slate-400" : "text-slate-700")}`} />
                   {!isSidebarCollapsed && <span>{tab.label}</span>}
                 </button>
               )
             })}
           </nav>
         </div>
-        <div className={`pt-3 border-t flex flex-col gap-2 shrink-0 ${
-          theme === "dark" ? "border-slate-800 text-slate-300" : "border-[#758e8d] text-slate-900"
+        <div className={`pt-3 border-t flex flex-col gap-2.5 shrink-0 ${
+          theme === "dark" ? "border-[#1C2E2C] text-slate-300" : "border-[#758e8d] text-slate-900"
         }`}>
           {!isSidebarCollapsed && (
             <div className="text-xs px-1">
               <p className="font-bold truncate max-w-[180px]">{currentOperator?.displayName}</p>
-              <p className={`text-[10px] font-mono uppercase ${theme === "dark" ? "text-slate-400" : "text-slate-700 font-bold"}`}>{currentOperator?.systemRole}</p>
+              <p className={`text-[11px] font-mono tracking-wide uppercase ${theme === "dark" ? "text-emerald-400 font-semibold" : "text-slate-800 font-bold"}`}>{currentOperator?.systemRole}</p>
             </div>
           )}
           <button 
             type="button" 
             onClick={handleLogout} 
-            className={`w-full flex items-center justify-center gap-2 py-2 px-3 font-bold rounded-xl transition-all text-xs cursor-pointer ${
-              theme === "dark" 
-                ? "bg-red-500/15 hover:bg-red-600 text-red-300 hover:text-white" 
-                : "bg-[#e5cccc] hover:bg-red-600 text-[#8b2326] hover:text-white"
-            }`}
+            className="w-full flex items-center justify-center gap-2 py-2 px-3 font-bold rounded-xl transition-all text-xs cursor-pointer bg-red-600 hover:bg-red-700 active:scale-95 text-white shadow-xs"
             title="Log Out Session"
           >
             <LogOut className="w-4 h-4 shrink-0" />
@@ -1488,50 +1498,52 @@ export default function App() {
       </aside>
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
         <header className={`px-4 sm:px-6 py-4 flex items-center justify-between shrink-0 ${
-          theme === "dark" ? "border-b border-slate-800 bg-slate-900/80" : "bg-transparent"
+          theme === "dark" ? "border-b border-[#1C2E2C] bg-[#131F1E]/90 backdrop-blur-xs" : "bg-transparent"
         }`}>
           <div className="flex items-center gap-3">
-            <button type="button" onClick={() => setIsSidebarOpen(true)} className="md:hidden p-1.5 text-slate-700 dark:text-white bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs"><Menu className="w-5 h-5" /></button>
-            <h1 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white tracking-tight">
-              {activeTab === "dashboard" && "Dashboard"}
-              {activeTab === "pos" && "Pos–Checkout"}
-              {activeTab === "inventory" && "Item specs"}
-              {activeTab === "stock_adjust" && "Inventory"}
-              {activeTab === "history" && "Sales History"}
-              {activeTab === "reports" && "Sales Report"}
-              {activeTab === "attendance" && "Staff Attendance"}
-              {activeTab === "admin_control" && "Admin Panel"}
-              {activeTab === "super_admin" && "Super Admin"}
-            </h1>
+            <button type="button" onClick={() => setIsSidebarOpen(true)} className="md:hidden p-1.5 text-slate-700 dark:text-white bg-white dark:bg-[#1C2E2C] rounded-xl border border-slate-200 dark:border-[#28413e] shadow-2xs"><Menu className="w-5 h-5" /></button>
+            <div>
+              <h1 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white tracking-tight">
+                {activeTab === "dashboard" && "Dashboard"}
+                {activeTab === "pos" && "Pos–Checkout"}
+                {activeTab === "inventory" && "Item specs"}
+                {activeTab === "stock_adjust" && "Inventory"}
+                {activeTab === "history" && "Sales History"}
+                {activeTab === "reports" && "Sales Report"}
+                {activeTab === "attendance" && "Staff Attendance"}
+                {activeTab === "admin_control" && "Admin Panel"}
+                {activeTab === "super_admin" && "Super Admin"}
+              </h1>
+            </div>
           </div>
           <div className="flex items-center gap-2.5">
             <button
               type="button"
               onClick={() => setShowAttendanceModal(true)}
-              className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs hover:shadow-md transition-all flex items-center gap-1.5 active:scale-95"
+              className="px-3.5 py-2 rounded-xl bg-[#1b5e59] hover:bg-[#154b47] text-white font-bold text-xs shadow-xs hover:shadow-md transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
               title="Time In / Time Out Attendance"
             >
               <Clock className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Time In / Out</span>
             </button>
-            <button type="button" onClick={() => setTheme(t => t === "light" ? "dark" : "light")} className="w-9 h-9 rounded-xl bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-xs hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+            <button type="button" onClick={() => setTheme(t => t === "light" ? "dark" : "light")} className="w-9 h-9 rounded-xl bg-white dark:bg-[#1C2E2C] border border-gray-200 dark:border-[#28413e] text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-xs hover:bg-gray-50 dark:hover:bg-[#233835] transition-colors cursor-pointer">
               {theme === "light" ? <Moon className="w-4 h-4 text-slate-700" /> : <Sun className="w-4 h-4 text-amber-400" />}
             </button>
             <div className="relative">
-              <button type="button" onClick={() => setShowNotifications(prev => !prev)} className="w-9 h-9 rounded-xl bg-white dark:bg-slate-800 border border-red-200 dark:border-red-900/50 text-red-500 flex items-center justify-center shadow-xs hover:bg-red-50 dark:hover:bg-slate-700 transition-colors">
+              <button type="button" onClick={() => setShowNotifications(prev => !prev)} className="w-9 h-9 rounded-xl bg-white dark:bg-[#1C2E2C] border border-red-200 dark:border-red-900/40 text-red-500 flex items-center justify-center shadow-xs hover:bg-red-50 dark:hover:bg-[#233835] transition-colors cursor-pointer">
                 <Bell className="w-4 h-4 text-red-500" />
-                {totalNotificationCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-extrabold px-1 py-0.2 rounded-full ring-2 ring-white dark:ring-slate-900 animate-pulse">{totalNotificationCount}</span>}
+                {totalNotificationCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold min-w-4.5 h-4.5 px-1 flex items-center justify-center rounded-full ring-2 ring-white dark:ring-[#131F1E] shadow-xs">{totalNotificationCount}</span>}
               </button>
               {showNotifications && (
-                <div className="absolute right-0 mt-3 w-80 sm:w-96 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-slate-700 p-4 z-50 space-y-3 font-sans">
-                  <div className="flex justify-between items-center border-b dark:border-slate-700 pb-2">
+                <div className="absolute right-0 mt-3 w-80 sm:w-96 bg-white dark:bg-[#131F1E] rounded-2xl shadow-2xl border border-gray-200 dark:border-[#1C2E2C] p-4 z-50 space-y-3 font-sans transition-all duration-150 animate-in fade-in-50 zoom-in-95">
+                  <div className="flex justify-between items-center border-b dark:border-[#1C2E2C] pb-2">
                     <h4 className="font-bold text-gray-900 dark:text-white text-sm flex items-center gap-1.5"><AlertTriangle className="w-4 h-4 text-orange-500" /> Active Notifications</h4>
-                    <button onClick={() => setShowNotifications(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xs p-1"><X className="w-4 h-4" /></button>
+                    <button onClick={() => setShowNotifications(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xs p-1 cursor-pointer"><X className="w-4 h-4" /></button>
                   </div>
                   <div className="max-h-72 overflow-y-auto space-y-3 text-xs">
                     <div>
                       <p className="font-bold text-orange-600 dark:text-orange-400 uppercase text-[10px] tracking-wider mb-1">Low Stock Alerts ({lowStockItems.length})</p>
-                      {lowStockItems.length === 0 ? <p className="text-gray-400 py-1">No low stock alerts.</p> : lowStockItems.map(item => <div key={item.id} onClick={() => handleSelectStockProduct(item.name, item.id)} className="p-2 bg-orange-50/60 dark:bg-orange-950/40 rounded-lg border border-orange-100 dark:border-orange-900/50 mb-1 flex justify-between cursor-pointer hover:bg-orange-100/60 dark:hover:bg-orange-900/60 transition-colors"><span className="font-medium text-gray-900 dark:text-gray-100">{item.name}</span><span className="font-bold text-orange-700 dark:text-orange-300">{item.stock} left</span></div>)}
+                      {lowStockItems.length === 0 ? <p className="text-gray-400 py-1">No low stock alerts.</p> : lowStockItems.map(item => <div key={item.id} onClick={() => handleSelectStockProduct(item.name, item.id)} className="p-2 bg-orange-50/60 dark:bg-orange-950/30 rounded-lg border border-orange-100 dark:border-orange-900/40 mb-1 flex justify-between cursor-pointer hover:bg-orange-100/60 dark:hover:bg-orange-900/50 transition-colors"><span className="font-medium text-gray-900 dark:text-gray-100">{item.name}</span><span className="font-bold text-orange-700 dark:text-orange-300">{item.stock} left</span></div>)}
                     </div>
                     <div>
                       <p className="font-bold text-red-600 dark:text-red-400 uppercase text-[10px] tracking-wider mb-1">Expiring Batch Alerts ({expiringItems.length})</p>
@@ -1542,7 +1554,7 @@ export default function App() {
                           <div 
                             key={idx} 
                             onClick={() => handleSelectStockProduct(item.name)} 
-                            className="p-2 bg-red-50/60 dark:bg-red-950/40 rounded-lg border border-red-100 dark:border-red-900/50 mb-1 flex justify-between items-center cursor-pointer hover:bg-red-100/60 dark:hover:bg-red-900/60 transition-colors"
+                            className="p-2 bg-red-50/60 dark:bg-red-950/30 rounded-lg border border-red-100 dark:border-red-900/40 mb-1 flex justify-between items-center cursor-pointer hover:bg-red-100/60 dark:hover:bg-red-900/50 transition-colors"
                           >
                             <span className="font-medium text-gray-900 dark:text-gray-100">{item.name}</span>
                             <span className="font-bold text-red-700 dark:text-red-300">{item.daysLeft <= 0 ? "EXPIRED" : `${item.daysLeft}d left`}</span>

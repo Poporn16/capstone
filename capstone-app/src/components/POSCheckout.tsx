@@ -33,6 +33,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
   const [showReceipt, setShowReceipt] = useState(false)
   const [showOthersModal, setShowOthersModal] = useState(false)
   const [lastSale, setLastSale] = useState<any>(null)
+  const [checkoutError, setCheckoutError] = useState<string | null>(null)
   
   const [discountType, setDiscountType] = useState<DiscountType>("none")
   const [customDiscountPercent, setCustomDiscountPercent] = useState<number>(0)
@@ -488,7 +489,9 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
 
     // Validation Error: Required ONLY on discounted checkouts (Regular sale is optional)
     if (discountType !== "none" && (!trimmedCustomer || !trimmedIdNumber)) {
-      alert("Validation Error: Customer Name and ID Number are required before completing a discounted checkout.")
+      const errMsg = "Customer Name and ID Number are required before completing a discounted checkout."
+      setCheckoutError(errMsg)
+      triggerScanToast(errMsg, "warning")
       return
     }
 
@@ -499,7 +502,9 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
         p.name.toLowerCase() !== trimmedCustomer.toLowerCase()
       )
       if (conflictById) {
-        alert(`⚠️ ID Conflict Error: ID Number "${trimmedIdNumber}" is already registered to "${conflictById.name}" in the system. You cannot reuse this ID number for a different customer ("${trimmedCustomer}"). Please correct the ID Number or select "${conflictById.name}".`)
+        const errMsg = `ID Conflict Error: ID Number "${trimmedIdNumber}" is already registered to "${conflictById.name}". You cannot reuse this ID number for a different customer ("${trimmedCustomer}").`
+        setCheckoutError(errMsg)
+        triggerScanToast(errMsg, "error")
         return
       }
     }
@@ -510,18 +515,24 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
         p.idNumber.toLowerCase() !== trimmedIdNumber.toLowerCase()
       )
       if (conflictByName) {
-        alert(`⚠️ ID Conflict Error: Customer "${conflictByName.name}" is already registered under ID Number "${conflictByName.idNumber}". You entered a conflicting ID Number ("${trimmedIdNumber}"). Please use ID Number "${conflictByName.idNumber}".`)
+        const errMsg = `ID Conflict Error: Customer "${conflictByName.name}" is already registered under ID Number "${conflictByName.idNumber}". Please use ID Number "${conflictByName.idNumber}".`
+        setCheckoutError(errMsg)
+        triggerScanToast(errMsg, "error")
         return
       }
     }
 
     // Validation Error: Online Payment Reference Number is strictly required before checkout
     if (paymentMethod === "other" && !referenceNumber.trim()) {
-      alert("Validation Error: Please enter the Reference Number for the online payment before proceeding to checkout.")
+      const errMsg = "Please enter the Reference Number for the online payment before proceeding to checkout."
+      setCheckoutError(errMsg)
+      triggerScanToast(errMsg, "warning")
       return
     }
 
     if (!cart.length || (paymentMethod === "cash" && numericCash < total)) return
+
+    setCheckoutError(null)
 
     const fullCustomerName = trimmedCustomer
       ? (trimmedIdNumber ? `${trimmedCustomer} (ID: ${trimmedIdNumber})` : trimmedCustomer)
@@ -581,6 +592,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
     setCustomerIdNumber("")
     setShowCustomerSuggestions(false)
     setSelectedGenericGroup(null)
+    setCheckoutError(null)
     setShowReceipt(true)
   }
 
@@ -588,10 +600,14 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
     <>
       {/* Floating Scan Feedback Banner */}
       {scanToast && (
-        <div className="fixed top-16 right-6 z-50 animate-in fade-in slide-in-from-top-3 duration-200 pointer-events-none">
+        <div 
+          role="status" 
+          aria-live="polite" 
+          className="fixed top-16 right-6 z-50 animate-in fade-in slide-in-from-top-3 duration-200 pointer-events-none"
+        >
           <div className={`px-4 py-2.5 rounded-2xl shadow-xl border flex items-center gap-2.5 text-xs font-bold backdrop-blur-md ${
             scanToast.type === "success"
-              ? "bg-emerald-600 text-white border-emerald-500 shadow-emerald-500/20"
+              ? "bg-[#1b5e59] text-white border-[#154b47] shadow-[#1b5e59]/20"
               : scanToast.type === "warning"
                 ? "bg-amber-500 text-white border-amber-400 shadow-amber-500/20"
                 : "bg-rose-600 text-white border-rose-500 shadow-rose-500/20"
@@ -614,6 +630,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
               <input 
                 type="text" 
                 data-barcode-scanner="true"
+                aria-label="Search product name or barcode"
                 placeholder="Search product name or code.." 
                 value={query} 
                 onChange={e => handleQueryChange(e.target.value)} 
@@ -639,14 +656,15 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                     }
                   }
                 }}
-                className="w-full px-4 py-2.5 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-800 dark:text-white rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-gray-400 font-medium" 
+                className="w-full pl-4 pr-10 py-2.5 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-white rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-[#1b5e59]/25 focus:border-[#1b5e59] dark:focus:ring-[#2dd4bf]/25 dark:focus:border-[#2dd4bf] transition-all placeholder:text-slate-400 font-medium" 
               />
               {query && (
                 <button 
                   type="button" 
                   onClick={() => handleQueryChange("")}
-                  className="absolute right-3 p-1 rounded-full text-gray-400 hover:text-gray-600 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                  className="absolute right-3 p-1 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
                   title="Clear search"
+                  aria-label="Clear search input"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -654,14 +672,16 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
             </div>
 
             {/* Category Tabs */}
-            <div className="flex gap-2 bg-slate-100/60 dark:bg-slate-900/60 p-2 rounded-2xl overflow-x-auto border border-slate-200/50 dark:border-slate-700/80 scrollbar-none">
+            <div role="tablist" aria-label="Product categories" className="flex gap-2 bg-slate-100/60 dark:bg-slate-900/60 p-2 rounded-2xl overflow-x-auto border border-slate-200/50 dark:border-slate-700/80 scrollbar-none">
               <button 
                 type="button" 
+                role="tab"
+                aria-selected={activeCategoryTab === "all"}
                 onClick={() => handleCategoryTabChange("all")} 
-                className={`px-4 py-2 rounded-xl font-bold text-xs transition-all border whitespace-nowrap cursor-pointer ${
+                className={`px-4 py-2 rounded-xl font-bold text-xs transition-all border whitespace-nowrap cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59] ${
                   activeCategoryTab === "all"
-                    ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                    : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/70 hover:text-blue-600 dark:hover:text-blue-400'
+                    ? 'bg-[#1b5e59] text-white border-[#1b5e59] dark:bg-[#2dd4bf] dark:text-[#042f2e] dark:border-[#2dd4bf] shadow-xs'
+                    : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/70 hover:text-[#1b5e59] dark:hover:text-[#2dd4bf]'
                 }`}
               >
                 ALL
@@ -669,11 +689,13 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
               
               <button 
                 type="button" 
+                role="tab"
+                aria-selected={activeCategoryTab === "unmarked category"}
                 onClick={() => handleCategoryTabChange("unmarked category")} 
-                className={`px-4 py-2 rounded-xl font-bold text-xs uppercase transition-all border whitespace-nowrap cursor-pointer ${
+                className={`px-4 py-2 rounded-xl font-bold text-xs uppercase transition-all border whitespace-nowrap cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59] ${
                   activeCategoryTab === "unmarked category"
-                    ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                    : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/70 hover:text-blue-600 dark:hover:text-blue-400'
+                    ? 'bg-[#1b5e59] text-white border-[#1b5e59] dark:bg-[#2dd4bf] dark:text-[#042f2e] dark:border-[#2dd4bf] shadow-xs'
+                    : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/70 hover:text-[#1b5e59] dark:hover:text-[#2dd4bf]'
                 }`}
               >
                 UNMARKED CATEGORY
@@ -685,11 +707,13 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                   <button 
                     key={cat} 
                     type="button" 
+                    role="tab"
+                    aria-selected={isActive}
                     onClick={() => handleCategoryTabChange(cat)} 
-                    className={`px-4 py-2 rounded-xl font-bold text-xs uppercase transition-all border whitespace-nowrap cursor-pointer ${
+                    className={`px-4 py-2 rounded-xl font-bold text-xs uppercase transition-all border whitespace-nowrap cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59] ${
                       isActive 
-                        ? 'bg-blue-600 text-white border-blue-600 shadow-xs' 
-                        : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/70 hover:text-blue-600 dark:hover:text-blue-400'
+                        ? 'bg-[#1b5e59] text-white border-[#1b5e59] dark:bg-[#2dd4bf] dark:text-[#042f2e] dark:border-[#2dd4bf] shadow-xs' 
+                        : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/70 hover:text-[#1b5e59] dark:hover:text-[#2dd4bf]'
                     }`}
                   >
                     {cat}
@@ -709,12 +733,12 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                 <button 
                   type="button" 
                   onClick={() => setSelectedGenericGroup(null)} 
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 dark:bg-blue-950/80 hover:bg-blue-100 dark:hover:bg-blue-900 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded-lg font-bold text-xs shadow-2xs transition-all cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-950/80 hover:bg-emerald-100 dark:hover:bg-emerald-900 text-[#1b5e59] dark:text-[#2dd4bf] border border-emerald-200 dark:border-emerald-800 rounded-lg font-bold text-xs shadow-2xs transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
                 >
                   <ArrowLeft className="w-4 h-4" />
                   Back to Grid
                 </button>
-                <span className="font-extrabold text-xs text-blue-600 dark:text-blue-400 tracking-wider uppercase">{selectedGenericGroup} OPTIONS</span>
+                <span className="font-extrabold text-xs text-[#1b5e59] dark:text-[#2dd4bf] tracking-wider uppercase">{selectedGenericGroup} OPTIONS</span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
@@ -729,7 +753,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                       type="button" 
                       onClick={() => handleItemCardClick(item)}
                       disabled={item.stock === 0}
-                      className={`relative text-left p-3 rounded-2xl ${catStyle.border} ${catStyle.bg} transition-all flex flex-col justify-between min-h-[110px] cursor-pointer ${
+                      className={`relative text-left p-3 rounded-2xl ${catStyle.border} ${catStyle.bg} transition-all flex flex-col justify-between min-h-[110px] cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59] ${
                         item.stock === 0 
                           ? 'opacity-40 cursor-not-allowed'
                           : 'card-hover hover:shadow-md'
@@ -738,7 +762,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                       <div className="flex justify-between items-center gap-1.5">
                         <div className="flex items-center gap-1">
                           {itemHasDiff && (
-                            <span className="px-1.5 py-0.5 rounded-md bg-indigo-600 text-white text-[8px] font-black uppercase tracking-wider">Options</span>
+                            <span className="px-1.5 py-0.5 rounded-md bg-[#154b47] text-white text-[8px] font-black uppercase tracking-wider">Options</span>
                           )}
                           <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${catStyle.badge}`}>
                             {item.category || "Unmarked"}
@@ -756,8 +780,8 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                       </div>
                       <div className="font-bold text-gray-900 dark:text-white text-xs leading-snug mt-1.5">{item.name}</div>
                       <div className="flex justify-between items-center pt-2 mt-1.5 font-mono border-t border-gray-200/60 dark:border-slate-700/60">
-                        <span className="text-gray-400 dark:text-slate-400 text-[9px] font-normal">{item.barcode || "No Barcode"}</span>
-                        <span className="text-blue-600 dark:text-blue-400 font-bold text-xs">₱{displayUnitPrice.toFixed(2)}</span>
+                        <span className="text-gray-500 dark:text-slate-400 text-[9px] font-normal">{item.barcode || "No Barcode"}</span>
+                        <span className="text-[#1b5e59] dark:text-[#2dd4bf] font-bold text-xs">₱{displayUnitPrice.toFixed(2)}</span>
                       </div>
                     </button>
                   )
@@ -768,7 +792,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
             <div className="space-y-3">
               <div className="flex justify-between items-center">
                 <h2 className="font-bold text-xs text-gray-800 dark:text-slate-200 tracking-wide flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-blue-500" />
+                  <Sparkles className="w-3.5 h-3.5 text-[#1b5e59] dark:text-[#2dd4bf]" />
                   Available Products Catalogue
                 </h2>
                 <span className="text-[10px] text-gray-500 dark:text-slate-400 font-mono font-bold">
@@ -797,7 +821,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                         }
                       }}
                       disabled={totalStock === 0}
-                      className={`text-left p-3 rounded-2xl ${catStyle.border} ${catStyle.bg} transition-all flex flex-col justify-between min-h-[110px] relative cursor-pointer ${
+                      className={`text-left p-3 rounded-2xl ${catStyle.border} ${catStyle.bg} transition-all flex flex-col justify-between min-h-[110px] relative cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59] ${
                         totalStock === 0 
                           ? 'opacity-40 cursor-not-allowed' 
                           : 'card-hover hover:shadow-md'
@@ -806,9 +830,9 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                       <div className="flex justify-between items-center gap-1">
                         <div className="flex items-center gap-1 truncate">
                           {hasVariants ? (
-                            <span className="px-1.5 py-0.5 rounded-md bg-blue-600 text-white text-[8px] font-black uppercase tracking-wider">Group</span>
+                            <span className="px-1.5 py-0.5 rounded-md bg-[#1b5e59] text-white text-[8px] font-black uppercase tracking-wider">Group</span>
                           ) : hasManufacturerOptions ? (
-                            <span className="px-1.5 py-0.5 rounded-md bg-indigo-600 text-white text-[8px] font-black uppercase tracking-wider">Options</span>
+                            <span className="px-1.5 py-0.5 rounded-md bg-[#154b47] text-white text-[8px] font-black uppercase tracking-wider">Options</span>
                           ) : null}
                           <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider truncate ${catStyle.badge}`}>
                             {primaryItem?.category || "Unmarked"}
@@ -827,11 +851,11 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                       <div className="font-bold text-gray-900 dark:text-white text-xs leading-snug mt-1.5 truncate-2-lines">{groupName}</div>
                       <div className="mt-2 flex items-center justify-between text-[10px] pt-1.5 border-t border-gray-200/60 dark:border-slate-700/60">
                         {hasVariants ? (
-                          <span className="text-[9px] text-blue-600 dark:text-blue-400 font-bold">{itemsInGroup.length} variants</span>
+                          <span className="text-[9px] text-[#1b5e59] dark:text-[#2dd4bf] font-bold">{itemsInGroup.length} variants</span>
                         ) : (
-                          <span className="text-[9px] text-gray-400 dark:text-slate-400 font-mono">{primaryItem?.barcode || "No Barcode"}</span>
+                          <span className="text-[9px] text-gray-500 dark:text-slate-400 font-mono">{primaryItem?.barcode || "No Barcode"}</span>
                         )}
-                        <span className="text-blue-600 dark:text-blue-400 font-bold text-xs font-mono ml-auto">
+                        <span className="text-[#1b5e59] dark:text-[#2dd4bf] font-bold text-xs font-mono ml-auto">
                           ₱{displayUnitPrice.toFixed(2)}
                         </span>
                       </div>
@@ -850,7 +874,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
           <div className="flex items-center justify-between pb-2 border-b dark:border-slate-700 shrink-0">
             <h2 className="font-semibold text-xs text-gray-900 dark:text-white uppercase tracking-wider">Current Sale Cart</h2>
             {cart.length > 0 && (
-              <span className="bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 font-bold px-2 py-0.5 rounded-full text-[10px]">
+              <span className="bg-[#1b5e59]/15 text-[#1b5e59] dark:bg-[#2dd4bf]/20 dark:text-[#2dd4bf] font-bold px-2 py-0.5 rounded-full text-[10px]">
                 {cart.reduce((sum, item) => sum + item.quantity, 0)} items
               </span>
             )}
@@ -892,30 +916,53 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                       const itemTotal = getCartItemLineTotal(ci)
                       const avgUnitPrice = itemTotal / (ci.quantity || 1)
                       return (
-                        <div key={cartKey} className={`flex justify-between items-center px-2.5 py-1.5 bg-white dark:bg-slate-800 ${itemIdx < groupItems.length - 1 ? 'border-b border-dashed border-gray-100 dark:border-slate-700' : ''}`}>
+                        <div key={cartKey} className={`flex justify-between items-center px-2.5 py-1.5 bg-white dark:bg-slate-800 animate-in fade-in slide-in-from-top-1 duration-150 ${itemIdx < groupItems.length - 1 ? 'border-b border-dashed border-slate-100 dark:border-slate-700' : ''}`}>
                           <div className="flex-1 min-w-0 pr-2">
-                            <p className="font-bold text-gray-900 dark:text-white truncate text-[10px]">{ci.item.name}</p>
+                            <p className="font-bold text-slate-900 dark:text-white truncate text-[10px]">{ci.item.name}</p>
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-gray-400 font-mono text-[9px]">₱{avgUnitPrice.toFixed(2)} / pc</span>
+                              <span className="text-slate-400 font-mono tabular-nums text-[9px]">₱{avgUnitPrice.toFixed(2)} / pc</span>
                               {ci.batch && (
-                                <span className="text-[9px] font-bold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-1.5 py-0.5 rounded border border-blue-200/60 dark:border-blue-800/60">
+                                <span className="text-[9px] font-bold text-[#1b5e59] dark:text-[#2dd4bf] bg-emerald-50 dark:bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-200/60 dark:border-emerald-800/60">
                                   {ci.batch.manufacturer || ci.batch.batchLabel || "Batch"}
                                 </span>
                               )}
                             </div>
                           </div>
                           <div className="flex items-center gap-1">
-                            <button type="button" onClick={() => updateQtyDelta(cartKey, -1, maxStock)} className="w-5 h-5 border bg-gray-50 dark:bg-slate-700 rounded font-bold hover:bg-gray-100 flex items-center justify-center text-gray-700 dark:text-gray-200 text-xs">-</button>
+                            <button 
+                              type="button" 
+                              aria-label={`Decrease quantity for ${ci.item.name}`}
+                              onClick={() => updateQtyDelta(cartKey, -1, maxStock)} 
+                              className="w-7 h-7 sm:w-8 sm:h-8 border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700 rounded-lg font-bold hover:bg-slate-100 dark:hover:bg-slate-600 flex items-center justify-center text-slate-700 dark:text-slate-200 text-sm transition-all active:scale-95 cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
+                            >
+                              −
+                            </button>
                             <input
                               type="text"
+                              aria-label={`Quantity for ${ci.item.name}`}
                               value={ci.quantity === 0 ? "" : ci.quantity}
                               onFocus={e => e.target.select()}
                               onChange={e => handleManualQtyChange(cartKey, e.target.value, maxStock)}
                               onBlur={() => handleQtyBlur(cartKey)}
-                              className="w-10 text-center border rounded font-mono font-bold text-gray-900 dark:text-white bg-white dark:bg-slate-900 text-xs py-0.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                              className="w-10 sm:w-11 h-7 sm:h-8 text-center border border-slate-200 dark:border-slate-700 rounded-lg font-mono tabular-nums font-bold text-slate-900 dark:text-white bg-white dark:bg-slate-900 text-xs py-0.5 focus:ring-2 focus:ring-[#1b5e59] focus:outline-none"
                             />
-                            <button type="button" onClick={() => updateQtyDelta(cartKey, 1, maxStock)} className="w-5 h-5 border bg-gray-50 dark:bg-slate-700 rounded font-bold hover:bg-gray-100 flex items-center justify-center text-gray-700 dark:text-gray-200 text-xs">+</button>
-                            <button type="button" onClick={() => setCart(prev => prev.filter(i => getCartItemKey(i) !== cartKey))} className="text-red-400 ml-0.5 font-bold text-xs hover:text-red-600">×</button>
+                            <button 
+                              type="button" 
+                              aria-label={`Increase quantity for ${ci.item.name}`}
+                              onClick={() => updateQtyDelta(cartKey, 1, maxStock)} 
+                              className="w-7 h-7 sm:w-8 sm:h-8 border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700 rounded-lg font-bold hover:bg-slate-100 dark:hover:bg-slate-600 flex items-center justify-center text-slate-700 dark:text-slate-200 text-sm transition-all active:scale-95 cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
+                            >
+                              +
+                            </button>
+                            <button 
+                              type="button" 
+                              aria-label={`Remove ${ci.item.name} from cart`}
+                              onClick={() => setCart(prev => prev.filter(i => getCartItemKey(i) !== cartKey))} 
+                              className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-bold text-sm cursor-pointer ml-0.5 transition-colors focus-visible:ring-2 focus-visible:ring-rose-500"
+                              title="Remove item"
+                            >
+                              ×
+                            </button>
                           </div>
                         </div>
                       )
@@ -929,39 +976,40 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
 
           {/* Fixed Bottom Section: Totals, Discounts, Payment, Complete Button */}
           <div className="shrink-0 pt-2 border-t dark:border-slate-700 space-y-2">
-            <div className="space-y-1 text-gray-600 dark:text-slate-300 text-[11px]">
+            <div className="space-y-1 text-slate-600 dark:text-slate-300 text-[11px]">
               <div className="flex justify-between">
                 <span>Gross Total Price:</span>
-                <span>₱{subtotal.toFixed(2)}</span>
+                <span className="font-mono tabular-nums">₱{subtotal.toFixed(2)}</span>
               </div>
               {computedDiscount > 0 && (
-                <div className="flex justify-between text-green-700 dark:text-green-400 font-bold">
+                <div className="flex justify-between text-emerald-700 dark:text-emerald-400 font-bold">
                   <span>Applied Markdown ({getDiscountLabel()}):</span>
-                  <span>-₱{computedDiscount.toFixed(2)}</span>
+                  <span className="font-mono tabular-nums">-₱{computedDiscount.toFixed(2)}</span>
                 </div>
               )}
               <div className="flex justify-between">
                 <span>Net Taxable Base (VAT Ex):</span>
-                <span>₱{(total / (isStatutoryDiscount ? 1 : 1.12)).toFixed(2)}</span>
+                <span className="font-mono tabular-nums">₱{(total / (isStatutoryDiscount ? 1 : 1.12)).toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
                 <span>Value Added Tax (12%):</span>
-                <span>{isStatutoryDiscount ? "₱0.00 (Exempt)" : `₱${vat.toFixed(2)}`}</span>
+                <span className="font-mono tabular-nums">{isStatutoryDiscount ? "₱0.00 (Exempt)" : `₱${vat.toFixed(2)}`}</span>
               </div>
-              <div className="flex justify-between border-t border-dashed dark:border-slate-700 pt-1.5 font-bold text-gray-900 dark:text-white text-xs">
+              <div className="flex justify-between border-t border-dashed dark:border-slate-700 pt-1.5 font-bold text-slate-900 dark:text-white text-xs">
                 <span>Total Bill Due:</span>
-                <span className="text-sm text-blue-600 dark:text-blue-400 font-bold font-mono">₱{total.toFixed(2)}</span>
+                <span className="text-sm text-[#1b5e59] dark:text-[#2dd4bf] font-bold font-mono tabular-nums">₱{total.toFixed(2)}</span>
               </div>
             </div>
 
             {paymentMethod === "cash" && cart.length > 0 && (
-              <div className="space-y-2 p-2.5 bg-blue-50/50 dark:bg-blue-950/40 rounded-xl border border-blue-100 dark:border-blue-900/50 text-[11px]">
+              <div className="space-y-2 p-2.5 bg-emerald-50/40 dark:bg-emerald-950/30 rounded-xl border border-emerald-100 dark:border-emerald-900/50 text-[11px]">
                 <div className="flex justify-between items-center gap-2">
-                  <label className="font-bold whitespace-nowrap text-gray-700 dark:text-slate-200">Cash Rendered:</label>
+                  <label className="font-bold whitespace-nowrap text-slate-700 dark:text-slate-200">Cash Rendered:</label>
                   <input 
                     type="text" 
                     inputMode="decimal"
                     pattern="[0-9]*\.?[0-9]*"
+                    aria-label="Cash Rendered"
                     value={cashReceived} 
                     onKeyDown={(e) => {
                       if (e.key === "-" || e.key === "+" || e.key.toLowerCase() === "e") {
@@ -974,7 +1022,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                       setCashReceived(sanitized)
                     }} 
                     placeholder="0.00" 
-                    className="w-28 text-right p-1.5 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-lg font-mono font-bold text-gray-900 dark:text-white text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" 
+                    className="w-28 text-right p-1.5 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-lg font-mono tabular-nums font-bold text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-[#1b5e59]/25 focus:border-[#1b5e59] dark:focus:ring-[#2dd4bf]/25 dark:focus:border-[#2dd4bf]" 
                   />
                 </div>
                 
@@ -983,7 +1031,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                   <button
                     type="button"
                     onClick={() => setCashReceived(total.toFixed(2))}
-                    className="px-2 py-0.5 rounded-md bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/60 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-300 font-bold text-[10px] transition-colors cursor-pointer"
+                    className="px-2 py-0.5 rounded-md bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-900/60 dark:hover:bg-emerald-800 text-[#1b5e59] dark:text-[#2dd4bf] font-bold text-[10px] transition-all active:scale-95 cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
                   >
                     Exact (₱{total.toFixed(2)})
                   </button>
@@ -992,7 +1040,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                       key={amt}
                       type="button"
                       onClick={() => setCashReceived(amt.toString())}
-                      className="px-2 py-0.5 rounded-md bg-white hover:bg-gray-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 border border-gray-200 dark:border-slate-700 font-mono font-bold text-[10px] transition-colors cursor-pointer"
+                      className="px-2 py-0.5 rounded-md bg-white hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-mono tabular-nums font-bold text-[10px] transition-all active:scale-95 cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
                     >
                       ₱{amt}
                     </button>
@@ -1000,9 +1048,9 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                 </div>
 
                 {parseFloat(cashReceived) > 0 && (
-                  <div className="flex justify-between items-center text-[10px] pt-1.5 border-t border-blue-100 dark:border-blue-900">
-                    <span className="text-gray-600 dark:text-slate-300">Change Return:</span>
-                    <span className={`font-bold font-mono text-xs ${parseFloat(cashReceived) - total < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                  <div className="flex justify-between items-center text-[10px] pt-1.5 border-t border-emerald-100 dark:border-emerald-900">
+                    <span className="text-slate-600 dark:text-slate-300">Change Return:</span>
+                    <span className={`font-bold font-mono tabular-nums text-xs ${parseFloat(cashReceived) - total < 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
                       {parseFloat(cashReceived) - total < 0 ? `Short: ₱${Math.abs(parseFloat(cashReceived) - total).toFixed(2)}` : `₱${(parseFloat(cashReceived) - total).toFixed(2)}`}
                     </span>
                   </div>
@@ -1019,7 +1067,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                   <button 
                     type="button" 
                     onClick={() => { setDiscountType("none"); setCustomerName(""); }} 
-                    className="text-[9px] text-red-600 dark:text-red-400 hover:underline font-bold"
+                    className="text-[9px] text-red-600 dark:text-red-400 hover:underline font-bold focus-visible:ring-2 focus-visible:ring-red-500"
                   >
                     Clear Discount (×)
                   </button>
@@ -1030,14 +1078,14 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                 <button 
                   type="button" 
                   onClick={() => setDiscountType(prev => prev === "senior" ? "none" : "senior")} 
-                  className={`p-1.5 border rounded-lg text-[9px] font-bold uppercase transition-all ${discountType==='senior'?'bg-blue-600 text-white border-blue-600 shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
+                  className={`p-1.5 border rounded-lg text-[9px] font-bold uppercase transition-all focus-visible:ring-2 focus-visible:ring-[#1b5e59] ${discountType==='senior'?'bg-[#1b5e59] text-white border-[#1b5e59] dark:bg-[#2dd4bf] dark:text-[#042f2e] dark:border-[#2dd4bf] shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
                 >
                   SENIOR (20%)
                 </button>
                 <button 
                   type="button" 
                   onClick={() => setDiscountType(prev => prev === "pwd" ? "none" : "pwd")} 
-                  className={`p-1.5 border rounded-lg text-[9px] font-bold uppercase transition-all ${discountType==='pwd'?'bg-blue-600 text-white border-blue-600 shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
+                  className={`p-1.5 border rounded-lg text-[9px] font-bold uppercase transition-all focus-visible:ring-2 focus-visible:ring-[#1b5e59] ${discountType==='pwd'?'bg-[#1b5e59] text-white border-[#1b5e59] dark:bg-[#2dd4bf] dark:text-[#042f2e] dark:border-[#2dd4bf] shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
                 >
                   PWD (20%)
                 </button>
@@ -1051,7 +1099,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                       setShowOthersModal(true)
                     }
                   }} 
-                  className={`p-1.5 border rounded-lg text-[9px] font-bold uppercase tracking-wide truncate transition-all ${isOthersActive?'bg-blue-600 text-white border-blue-600 shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
+                  className={`p-1.5 border rounded-lg text-[9px] font-bold uppercase tracking-wide truncate transition-all focus-visible:ring-2 focus-visible:ring-[#1b5e59] ${isOthersActive?'bg-[#1b5e59] text-white border-[#1b5e59] dark:bg-[#2dd4bf] dark:text-[#042f2e] dark:border-[#2dd4bf] shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
                 >
                   {discountType === "soloparent" ? "SOLO (10%)" : discountType === "naac" ? "NAAC (20%)" : discountType === "custom" ? `CUSTOM (${customDiscountPercent}%)` : "OTHERS..."}
                 </button>
@@ -1059,10 +1107,10 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
 
               {/* Customer / Named Person ID & Name Entry Card - Shown only when a discount is selected */}
               {discountType !== "none" && (
-                <div className="p-2.5 bg-blue-50/40 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900/60 rounded-xl space-y-2 animate-in fade-in duration-150">
+                <div className="p-2.5 bg-emerald-50/40 dark:bg-emerald-950/20 border border-emerald-200/80 dark:border-emerald-900/60 rounded-xl space-y-2 animate-in fade-in duration-150">
                   <div className="flex justify-between items-center">
-                    <label className="text-[10px] font-extrabold text-blue-900 dark:text-blue-300 uppercase tracking-wider flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                    <label className="text-[10px] font-extrabold text-[#1b5e59] dark:text-[#2dd4bf] uppercase tracking-wider flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-[#1b5e59] dark:text-[#2dd4bf]" />
                       Named Person & ID Auto-Fill
                     </label>
                   </div>
@@ -1086,7 +1134,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                         onFocus={() => setShowCustomerSuggestions(true)}
                         onBlur={() => setTimeout(() => setShowCustomerSuggestions(false), 200)}
                         onChange={e => handleIdNumberChange(e.target.value)}
-                        className="w-full p-1.5 border bg-white dark:bg-slate-900 border-gray-300 dark:border-slate-700 rounded-lg text-xs text-gray-900 dark:text-white font-mono font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                        className="w-full p-1.5 border bg-white dark:bg-slate-900 border-gray-300 dark:border-slate-700 rounded-lg text-xs text-gray-900 dark:text-white font-mono font-bold focus:ring-2 focus:ring-[#1b5e59] dark:focus:ring-[#2dd4bf] focus:outline-none"
                       />
                     </div>
 
@@ -1101,25 +1149,26 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                         onFocus={() => setShowCustomerSuggestions(true)}
                         onBlur={() => setTimeout(() => setShowCustomerSuggestions(false), 200)}
                         onChange={e => handleCustomerNameChange(e.target.value)}
-                        className="w-full p-1.5 border bg-white dark:bg-slate-900 border-gray-300 dark:border-slate-700 rounded-lg text-xs text-gray-900 dark:text-white font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                        className="w-full p-1.5 border bg-white dark:bg-slate-900 border-gray-300 dark:border-slate-700 rounded-lg text-xs text-gray-900 dark:text-white font-bold focus:ring-2 focus:ring-[#1b5e59] dark:focus:ring-[#2dd4bf] focus:outline-none"
                       />
                     </div>
                   </div>
 
-                  <p className="text-[9px] text-blue-700 dark:text-blue-300 font-medium italic">
+                  <p className="text-[9px] text-[#154b47] dark:text-[#2dd4bf] font-medium italic">
                     💡 Type ID <span className="font-mono font-bold">10101</span> to auto-fill <span className="font-bold">Kervin</span>, or type name to auto-fill ID.
                   </p>
 
                   {/* Suggestions dropdown matching both ID & Name */}
                   {showCustomerSuggestions && (customerName.trim().length > 0 || customerIdNumber.trim().length > 0) && (
                     <div className="relative z-40">
-                      <div className="absolute left-0 right-0 top-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl max-h-48 overflow-y-auto font-sans">
+                      <div role="listbox" aria-label="Matching customer registry" className="absolute left-0 right-0 top-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl max-h-48 overflow-y-auto font-sans">
                         <div className="flex items-center justify-between p-1.5 px-2.5 border-b dark:border-slate-700 bg-gray-50 dark:bg-slate-900 text-[9px] text-gray-500 dark:text-slate-400 font-bold uppercase">
                           <span>Matching ID & Person Registry</span>
                           <button
                             type="button"
+                            aria-label="Close suggestions"
                             onMouseDown={e => { e.preventDefault(); setShowCustomerSuggestions(false); }}
-                            className="text-red-500 hover:text-red-700 font-bold text-xs"
+                            className="text-red-500 hover:text-red-700 font-bold text-xs p-0.5"
                           >
                             ✕
                           </button>
@@ -1133,14 +1182,16 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                             <button
                               key={person.id}
                               type="button"
+                              role="option"
+                              aria-selected={customerIdNumber === person.idNumber}
                               onMouseDown={e => {
                                 e.preventDefault()
                                 selectNamedPerson(person)
                               }}
-                              className="w-full text-left px-3 py-2 text-xs text-gray-800 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-blue-900/40 font-medium flex items-center justify-between border-b border-gray-100 dark:border-slate-700/50 last:border-0"
+                              className="w-full text-left px-3 py-2 text-xs text-gray-800 dark:text-slate-200 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 font-medium flex items-center justify-between border-b border-gray-100 dark:border-slate-700/50 last:border-0 focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
                             >
                               <div>
-                                <span className="font-bold text-blue-600 dark:text-blue-400 font-mono mr-1">#{person.idNumber}</span>
+                                <span className="font-bold text-[#1b5e59] dark:text-[#2dd4bf] font-mono mr-1">#{person.idNumber}</span>
                                 <span className="font-bold text-gray-900 dark:text-white">{person.name}</span>
                                 {person.discountType && person.discountType !== "none" && (
                                   <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 uppercase font-bold">
@@ -1148,7 +1199,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                                   </span>
                                 )}
                               </div>
-                              <span className="text-[9px] bg-blue-600 text-white px-2 py-0.5 rounded font-bold uppercase">
+                              <span className="text-[9px] bg-[#1b5e59] dark:bg-[#2dd4bf] dark:text-[#042f2e] text-white px-2 py-0.5 rounded font-bold uppercase">
                                 Auto-Fill
                               </span>
                             </button>
@@ -1160,10 +1211,10 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
 
                   {/* Customer Previous Purchases Card */}
                   {customerName.trim() && customerPreviousSales.length > 0 && (
-                    <div className="mt-2 p-2 bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 rounded-lg space-y-1 text-xs animate-in fade-in duration-150">
-                      <div className="flex justify-between items-center text-[9px] font-bold text-blue-800 dark:text-blue-300 uppercase">
+                    <div className="mt-2 p-2 bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 rounded-lg space-y-1 text-xs animate-in fade-in duration-150">
+                      <div className="flex justify-between items-center text-[9px] font-bold text-[#154b47] dark:text-[#2dd4bf] uppercase">
                         <span>Previous History for "{customerName.trim()}"</span>
-                        <span className="bg-blue-200 dark:bg-blue-900 px-1.5 py-0.5 rounded">{customerPreviousSales.length} Total Orders</span>
+                        <span className="bg-emerald-200/70 dark:bg-emerald-900/60 px-1.5 py-0.5 rounded">{customerPreviousSales.length} Total Orders</span>
                       </div>
                       <div className="text-[10px] text-gray-700 dark:text-slate-300">
                         <span className="font-semibold text-gray-500">Last Order: </span>
@@ -1174,7 +1225,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                       <button
                         type="button"
                         onClick={() => readdPreviousItems(customerPreviousSales[0].items)}
-                        className="w-full mt-1 py-1 px-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-bold text-[10px] uppercase tracking-wide transition-colors flex items-center justify-center gap-1 shadow-2xs"
+                        className="w-full mt-1 py-1.5 px-2 bg-[#1b5e59] hover:bg-[#154b47] dark:bg-[#2dd4bf] dark:hover:bg-[#14b8a6] dark:text-[#042f2e] text-white rounded-lg font-bold text-[10px] uppercase tracking-wide transition-colors flex items-center justify-center gap-1 shadow-2xs cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
                       >
                         🛒 Re-add Previous Items to Cart
                       </button>
@@ -1190,14 +1241,14 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                 <button 
                   type="button" 
                   onClick={()=>setPaymentMethod("cash")} 
-                  className={`p-1.5 border rounded text-center uppercase font-bold tracking-wider text-[10px] transition-all ${paymentMethod==='cash'?'border-blue-600 bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 shadow-2xs':'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-50'}`}
+                  className={`p-1.5 border rounded-lg text-center uppercase font-bold tracking-wider text-[10px] transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59] ${paymentMethod==='cash'?'border-[#1b5e59] bg-[#1b5e59]/10 text-[#1b5e59] dark:border-[#2dd4bf] dark:bg-[#2dd4bf]/15 dark:text-[#2dd4bf] shadow-2xs':'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-50'}`}
                 >
                   Cash
                 </button>
                 <button 
                   type="button" 
                   onClick={()=>setPaymentMethod("other")} 
-                  className={`p-1.5 border rounded text-center font-bold tracking-tight text-[10px] uppercase transition-all flex items-center justify-center gap-1 ${paymentMethod==='other'?'border-blue-600 bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 shadow-2xs':'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-50'}`}
+                  className={`p-1.5 border rounded-lg text-center font-bold tracking-tight text-[10px] uppercase transition-all flex items-center justify-center gap-1 cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59] ${paymentMethod==='other'?'border-[#1b5e59] bg-[#1b5e59]/10 text-[#1b5e59] dark:border-[#2dd4bf] dark:bg-[#2dd4bf]/15 dark:text-[#2dd4bf] shadow-2xs':'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-50'}`}
                 >
                   <CreditCard className="w-3 h-3" />
                   Other (Online)
@@ -1205,15 +1256,15 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
               </div>
 
               {paymentMethod === "other" && (
-                <div className="p-2.5 bg-blue-50/70 dark:bg-blue-950/40 rounded-xl border border-blue-200 dark:border-blue-900/50 space-y-2">
-                  <span className="block text-[9px] font-bold text-blue-800 dark:text-blue-300 uppercase tracking-wider">Select Online Payment Provider:</span>
+                <div className="p-2.5 bg-emerald-50/50 dark:bg-emerald-950/30 rounded-xl border border-emerald-200 dark:border-emerald-900/50 space-y-2">
+                  <span className="block text-[9px] font-bold text-[#154b47] dark:text-[#2dd4bf] uppercase tracking-wider">Select Online Payment Provider:</span>
                   <div className="grid grid-cols-3 gap-1">
                     {(["GCash", "PayMaya", "BDO", "BPI", "Bank Transfer", "Card"] as const).map(ch => (
                       <button
                         key={ch}
                         type="button"
                         onClick={() => setOnlineChannel(ch)}
-                        className={`p-1 rounded text-[9px] font-bold uppercase border transition-all ${onlineChannel === ch ? 'bg-blue-600 text-white border-blue-600 shadow-2xs' : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 border-gray-200 dark:border-slate-700 hover:bg-blue-50'}`}
+                        className={`p-1 rounded-lg text-[9px] font-bold uppercase border transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59] ${onlineChannel === ch ? 'bg-[#1b5e59] text-white border-[#1b5e59] dark:bg-[#2dd4bf] dark:text-[#042f2e] dark:border-[#2dd4bf] shadow-2xs' : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-300 border-gray-200 dark:border-slate-700 hover:bg-emerald-50/50'}`}
                       >
                         {ch}
                       </button>
@@ -1221,8 +1272,8 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                   </div>
 
                   {/* Reference Number Entry */}
-                  <div className="pt-2 border-t border-blue-200/60 dark:border-blue-900/40 space-y-1">
-                    <label className="flex items-center justify-between text-[9px] font-bold text-blue-900 dark:text-blue-300 uppercase tracking-wider">
+                  <div className="pt-2 border-t border-emerald-200/60 dark:border-emerald-900/40 space-y-1">
+                    <label className="flex items-center justify-between text-[9px] font-bold text-[#154b47] dark:text-[#2dd4bf] uppercase tracking-wider">
                       <span>Reference Number <span className="text-red-500">*</span>:</span>
                       <span className="text-[8px] text-gray-500 font-normal">Required before checkout</span>
                     </label>
@@ -1231,11 +1282,34 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                       placeholder={`Enter ${onlineChannel} reference / ref no...`}
                       value={referenceNumber}
                       onChange={e => setReferenceNumber(e.target.value)}
-                      className="w-full px-2.5 py-1.5 text-xs font-mono font-bold bg-white dark:bg-slate-800 border border-blue-300 dark:border-blue-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-800 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-500 shadow-2xs"
+                      className="w-full px-2.5 py-1.5 text-xs font-mono font-bold bg-white dark:bg-slate-800 border border-emerald-300 dark:border-emerald-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1b5e59] dark:focus:ring-[#2dd4bf] text-gray-800 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-500 shadow-2xs"
                     />
                   </div>
                 </div>
               )}
+
+            {/* Non-blocking inline error alert banner */}
+            {checkoutError && (
+              <div 
+                role="alert" 
+                aria-live="assertive" 
+                className="p-3 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/60 rounded-xl text-xs text-rose-700 dark:text-rose-300 flex items-start justify-between gap-2 animate-in fade-in slide-in-from-bottom-2 duration-150"
+              >
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+                  <span className="font-semibold leading-relaxed">{checkoutError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCheckoutError(null)}
+                  aria-label="Dismiss error"
+                  className="text-rose-500 hover:text-rose-700 dark:hover:text-rose-200 font-bold p-0.5 cursor-pointer focus-visible:ring-2 focus-visible:ring-rose-500"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
             <button 
               type="button" 
               onClick={completeSale} 
@@ -1244,7 +1318,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                 (paymentMethod === "cash" && (parseFloat(cashReceived) || 0) < total) ||
                 (paymentMethod === "other" && !referenceNumber.trim())
               } 
-              className="w-full py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl font-bold shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed text-xs tracking-wide uppercase shrink-0"
+              className="w-full py-3 bg-[#1b5e59] hover:bg-[#154b47] active:bg-[#103b38] dark:bg-[#2dd4bf] dark:hover:bg-[#14b8a6] dark:text-[#042f2e] text-white rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 text-xs tracking-wider uppercase shrink-0 flex items-center justify-center gap-2 cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
             >
               Complete Sale Transaction
             </button>
@@ -1255,36 +1329,37 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
 
       {showOthersModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl p-5 max-w-sm w-full border space-y-4">
-            <h3 className="text-blue-600 font-bold text-sm mb-1 border-b pb-1">Other Privileges</h3>
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-5 max-w-sm w-full border dark:border-slate-700 space-y-4">
+            <h3 className="text-[#1b5e59] dark:text-[#2dd4bf] font-bold text-sm mb-1 border-b dark:border-slate-700 pb-1">Other Privileges</h3>
             <div className="grid grid-cols-3 gap-2">
-              <button type="button" onClick={()=>{setDiscountType(prev => prev === "soloparent" ? "none" : "soloparent"); setCustomDiscountPercent(0); setShowOthersModal(false);}} className={`p-2 border rounded-xl font-bold text-center text-xs transition-all ${discountType === 'soloparent' ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300':'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100'}`}>SOLO PARENT</button>
-              <button type="button" onClick={()=>{setDiscountType(prev => prev === "naac" ? "none" : "naac"); setCustomDiscountPercent(0); setShowOthersModal(false);}} className={`p-2 border rounded-xl font-bold text-center text-xs transition-all ${discountType === 'naac' ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300':'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100'}`}>NAAC</button>
-              <button type="button" onClick={()=>{setDiscountType("custom");}} className={`p-2 border rounded-xl font-bold text-center text-xs transition-all ${discountType === 'custom' ? 'border-yellow-500 bg-yellow-50 text-yellow-700 dark:bg-amber-950 dark:text-amber-300':'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100'}`}>CUSTOM</button>
+              <button type="button" onClick={()=>{setDiscountType(prev => prev === "soloparent" ? "none" : "soloparent"); setCustomDiscountPercent(0); setShowOthersModal(false);}} className={`p-2 border rounded-xl font-bold text-center text-xs transition-all cursor-pointer ${discountType === 'soloparent' ? 'border-[#1b5e59] bg-[#1b5e59]/10 text-[#1b5e59] dark:border-[#2dd4bf] dark:bg-[#2dd4bf]/15 dark:text-[#2dd4bf]':'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100'}`}>SOLO PARENT</button>
+              <button type="button" onClick={()=>{setDiscountType(prev => prev === "naac" ? "none" : "naac"); setCustomDiscountPercent(0); setShowOthersModal(false);}} className={`p-2 border rounded-xl font-bold text-center text-xs transition-all cursor-pointer ${discountType === 'naac' ? 'border-[#1b5e59] bg-[#1b5e59]/10 text-[#1b5e59] dark:border-[#2dd4bf] dark:bg-[#2dd4bf]/15 dark:text-[#2dd4bf]':'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100'}`}>NAAC</button>
+              <button type="button" onClick={()=>{setDiscountType("custom");}} className={`p-2 border rounded-xl font-bold text-center text-xs transition-all cursor-pointer ${discountType === 'custom' ? 'border-amber-500 bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300':'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100'}`}>CUSTOM</button>
             </div>
 
             {discountType === "custom" && (
-              <div className="flex items-center gap-2 pt-2 border-t">
+              <div className="flex items-center gap-2 pt-2 border-t dark:border-slate-700">
                 <input
                   type="number"
                   min="0"
                   max="100"
                   placeholder="Percent..."
+                  aria-label="Custom discount percentage"
                   value={customDiscountPercent || ""}
                   onChange={e => setCustomDiscountPercent(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
-                  className="w-full p-2 border bg-white rounded text-xs font-bold"
+                  className="w-full p-2 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-lg text-xs font-bold focus:ring-2 focus:ring-[#1b5e59] dark:focus:ring-[#2dd4bf] focus:outline-none text-slate-900 dark:text-white"
                 />
                 <button
                   type="button"
                   onClick={() => setShowOthersModal(false)}
-                  className="px-3 py-2 bg-blue-600 text-white rounded font-bold"
+                  className="px-4 py-2 bg-[#1b5e59] hover:bg-[#154b47] dark:bg-[#2dd4bf] dark:hover:bg-[#14b8a6] dark:text-[#042f2e] text-white rounded-lg font-bold text-xs cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
                 >
                   Apply
                 </button>
               </div>
             )}
-            <div className="flex justify-end pt-2 border-t">
-              <button type="button" onClick={() => setShowOthersModal(false)} className="px-4 py-1.5 bg-gray-200 text-gray-700 rounded font-bold">Close</button>
+            <div className="flex justify-end pt-2 border-t dark:border-slate-700">
+              <button type="button" onClick={() => setShowOthersModal(false)} className="px-4 py-1.5 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg font-bold text-xs cursor-pointer focus-visible:ring-2 focus-visible:ring-gray-400">Close</button>
             </div>
           </div>
         </div>
@@ -1295,42 +1370,73 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
           onClick={() => setShowReceipt(false)}
           className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto"
         >
+          {/* Scoped Thermal Receipt Print Stylesheet */}
+          <style dangerouslySetInnerHTML={{ __html: `
+            @media print {
+              body * {
+                visibility: hidden !important;
+              }
+              #pos-thermal-receipt, #pos-thermal-receipt * {
+                visibility: visible !important;
+              }
+              #pos-thermal-receipt {
+                position: fixed !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                max-width: 80mm !important;
+                margin: 0 auto !important;
+                padding: 12px !important;
+                box-shadow: none !important;
+                border: none !important;
+                background: white !important;
+                color: black !important;
+                font-family: monospace !important;
+              }
+              .pos-receipt-no-print {
+                display: none !important;
+              }
+            }
+          `}} />
+
           <div 
+            id="pos-thermal-receipt"
             onClick={e => e.stopPropagation()}
-            className="bg-white dark:bg-slate-800 rounded-xl max-w-md w-full p-5 font-mono text-[11px] text-gray-800 dark:text-slate-100 space-y-3 shadow-2xl border dark:border-slate-700 printable-receipt max-h-[88vh] flex flex-col justify-between my-auto relative"
+            className="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full p-5 font-mono text-[11px] text-slate-800 dark:text-slate-100 space-y-3 shadow-2xl border border-slate-200 dark:border-slate-700 max-h-[88vh] flex flex-col justify-between my-auto relative"
           >
             {/* Top Right Close Button */}
             <button
               type="button"
               onClick={() => setShowReceipt(false)}
-              className="absolute top-3 right-3 p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-white bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 rounded-full transition-colors z-10"
+              className="pos-receipt-no-print absolute top-3 right-3 p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-full transition-colors z-10 cursor-pointer"
               title="Close Receipt"
+              aria-label="Close Receipt"
             >
               <X className="w-4 h-4" />
             </button>
 
-            <div className="text-center pr-6">
-              <h3 className="font-bold text-sm text-gray-900 dark:text-white">Malabon Pharmacy and Clinic</h3>
-              <p className="text-gray-500 dark:text-gray-400 text-[10px]">Invoice Record Voucher #{lastSale.id}</p>
-              <p className="text-gray-400 dark:text-gray-400 text-[9px] mt-0.5">{formatReceiptDate(lastSale.date)}</p>
+            <div className="text-center pr-6 sm:pr-0">
+              <h3 className="font-bold text-sm text-slate-900 dark:text-white">Malabon Pharmacy and Clinic</h3>
+              <p className="text-slate-500 dark:text-slate-400 text-[10px]">Invoice Record Voucher #{lastSale.id}</p>
+              <p className="text-slate-400 dark:text-slate-500 text-[9px] mt-0.5">{formatReceiptDate(lastSale.date)}</p>
             </div>
             
             {/* Scrollable Receipt Items List */}
-            <div className="border-t border-b border-dashed border-gray-200 dark:border-slate-700 py-2.5 space-y-1.5 max-h-[32vh] overflow-y-auto pr-1">
+            <div className="border-t border-b border-dashed border-slate-200 dark:border-slate-700 py-2.5 space-y-1.5 max-h-[32vh] overflow-y-auto pr-1">
               {lastSale.items.map((ci: any, idx: number) => {
                 const itemLineTotal = ci.batch && ci.batch.price > 0 ? ci.batch.price * ci.quantity : getItemBatchAwarePrice(ci.item, ci.quantity)
                 return (
-                  <div key={idx} className="flex justify-between items-start text-xs border-b border-gray-100 dark:border-slate-800 pb-1 last:border-0">
+                  <div key={idx} className="flex justify-between items-start text-xs border-b border-slate-100 dark:border-slate-800 pb-1 last:border-0">
                     <span className="pr-4 leading-tight">
                       {ci.quantity}x {ci.item.name}
                     </span>
-                    <span className="font-bold whitespace-nowrap">₱{itemLineTotal.toFixed(2)}</span>
+                    <span className="font-bold whitespace-nowrap font-mono tabular-nums">₱{itemLineTotal.toFixed(2)}</span>
                   </div>
                 )
               })}
             </div>
 
-            <div className="space-y-1 text-gray-600 dark:text-slate-300">
+            <div className="space-y-1 text-slate-600 dark:text-slate-300">
               {(() => {
                 const cleanCustomerName = (lastSale.customerName || "")
                   .replace(/\s*\(ID:.*?\)/gi, "")
@@ -1338,28 +1444,37 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                   .trim()
                 if (!cleanCustomerName) return null
                 return (
-                  <div className="flex justify-between text-blue-800 dark:text-blue-300 font-bold border-b border-gray-100 dark:border-slate-800 pb-1">
+                  <div className="flex justify-between text-[#1b5e59] dark:text-[#2dd4bf] font-bold border-b border-slate-100 dark:border-slate-800 pb-1">
                     <span>Customer:</span>
                     <span>{cleanCustomerName}</span>
                   </div>
                 )
               })()}
-              <div className="flex justify-between"><span>Gross Total Base:</span><span>₱{lastSale.grossTotal?.toFixed(2) || lastSale.total.toFixed(2)}</span></div>
+              <div className="flex justify-between">
+                <span>Gross Total Base:</span>
+                <span className="font-mono tabular-nums">₱{lastSale.grossTotal?.toFixed(2) || lastSale.total.toFixed(2)}</span>
+              </div>
               {lastSale.discount > 0 && (
-                <div className="flex justify-between text-green-700 dark:text-green-400 font-bold">
+                <div className="flex justify-between text-emerald-700 dark:text-emerald-400 font-bold">
                   <span>Applied Markdown ({lastSale.discountLabel}):</span>
-                  <span>-₱{lastSale.discount.toFixed(2)}</span>
+                  <span className="font-mono tabular-nums">-₱{lastSale.discount.toFixed(2)}</span>
                 </div>
               )}
-              <div className="flex justify-between"><span>Net Taxable Base (VAT Ex):</span><span>₱{lastSale.taxableBase?.toFixed(2) || lastSale.total.toFixed(2)}</span></div>
-              <div className="flex justify-between"><span>Value Added Tax (12%):</span><span>₱{lastSale.vat?.toFixed(2) || "0.00"}</span></div>
-              <div className="flex justify-between border-t border-dashed border-gray-200 dark:border-slate-700 pt-1 font-bold text-sm text-gray-900 dark:text-white">
-                <span>Grand Total Cost</span>
-                <span>₱{lastSale.total.toFixed(2)}</span>
+              <div className="flex justify-between">
+                <span>Net Taxable Base (VAT Ex):</span>
+                <span className="font-mono tabular-nums">₱{lastSale.taxableBase?.toFixed(2) || lastSale.total.toFixed(2)}</span>
               </div>
-              <div className="flex justify-between pt-1 border-t border-gray-200 dark:border-slate-700 text-[10px]">
+              <div className="flex justify-between">
+                <span>Value Added Tax (12%):</span>
+                <span className="font-mono tabular-nums">₱{lastSale.vat?.toFixed(2) || "0.00"}</span>
+              </div>
+              <div className="flex justify-between border-t border-dashed border-slate-200 dark:border-slate-700 pt-1 font-bold text-sm text-slate-900 dark:text-white">
+                <span>Grand Total Cost</span>
+                <span className="font-mono tabular-nums text-base text-[#1b5e59] dark:text-[#2dd4bf]">₱{lastSale.total.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between pt-1 border-t border-slate-200 dark:border-slate-700 text-[10px]">
                 <span>Payment Method:</span>
-                <span className="font-bold uppercase text-blue-700 dark:text-blue-400">
+                <span className="font-bold uppercase text-[#1b5e59] dark:text-[#2dd4bf]">
                   {lastSale.paymentMethod === "other"
                     ? lastSale.onlineChannel
                       ? `ONLINE / ${lastSale.onlineChannel.toUpperCase()}`
@@ -1368,18 +1483,18 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                 </span>
               </div>
               {lastSale.paymentMethod === "other" && lastSale.referenceNumber && (
-                <div className="flex justify-between text-[10px] text-gray-600 dark:text-slate-300">
+                <div className="flex justify-between text-[10px] text-slate-600 dark:text-slate-300">
                   <span>Reference No:</span>
-                  <span className="font-mono font-bold text-gray-900 dark:text-white">{lastSale.referenceNumber}</span>
+                  <span className="font-mono tabular-nums font-bold text-slate-900 dark:text-white">{lastSale.referenceNumber}</span>
                 </div>
               )}
             </div>
 
-            <div className="flex gap-2 pt-2 border-t border-gray-200 dark:border-slate-700">
+            <div className="pos-receipt-no-print flex gap-2 pt-2 border-t border-slate-200 dark:border-slate-700">
               <button 
                 type="button" 
                 onClick={() => window.print()}
-                className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg tracking-wide shadow-xs flex items-center justify-center gap-1.5 text-xs transition-colors"
+                className="flex-1 py-2 bg-[#1b5e59] hover:bg-[#154b47] active:scale-[0.98] text-white font-bold rounded-xl tracking-wide shadow-xs flex items-center justify-center gap-1.5 text-xs transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
               >
                 <Printer className="w-4 h-4" />
                 Print Receipt
@@ -1387,7 +1502,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
               <button 
                 type="button" 
                 onClick={() => setShowReceipt(false)} 
-                className="flex-1 py-2 bg-gray-900 dark:bg-slate-700 text-white hover:bg-gray-800 dark:hover:bg-slate-600 font-bold rounded-lg tracking-wide shadow-xs text-xs transition-colors"
+                className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600 active:scale-[0.98] text-white font-bold rounded-xl tracking-wide shadow-xs text-xs transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-slate-400"
               >
                 Done / Reset
               </button>
@@ -1408,14 +1523,14 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
           >
             <div className="flex items-start justify-between border-b border-slate-200 dark:border-slate-700 pb-3">
               <div className="flex items-start gap-3">
-                <div className="p-2.5 bg-blue-100 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 rounded-2xl shrink-0">
+                <div className="p-2.5 bg-emerald-100 dark:bg-emerald-950/80 text-[#1b5e59] dark:text-[#2dd4bf] rounded-2xl shrink-0">
                   <Scan className="w-5 h-5" />
                 </div>
                 <div>
                   <h3 className="font-bold text-sm text-slate-900 dark:text-white">Choose Manufacturer Option</h3>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
                     {scanMatchOptions.code ? (
-                      <>Product <span className="font-mono font-bold text-blue-600 dark:text-blue-400">"{scanMatchOptions.code}"</span> has {scanMatchOptions.options.length} manufacturer options available.</>
+                      <>Product <span className="font-mono font-bold text-[#1b5e59] dark:text-[#2dd4bf]">"{scanMatchOptions.code}"</span> has {scanMatchOptions.options.length} manufacturer options available.</>
                     ) : (
                       <>This product has {scanMatchOptions.options.length} manufacturer options available.</>
                     )}
@@ -1424,8 +1539,9 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
               </div>
               <button 
                 type="button" 
+                aria-label="Close manufacturer options modal"
                 onClick={() => setScanMatchOptions(null)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1445,15 +1561,15 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                       triggerScanToast(`✓ Added ${opt.label}: ${opt.productName} (${opt.manufacturer}) • ₱${opt.price.toFixed(2)} to cart`, "success")
                       setScanMatchOptions(null)
                     }}
-                    className={`w-full text-left p-3.5 rounded-2xl border transition-all flex items-start justify-between gap-3 cursor-pointer ${
+                    className={`w-full text-left p-3.5 rounded-2xl border transition-all flex items-start justify-between gap-3 cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59] ${
                       isOutOfStock
                         ? "bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800 opacity-60 cursor-not-allowed"
-                        : "bg-white dark:bg-slate-900/70 border-slate-200 dark:border-slate-700 hover:border-blue-500 hover:bg-blue-50/50 dark:hover:bg-blue-950/40 shadow-xs hover:shadow-md active:scale-98"
+                        : "bg-white dark:bg-slate-900/70 border-slate-200 dark:border-slate-700 hover:border-[#1b5e59] hover:bg-emerald-50/50 dark:hover:bg-emerald-950/30 shadow-xs hover:shadow-md active:scale-98"
                     }`}
                   >
                     <div className="space-y-1.5 min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="px-2 py-0.5 rounded-md bg-blue-600 text-white font-mono font-bold text-[10px] uppercase shadow-xs">
+                        <span className="px-2 py-0.5 rounded-md bg-[#1b5e59] text-white font-mono font-bold text-[10px] uppercase shadow-xs">
                           {opt.label}
                         </span>
                         <p className="font-bold text-slate-900 dark:text-white text-xs truncate">{opt.productName}</p>
@@ -1465,7 +1581,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                           {opt.manufacturer}
                         </span>
                         {opt.batchLabel && (
-                          <span className="font-mono text-[10px] text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/50 px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-800 font-bold">
+                          <span className="font-mono text-[10px] text-[#1b5e59] dark:text-[#2dd4bf] bg-emerald-50 dark:bg-emerald-950/50 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800 font-bold">
                             Lot: {opt.batchLabel}
                           </span>
                         )}
@@ -1477,7 +1593,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                       </div>
 
                       <div className="text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-2 font-mono">
-                        <span className="uppercase font-semibold text-blue-600 dark:text-blue-400">{opt.category}</span>
+                        <span className="uppercase font-semibold text-[#1b5e59] dark:text-[#2dd4bf]">{opt.category}</span>
                         <span>•</span>
                         <span className={opt.stock <= (opt.item.minStock || 5) ? "text-red-500 font-bold" : "text-slate-400"}>
                           {opt.stock} in stock
@@ -1487,7 +1603,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
 
                     <div className="text-right shrink-0">
                       <p className="font-bold text-slate-900 dark:text-white text-sm font-mono">₱{opt.price.toFixed(2)}</p>
-                      <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase bg-blue-50 dark:bg-blue-950/80 px-2 py-0.5 rounded-md mt-1 inline-block border border-blue-200 dark:border-blue-800">
+                      <span className="text-[10px] font-bold text-[#1b5e59] dark:text-[#2dd4bf] uppercase bg-emerald-50 dark:bg-emerald-950/80 px-2 py-0.5 rounded-md mt-1 inline-block border border-emerald-200 dark:border-emerald-800">
                         Select & Add
                       </span>
                     </div>

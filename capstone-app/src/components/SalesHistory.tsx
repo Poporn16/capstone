@@ -275,8 +275,12 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
   const uniqueCustomerNames = Array.from(
     new Set(
       sales
-        .map(s => s.customerName)
-        .filter((n): n is string => Boolean(n && n.trim() && !["walk-in", "walk-in customer", "regular customer", "walkin"].includes(n.trim().toLowerCase())))
+        .map(s => {
+          let name = (s.customerName || "").trim();
+          if (/\(ID:\s*[^)]+$/i.test(name)) name = `${name})`;
+          return name;
+        })
+        .filter((n): n is string => Boolean(n && !["walk-in", "walk-in customer", "regular customer", "walkin"].includes(n.toLowerCase())))
     )
   )
 
@@ -812,4 +816,4 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
       )}
     </div>
   );
-}
+}
