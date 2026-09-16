@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react"
-import type { InventoryItem } from "../App"
+import type { InventoryItem, Operator } from "../types"
 import { supabase, triggerGlobalSync, fetchAllSupabaseRows } from "../utils/apiClient"
 import { downloadExcelWithAutoFit, parseSpreadsheetFile } from "../utils/excelUtils"
 import { getCategoryStyles } from "../utils/categoryColors"
@@ -8,7 +8,7 @@ import { Search, FolderPlus, Download, Upload, FileSpreadsheet, X, Trash2, Edit2
 import { BarcodePrintModal } from "./BarcodePrintModal"
 
 interface InventoryManagerProps {
-  currentOperator?: { username: string; displayName: string; systemRole: string } | null
+  currentOperator?: Operator | null
   inventory: InventoryItem[]
   categoriesList: string[]
   refreshCategories: () => Promise<void>

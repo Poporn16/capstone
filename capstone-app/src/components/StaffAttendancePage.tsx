@@ -2,19 +2,12 @@ import { useState, useEffect, useMemo } from "react"
 import { Clock, Search, Download, Calendar, UserCheck, RefreshCw, Trash2, AlertTriangle, CheckCircle2, XCircle, ShieldAlert } from "lucide-react"
 import { downloadExcelWithAutoFit } from "../utils/excelUtils"
 import { supabase } from "../utils/apiClient"
+import type { AttendanceRecord, Operator } from "../types"
 
-export interface AttendanceRecord {
-  id: string
-  username: string
-  displayName: string
-  systemRole: string
-  timeIn: string
-  timeOut?: string
-  durationMinutes?: number
-}
+export type { AttendanceRecord }
 
 interface StaffAttendancePageProps {
-  currentOperator: { username: string; displayName: string; systemRole: string }
+  currentOperator: Operator
   onLogAction?: (actionType: string, moduleName: string, details: string) => Promise<void>
 }
 

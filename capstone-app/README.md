@@ -71,7 +71,7 @@ capstone/
 │   │   │   ├── Dashboard.tsx             # Overview metrics, alerts, and quick actions
 │   │   │   ├── InventoryManager.tsx      # "Item specs" - Product profile & category manager
 │   │   │   ├── LoginScreen.tsx           # Operator authentication & session handling
-│   │   │   ├── POSCheckout.tsx           # Point of Sale interface, cart, & discount calculator
+│   │   │   ├── POSCheckout.tsx           # Point of Sale interface, cart, & transaction processing
 │   │   │   ├── SalesHistory.tsx          # Transaction logs, receipt re-printing, & refunding
 │   │   │   ├── SalesReport.tsx           # Comprehensive sales analytics & charts
 │   │   │   ├── StaffAttendanceModal.tsx  # Quick Time In / Time Out clock modal

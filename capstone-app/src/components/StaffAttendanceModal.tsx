@@ -1,19 +1,12 @@
 import { useState, useEffect } from "react"
 import { Clock, LogIn, LogOut, X, CheckCircle2, Calendar } from "lucide-react"
 import { supabase } from "../utils/apiClient"
+import type { AttendanceRecord, Operator } from "../types"
 
-export interface AttendanceRecord {
-  id: string
-  username: string
-  displayName: string
-  systemRole: string
-  timeIn: string
-  timeOut?: string
-  durationMinutes?: number
-}
+export type { AttendanceRecord }
 
 interface StaffAttendanceModalProps {
-  currentOperator: { username: string; displayName: string; systemRole: string }
+  currentOperator: Operator
   onClose: () => void
   onLogAction?: (actionType: string, moduleTarget: string, details: string) => Promise<void>
 }

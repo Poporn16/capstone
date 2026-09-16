@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react"
-import type { InventoryItem } from "../App"
+import type { InventoryItem, Operator } from "../types"
 import { supabase } from "../utils/apiClient"
 import { downloadExcelWithAutoFit, parseSpreadsheetFile } from "../utils/excelUtils"
 import { useBarcodeScanner, matchBarcodeToItem } from "../utils/barcodeScanner"
@@ -7,7 +7,7 @@ import { Plus, Minus, Layers, AlertCircle, Trash2, Calendar, Download, Upload, F
 import { BarcodePrintModal } from "./BarcodePrintModal"
 
 interface StockAdjustmentProps {
-  currentOperator?: { username: string; displayName: string; systemRole: string } | null
+  currentOperator?: Operator | null
   inventory: InventoryItem[]
   categoriesList: string[]
   fetchInventory: () => Promise<void>

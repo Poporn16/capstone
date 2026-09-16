@@ -4,44 +4,14 @@ import { downloadExcelWithAutoFit, downloadMultiSheetStockAdditionsWorkbook } fr
 import { hashPassword } from "../utils/passwordUtils"
 import { ShieldAlert, UserPlus, Trash2, History, RefreshCw, ShoppingBag, Eye, X, Flame, Database, AlertOctagon, RotateCcw, LogOut, Download, Edit, Users, Plus, Search, Edit2, Clock, CheckCircle2 } from "lucide-react"
 
+import type { NamedPerson, AuditLog, BatchSaleRecord, AccountProfile, Operator } from "../types"
+
+export type { NamedPerson }
+
 interface AdminPanelProps {
-  currentOperator: { username: string; displayName: string; systemRole: string }
+  currentOperator: Operator
   onLogAction: (actionType: string, moduleTarget: string, details: string) => Promise<void>
   refreshAllData?: () => Promise<void>
-}
-
-export interface NamedPerson {
-  id: string
-  idNumber: string
-  name: string
-  discountType?: string
-}
-
-interface AuditLog {
-  id: number
-  created_at: string
-  operator_username: string
-  action_type: string
-  module_target: string
-  details_summary: string
-}
-
-interface BatchSaleRecord {
-  id: number
-  sale_id: number
-  item_name: string
-  batch_label: string
-  quantity_deducted: number
-  unit_price: number
-  created_at: string
-}
-
-interface AccountProfile {
-  id: number
-  username: string
-  password_hash: string
-  display_name: string
-  system_role: string
 }
 
 export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: AdminPanelProps) {

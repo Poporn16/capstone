@@ -12,9 +12,9 @@ import { LoginScreen } from "./components/LoginScreen"
 import { StaffAttendanceModal } from "./components/StaffAttendanceModal"
 import { StaffAttendancePage } from "./components/StaffAttendancePage"
 import { supabase, broadcastChannel, triggerGlobalSync, fetchAllSupabaseRows } from "./utils/apiClient"
-import type { InventoryItem, SaleItem, Sale } from "./types"
+import type { InventoryItem, SaleItem, Sale, Operator } from "./types"
 
-export type { InventoryItem, SaleItem, Sale }
+export type { InventoryItem, SaleItem, Sale, Operator }
 
 const MAX_SESSION_AGE_MS = 12 * 60 * 60 * 1000 // 12 hours max session limit
 
@@ -55,10 +55,23 @@ export default function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
+  const notificationRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!showNotifications) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (notificationRef.current && !notificationRef.current.contains(e.target as Node)) {
+        setShowNotifications(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [showNotifications])
+
   const [showAttendanceModal, setShowAttendanceModal] = useState(false)
   const [logoImgError, setLogoImgError] = useState(false)
 
-  const [currentOperator, setCurrentOperator] = useState<{ username: string; displayName: string; systemRole: string } | null>(() => {
+  const [currentOperator, setCurrentOperator] = useState<Operator | null>(() => {
     try {
       const stored = sessionStorage.getItem("pinv_session") || sessionStorage.getItem("current_terminal_operator")
       if (stored) {
@@ -96,7 +109,7 @@ export default function App() {
     }
   }, [theme])
 
-  const saveSession = (operator: any) => {
+  const saveSession = (operator: Operator) => {
     setCurrentOperator(operator)
     try {
       sessionStorage.setItem("pinv_session", JSON.stringify({
@@ -1497,7 +1510,7 @@ export default function App() {
         </div>
       </aside>
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
-        <header className={`px-4 sm:px-6 py-4 flex items-center justify-between shrink-0 ${
+        <header className={`px-4 sm:px-6 py-4 flex items-center justify-between shrink-0 relative z-30 ${
           theme === "dark" ? "border-b border-[#1C2E2C] bg-[#131F1E]/90 backdrop-blur-xs" : "bg-transparent"
         }`}>
           <div className="flex items-center gap-3">
@@ -1529,7 +1542,7 @@ export default function App() {
             <button type="button" onClick={() => setTheme(t => t === "light" ? "dark" : "light")} className="w-9 h-9 rounded-xl bg-white dark:bg-[#1C2E2C] border border-gray-200 dark:border-[#28413e] text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-xs hover:bg-gray-50 dark:hover:bg-[#233835] transition-colors cursor-pointer">
               {theme === "light" ? <Moon className="w-4 h-4 text-slate-700" /> : <Sun className="w-4 h-4 text-amber-400" />}
             </button>
-            <div className="relative">
+            <div className="relative" ref={notificationRef}>
               <button type="button" onClick={() => setShowNotifications(prev => !prev)} className="w-9 h-9 rounded-xl bg-white dark:bg-[#1C2E2C] border border-red-200 dark:border-red-900/40 text-red-500 flex items-center justify-center shadow-xs hover:bg-red-50 dark:hover:bg-[#233835] transition-colors cursor-pointer">
                 <Bell className="w-4 h-4 text-red-500" />
                 {totalNotificationCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold min-w-4.5 h-4.5 px-1 flex items-center justify-center rounded-full ring-2 ring-white dark:ring-[#131F1E] shadow-xs">{totalNotificationCount}</span>}
@@ -1568,7 +1581,7 @@ export default function App() {
             </div>
           </div>
         </header>
-        <main className="flex-1 px-4 sm:px-6 py-5 overflow-y-auto">
+        <main className="flex-1 px-4 sm:px-6 py-5 overflow-y-auto isolate">
           {activeTab === "dashboard" && <Dashboard inventory={inventory} sales={sales} isAdminUser={isAdminUser} onSelectProduct={handleSelectStockProduct} onSelectSale={handleSelectSale} />}
           {activeTab === "pos" && <POSCheckout inventory={inventory} sales={sales} categoriesList={categoriesList} onCompleteSale={addSale} />}
           {activeTab === "inventory" && <InventoryManager currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} refreshCategories={fetchCategories} refreshInventory={fetchInventory} onUpdateInventory={updateInventoryItem} onDeleteProduct={deleteInventoryItem} onLogAction={logSystemAction} />}

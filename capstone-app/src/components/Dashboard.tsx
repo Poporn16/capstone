@@ -11,7 +11,7 @@ import {
   BarChart3, 
   ShieldAlert 
 } from "lucide-react";
-import type { InventoryItem, Sale } from "../App";
+import type { InventoryItem, Sale } from "../types";
 
 interface DashboardProps {
   inventory: InventoryItem[];

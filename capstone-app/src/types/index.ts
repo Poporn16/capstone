@@ -40,6 +40,21 @@ export interface SaleItem {
   batch?: InventoryBatch
 }
 
+export interface CartItem {
+  item: InventoryItem
+  quantity: number
+  batch?: InventoryBatch
+}
+
+export type DiscountType = "none" | "senior" | "pwd" | "naac" | "soloparent" | "custom"
+export type OnlineChannel = "GCash" | "PayMaya" | "BDO" | "BPI" | "Bank Transfer" | "Card" | "Other"
+
+export interface Operator {
+  username: string
+  displayName: string
+  systemRole: string
+}
+
 export interface Sale {
   id: string
   dbId?: string
@@ -134,4 +149,14 @@ export interface StockAdditionExportGroup {
     cost?: number
     price: number
   }>
+}
+
+export interface AttendanceRecord {
+  id: string
+  username: string
+  displayName: string
+  systemRole: string
+  timeIn: string
+  timeOut?: string
+  durationMinutes?: number
 }

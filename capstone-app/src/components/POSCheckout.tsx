@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react"
-import type { InventoryItem, InventoryBatch, Sale, NamedPerson } from "../types"
+import type { InventoryItem, InventoryBatch, Sale, NamedPerson, CartItem, DiscountType, OnlineChannel } from "../types"
 import { supabase } from "../utils/apiClient"
 import { getCategoryStyles } from "../utils/categoryColors"
 import { findMatchingInventoryOptions, getItemManufacturerOptions, useBarcodeScanner, type ScanOption } from "../utils/barcodeScanner"
 import { ArrowLeft, Printer, CreditCard, X, Users, Search, Check, Sparkles, Scan, Barcode, CheckCircle2, AlertCircle, AlertTriangle, Building2 } from "lucide-react"
 
-export type { NamedPerson, ScanOption }
+export type { NamedPerson, ScanOption, CartItem, DiscountType, OnlineChannel }
 
 interface POSCheckoutProps {
   inventory: InventoryItem[]
@@ -13,15 +13,6 @@ interface POSCheckoutProps {
   categoriesList: string[]
   onCompleteSale: (sale: Sale) => void
 }
-
-interface CartItem {
-  item: InventoryItem
-  quantity: number
-  batch?: InventoryBatch
-}
-
-type DiscountType = "none" | "senior" | "pwd" | "naac" | "soloparent" | "custom"
-type OnlineChannel = "GCash" | "PayMaya" | "BDO" | "BPI" | "Bank Transfer" | "Card" | "Other"
 
 export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }: POSCheckoutProps) {
   const [cart, setCart] = useState<CartItem[]>([])

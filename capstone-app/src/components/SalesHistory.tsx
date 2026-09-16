@@ -1,12 +1,11 @@
 import { useState, useEffect } from "react";
-import type { Sale } from "../App";
-import type { InventoryItem } from "../types";
+import type { Sale, InventoryItem, Operator } from "../types";
 import { downloadExcelWithAutoFit, downloadMultiSheetSalesWorkbook, type SalesExportData } from "../utils/excelUtils";
 import { Search, RotateCcw, FileText, Download, User, Printer, X } from "lucide-react";
 import { supabase } from "../utils/apiClient";
 
 interface SalesHistoryProps {
-  currentOperator?: { username: string; displayName: string; systemRole: string } | null;
+  currentOperator?: Operator | null;
   sales: Sale[];
   inventory?: InventoryItem[];
   onToggleRefund: (saleId: string, currentStatus: boolean) => void;

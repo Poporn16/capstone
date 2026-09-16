@@ -2,9 +2,10 @@ import { useState } from "react"
 import { supabase, triggerForceLogout } from "../utils/apiClient"
 import { verifyAndMigratePassword } from "../utils/passwordUtils"
 import { Lock, User, KeyRound, Eye, EyeOff, ShieldCheck } from "lucide-react"
+import type { Operator } from "../types"
 
 interface LoginScreenProps {
-  onAuthSuccess: (operator: { username: string; displayName: string; systemRole: string }) => void
+  onAuthSuccess: (operator: Operator) => void
   theme?: "light" | "dark"
 }
 
@@ -88,7 +89,7 @@ export function LoginScreen({ onAuthSuccess, theme }: LoginScreenProps) {
         <div className="text-center space-y-3 mb-6">
           <div className="w-20 h-20 bg-[#89A1A0] rounded-2xl mx-auto p-1 shadow-md border-2 border-white/60 flex items-center justify-center overflow-hidden transform hover:scale-105 transition-transform duration-200">
             <img 
-              src="https://scontent.fmnl33-4.fna.fbcdn.net/v/t39.30808-6/401504104_122095038878121591_4438502913040853748_n.jpg?stp=dst-jpg_tt6&cstp=mx411x390&ctp=s411x390&_nc_cat=106&ccb=1-7&_nc_sid=6ee11a&_nc_ohc=Ft95k5nEUhgQ7kNvwEdA8VD&_nc_oc=AdqjX8JO54H9u5fUgSwQABVjJrejNbGOQXYz6IeG81-a88_I02lrMRRwNEFxJTxpHQG4mOYKT7nZvrBkQ8vzMfdQ&_nc_zt=23&_nc_ht=scontent.fmnl33-4.fna&_nc_gid=upjDGk5QBMqMv2fhQRvKFA&_nc_ss=7b289&oh=00_AQCfN0WpxXHhMh2frLHZKz7eRSuVSEaGu9-fKhjBG1tzkw&oe=6A6B53F5" 
+              src="/icon.jpg" 
               alt="Malabon Pharmacy Logo" 
               className="w-full h-full rounded-xl object-cover"
             />
