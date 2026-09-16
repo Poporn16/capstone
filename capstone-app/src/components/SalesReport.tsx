@@ -520,41 +520,91 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
       </div>
 
       {/* Report Section Filter Buttons */}
-      <div className="flex bg-gray-100 dark:bg-slate-900 p-1.5 rounded-2xl border dark:border-slate-700 text-xs font-bold overflow-x-auto gap-1">
+      <div className="flex bg-slate-100/90 dark:bg-slate-900/90 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-700 text-xs font-bold overflow-x-auto gap-2 items-center">
         <button
           type="button"
           onClick={() => setActiveReportTab("all")}
-          className={`px-4 py-2 rounded-xl transition-all whitespace-nowrap ${activeReportTab === "all" ? 'bg-white dark:bg-slate-800 text-blue-600 shadow-sm border border-gray-200 dark:border-slate-700' : 'text-gray-600 dark:text-slate-300 hover:bg-white/50'}`}
+          className={`px-3.5 py-2 rounded-xl transition-all whitespace-nowrap flex items-center gap-2 cursor-pointer ${
+            activeReportTab === "all"
+              ? 'bg-blue-600 text-white shadow-md border border-blue-600 font-extrabold ring-2 ring-blue-500/25'
+              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50/40 dark:hover:bg-slate-700/60 shadow-2xs'
+          }`}
         >
-          All 4 Core Reports
+          <Layers className="w-4 h-4 shrink-0" />
+          <span>All 4 Core Reports</span>
+          <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
+            activeReportTab === "all" ? "bg-white/20 text-white" : "bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300"
+          }`}>
+            ALL
+          </span>
         </button>
+
         <button
           type="button"
           onClick={() => setActiveReportTab("cogs")}
-          className={`px-4 py-2 rounded-xl transition-all whitespace-nowrap ${activeReportTab === "cogs" ? 'bg-white dark:bg-slate-800 text-blue-600 shadow-sm border border-gray-200 dark:border-slate-700' : 'text-gray-600 dark:text-slate-300 hover:bg-white/50'}`}
+          className={`px-3.5 py-2 rounded-xl transition-all whitespace-nowrap flex items-center gap-2 cursor-pointer ${
+            activeReportTab === "cogs"
+              ? 'bg-blue-600 text-white shadow-md border border-blue-600 font-extrabold ring-2 ring-blue-500/25'
+              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50/40 dark:hover:bg-slate-700/60 shadow-2xs'
+          }`}
         >
-          1. Profit & COGS by Item
+          <span className={`w-5 h-5 rounded-full flex items-center justify-center font-black text-[10px] shrink-0 ${
+            activeReportTab === "cogs" ? "bg-white text-blue-600" : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+          }`}>
+            1
+          </span>
+          <span>Profit & COGS by Item</span>
         </button>
+
         <button
           type="button"
           onClick={() => setActiveReportTab("category")}
-          className={`px-4 py-2 rounded-xl transition-all whitespace-nowrap ${activeReportTab === "category" ? 'bg-white dark:bg-slate-800 text-blue-600 shadow-sm border border-gray-200 dark:border-slate-700' : 'text-gray-600 dark:text-slate-300 hover:bg-white/50'}`}
+          className={`px-3.5 py-2 rounded-xl transition-all whitespace-nowrap flex items-center gap-2 cursor-pointer ${
+            activeReportTab === "category"
+              ? 'bg-blue-600 text-white shadow-md border border-blue-600 font-extrabold ring-2 ring-blue-500/25'
+              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50/40 dark:hover:bg-slate-700/60 shadow-2xs'
+          }`}
         >
-          2. Items Sold by Category
+          <span className={`w-5 h-5 rounded-full flex items-center justify-center font-black text-[10px] shrink-0 ${
+            activeReportTab === "category" ? "bg-white text-blue-600" : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+          }`}>
+            2
+          </span>
+          <span>Items Sold by Category</span>
         </button>
+
         <button
           type="button"
           onClick={() => setActiveReportTab("cashier")}
-          className={`px-4 py-2 rounded-xl transition-all whitespace-nowrap ${activeReportTab === "cashier" ? 'bg-white dark:bg-slate-800 text-blue-600 shadow-sm border border-gray-200 dark:border-slate-700' : 'text-gray-600 dark:text-slate-300 hover:bg-white/50'}`}
+          className={`px-3.5 py-2 rounded-xl transition-all whitespace-nowrap flex items-center gap-2 cursor-pointer ${
+            activeReportTab === "cashier"
+              ? 'bg-blue-600 text-white shadow-md border border-blue-600 font-extrabold ring-2 ring-blue-500/25'
+              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50/40 dark:hover:bg-slate-700/60 shadow-2xs'
+          }`}
         >
-          3. Sales by Cashier
+          <span className={`w-5 h-5 rounded-full flex items-center justify-center font-black text-[10px] shrink-0 ${
+            activeReportTab === "cashier" ? "bg-white text-blue-600" : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+          }`}>
+            3
+          </span>
+          <span>Sales by Cashier</span>
         </button>
+
         <button
           type="button"
           onClick={() => setActiveReportTab("payment")}
-          className={`px-4 py-2 rounded-xl transition-all whitespace-nowrap ${activeReportTab === "payment" ? 'bg-white dark:bg-slate-800 text-blue-600 shadow-sm border border-gray-200 dark:border-slate-700' : 'text-gray-600 dark:text-slate-300 hover:bg-white/50'}`}
+          className={`px-3.5 py-2 rounded-xl transition-all whitespace-nowrap flex items-center gap-2 cursor-pointer ${
+            activeReportTab === "payment"
+              ? 'bg-blue-600 text-white shadow-md border border-blue-600 font-extrabold ring-2 ring-blue-500/25'
+              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50/40 dark:hover:bg-slate-700/60 shadow-2xs'
+          }`}
         >
-          4. Sales by Payment Method
+          <span className={`w-5 h-5 rounded-full flex items-center justify-center font-black text-[10px] shrink-0 ${
+            activeReportTab === "payment" ? "bg-white text-blue-600" : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200"
+          }`}>
+            4
+          </span>
+          <span>Sales by Payment Method</span>
         </button>
       </div>
 

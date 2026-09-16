@@ -24,7 +24,7 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
   const [endDate, setEndDate] = useState<string>("");
   const [statusCondition, setStatusCondition] = useState<StatusCondition>("all");
   const [paymentRoute, setPaymentRoute] = useState<PaymentRoute>("all");
-  const [customerFilter, setCustomerFilter] = useState<"all" | "named" | "walkin" | "senior" | "pwd" | "soloparent" | "naac" | "custom">("all");
+  const [customerFilter, setCustomerFilter] = useState<"all" | "named" | "walkin" | "all_discounts" | "senior" | "pwd" | "soloparent" | "naac" | "custom">("all");
   const [selectedInvoice, setSelectedInvoice] = useState<Sale | null>(null);
   const [showOnlineFilter, setShowOnlineFilter] = useState(false);
   const [showDiscountFilter, setShowDiscountFilter] = useState(false);
@@ -98,6 +98,8 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
         if (!cName || !cName.trim()) return true;
         return ["walk-in", "walk-in customer", "regular customer", "walkin"].includes(cName.trim().toLowerCase());
       });
+    } else if (customerFilter === "all_discounts") {
+      result = result.filter(sale => (Number(sale.discount) > 0 || (Boolean(sale.discountLabel) && sale.discountLabel.trim() !== "" && sale.discountLabel.toLowerCase() !== "none")));
     } else if (customerFilter === "senior") {
       result = result.filter(sale => (sale.discountLabel || "").toLowerCase().includes("senior"));
     } else if (customerFilter === "pwd") {
@@ -366,62 +368,82 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
 
           <div className="space-y-1.5">
             <span className="block text-gray-400 dark:text-gray-400">Payment Route</span>
-            <div className="flex flex-wrap gap-1">
-              {(["all", "cash", "other"] as const).map(p => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => { setPaymentRoute(p); setShowOnlineFilter(false); }}
-                  className={`px-3 py-1 rounded-md border transition-all text-[10px] font-bold uppercase tracking-wider ${
-                    paymentRoute === p
-                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                      : 'bg-white dark:bg-slate-900 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-slate-700 hover:border-blue-300'
-                  }`}
-                >
-                  {p === "other" ? "Online" : p}
-                </button>
-              ))}
+            <div className="flex flex-wrap items-center gap-1">
               <button
                 type="button"
-                onClick={() => setShowOnlineFilter(v => !v)}
-                className={`px-3 py-1 rounded-md border transition-all text-[10px] font-bold uppercase tracking-wider ${
-                  showOnlineFilter
-                    ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
-                    : 'bg-white dark:bg-slate-900 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800 hover:border-purple-400'
+                onClick={() => setPaymentRoute("all")}
+                className={`px-3 py-1 rounded-md border transition-all text-[10px] font-bold uppercase tracking-wider cursor-pointer ${
+                  paymentRoute === "all"
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                    : 'bg-white dark:bg-slate-900 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-slate-700 hover:border-blue-300'
                 }`}
               >
-                Channels Filter ▾
+                All
               </button>
-            </div>
-            {showOnlineFilter && (
-              <div className="flex flex-wrap gap-1 pt-1.5 animate-in fade-in duration-100">
-                {ONLINE_CHANNELS.map(ch => (
+              <button
+                type="button"
+                onClick={() => setPaymentRoute("cash")}
+                className={`px-3 py-1 rounded-md border transition-all text-[10px] font-bold uppercase tracking-wider cursor-pointer ${
+                  paymentRoute === "cash"
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                    : 'bg-white dark:bg-slate-900 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-slate-700 hover:border-blue-300'
+                }`}
+              >
+                Cash
+              </button>
+              
+              {/* Merged Online & Channels Unified Selector */}
+              <div className="relative inline-flex items-center">
+                <select
+                  value={paymentRoute !== "all" && paymentRoute !== "cash" ? paymentRoute : ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val) {
+                      setPaymentRoute(val as PaymentRoute);
+                    }
+                  }}
+                  className={`px-2.5 py-1 rounded-md border text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                    paymentRoute !== "all" && paymentRoute !== "cash"
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                      : 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 border-gray-200 dark:border-slate-700 hover:border-blue-400'
+                  }`}
+                  aria-label="Filter by online payment channel"
+                >
+                  <option value="" disabled hidden>
+                    Online Payment (All)
+                  </option>
+                  <option value="other" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                    Online Payment (All)
+                  </option>
+                  {ONLINE_CHANNELS.map(ch => (
+                    <option key={ch} value={ch} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                      Online Payment: {ch.toUpperCase()}
+                    </option>
+                  ))}
+                </select>
+                {paymentRoute !== "all" && paymentRoute !== "cash" && (
                   <button
-                    key={ch}
                     type="button"
-                    onClick={() => { setPaymentRoute(ch as PaymentRoute); setShowOnlineFilter(false); }}
-                    className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase border transition-all ${
-                      paymentRoute === ch
-                        ? 'bg-purple-700 text-white border-purple-700 shadow-2xs'
-                        : 'bg-purple-50 dark:bg-purple-950/40 text-purple-800 dark:text-purple-300 border-purple-200 dark:border-purple-900 hover:bg-purple-100'
-                    }`}
+                    onClick={() => setPaymentRoute("all")}
+                    className="ml-1 text-slate-400 hover:text-rose-500 text-xs p-0.5 font-bold cursor-pointer"
+                    title="Reset to All"
                   >
-                    {ch}
+                    ×
                   </button>
-                ))}
+                )}
               </div>
-            )}
+            </div>
           </div>
 
           <div className="space-y-1.5">
             <span className="block text-gray-400 dark:text-gray-400">Customer Profile</span>
-            <div className="flex flex-wrap gap-1">
+            <div className="flex flex-wrap items-center gap-1">
               {(["all", "named", "walkin"] as const).map(cf => (
                 <button
                   key={cf}
                   type="button"
-                  onClick={() => { setCustomerFilter(cf); setShowDiscountFilter(false); }}
-                  className={`px-3 py-1 rounded-md border transition-all text-[10px] font-bold uppercase tracking-wider ${
+                  onClick={() => setCustomerFilter(cf)}
+                  className={`px-3 py-1 rounded-md border transition-all text-[10px] font-bold uppercase tracking-wider cursor-pointer ${
                     customerFilter === cf
                       ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
                       : 'bg-white dark:bg-slate-900 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-slate-700 hover:border-blue-300'
@@ -430,42 +452,58 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
                   {cf === "all" ? "All" : cf === "named" ? "Named" : "Walk-in"}
                 </button>
               ))}
-              <button
-                type="button"
-                onClick={() => setShowDiscountFilter(v => !v)}
-                className={`px-3 py-1 rounded-md border transition-all text-[10px] font-bold uppercase tracking-wider ${
-                  showDiscountFilter || ["senior", "pwd", "soloparent", "naac", "custom"].includes(customerFilter)
-                    ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
-                    : 'bg-white dark:bg-slate-900 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800 hover:border-purple-400'
-                }`}
-              >
-                Discount Filter ▾
-              </button>
-            </div>
-            {showDiscountFilter && (
-              <div className="flex flex-wrap gap-1 pt-1.5 animate-in fade-in duration-100">
-                {[
-                  { id: "senior", label: "Senior (20%)" },
-                  { id: "pwd", label: "PWD (20%)" },
-                  { id: "soloparent", label: "Solo Parent (10%)" },
-                  { id: "naac", label: "NAAC" },
-                  { id: "custom", label: "Custom" }
-                ].map(d => (
+
+              {/* Discount Filter Unified Dropdown (matching Online Payment) */}
+              <div className="relative inline-flex items-center">
+                <select
+                  value={["all_discounts", "senior", "pwd", "soloparent", "naac", "custom"].includes(customerFilter) ? customerFilter : ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val) {
+                      setCustomerFilter(val as any);
+                    }
+                  }}
+                  className={`px-2.5 py-1 rounded-md border text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                    ["all_discounts", "senior", "pwd", "soloparent", "naac", "custom"].includes(customerFilter)
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                      : 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 border-gray-200 dark:border-slate-700 hover:border-blue-400'
+                  }`}
+                  aria-label="Filter by discount type"
+                >
+                  <option value="" disabled hidden>
+                    Discount Filter
+                  </option>
+                  <option value="all_discounts" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                    Discount (All)
+                  </option>
+                  <option value="senior" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                    Discount: Senior (20%)
+                  </option>
+                  <option value="pwd" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                    Discount: PWD (20%)
+                  </option>
+                  <option value="soloparent" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                    Discount: Solo Parent (10%)
+                  </option>
+                  <option value="naac" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                    Discount: NAAC
+                  </option>
+                  <option value="custom" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                    Discount: Custom
+                  </option>
+                </select>
+                {["all_discounts", "senior", "pwd", "soloparent", "naac", "custom"].includes(customerFilter) && (
                   <button
-                    key={d.id}
                     type="button"
-                    onClick={() => { setCustomerFilter(d.id as any); setShowDiscountFilter(false); }}
-                    className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase border transition-all ${
-                      customerFilter === d.id
-                        ? 'bg-purple-700 text-white border-purple-700 shadow-2xs'
-                        : 'bg-purple-50 dark:bg-purple-950/40 text-purple-800 dark:text-purple-300 border-purple-200 dark:border-purple-900 hover:bg-purple-100'
-                    }`}
+                    onClick={() => setCustomerFilter("all")}
+                    className="ml-1 text-slate-400 hover:text-rose-500 text-xs p-0.5 font-bold cursor-pointer"
+                    title="Reset to All"
                   >
-                    {d.label}
+                    ×
                   </button>
-                ))}
+                )}
               </div>
-            )}
+            </div>
           </div>
         </div>
       </div>
@@ -690,28 +728,83 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
           onClick={() => setSelectedInvoice(null)}
           className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto"
         >
+          {/* Scoped Thermal Receipt Print Stylesheet */}
+          <style dangerouslySetInnerHTML={{ __html: `
+            @media print {
+              @page {
+                size: 80mm auto;
+                margin: 0mm;
+              }
+              body * {
+                visibility: hidden !important;
+              }
+              #sales-history-thermal-receipt, #sales-history-thermal-receipt * {
+                visibility: visible !important;
+              }
+              #sales-history-thermal-receipt {
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 78mm !important;
+                max-width: 80mm !important;
+                margin: 0 auto !important;
+                padding: 6mm 4mm !important;
+                box-shadow: none !important;
+                border: none !important;
+                background: #ffffff !important;
+                color: #000000 !important;
+                font-family: 'Courier New', Courier, Monaco, monospace !important;
+                font-size: 11px !important;
+                line-height: 1.2 !important;
+              }
+              .pos-receipt-no-print {
+                display: none !important;
+              }
+            }
+          `}} />
+
           <div 
+            id="sales-history-thermal-receipt"
             onClick={e => e.stopPropagation()}
-            className="bg-white dark:bg-slate-800 rounded-xl max-w-md w-full p-5 font-mono text-[11px] text-gray-800 dark:text-slate-100 space-y-3 shadow-2xl border dark:border-slate-700 printable-receipt max-h-[88vh] flex flex-col justify-between my-auto relative"
+            className="bg-white dark:bg-slate-800 rounded-2xl max-w-sm w-full p-5 font-mono text-[11px] text-gray-800 dark:text-slate-100 space-y-2.5 shadow-2xl border border-gray-200 dark:border-slate-700 max-h-[88vh] flex flex-col justify-between my-auto relative"
           >
             {/* Top Right Close Button */}
             <button
               type="button"
               onClick={() => setSelectedInvoice(null)}
-              className="absolute top-3 right-3 p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-white bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 rounded-full transition-colors z-10"
+              className="pos-receipt-no-print absolute top-3 right-3 p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-white bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 rounded-full transition-colors z-10 cursor-pointer"
               title="Close Receipt"
             >
               <X className="w-4 h-4" />
             </button>
 
-            <div className="text-center pr-6">
-              <h3 className="font-bold text-sm text-gray-900 dark:text-white">Malabon Pharmacy and Clinic</h3>
-              <p className="text-gray-500 dark:text-gray-400 text-[10px]">Invoice Record Voucher #{selectedInvoice.id}</p>
-              <p className="text-gray-400 dark:text-gray-400 text-[9px] mt-0.5">{formatReceiptDate(selectedInvoice.date)}</p>
+            {/* Thermal Receipt Header */}
+            <div className="text-center space-y-0.5 pr-6 sm:pr-0">
+              <h3 className="font-black text-sm text-gray-900 dark:text-white uppercase tracking-tight">Malabon Pharmacy and Clinic</h3>
+              <p className="text-gray-500 dark:text-gray-400 text-[10px]">Official Receipt / Cash Voucher</p>
+              <div className="text-[10px] text-gray-500 dark:text-gray-400 pt-0.5 space-y-0.5">
+                <div>Invoice #: <span className="font-bold text-gray-800 dark:text-white font-mono">#{selectedInvoice.id}</span></div>
+                <div>Date: {formatReceiptDate(selectedInvoice.date)}</div>
+                <div>Cashier: <span className="font-semibold">{selectedInvoice.processedBy || "Cashier"}</span></div>
+                {selectedInvoice.customerName && (
+                  <div>Customer: <span className="font-semibold">{selectedInvoice.customerName}</span></div>
+                )}
+              </div>
             </div>
+
+            {/* Dotted / Dashed Separator */}
+            <div className="border-t border-dashed border-gray-300 dark:border-slate-600 my-0.5" />
+
+            {/* Column Headers */}
+            <div className="flex justify-between text-[10px] font-bold text-gray-700 dark:text-slate-300 uppercase py-0.5">
+              <span>Qty  Description</span>
+              <span>Amount</span>
+            </div>
+
+            <div className="border-t border-dashed border-gray-300 dark:border-slate-600 my-0.5" />
             
             {/* Scrollable Receipt Items List */}
-            <div className="border-t border-b border-dashed border-gray-200 dark:border-slate-700 py-2.5 space-y-1.5 max-h-[32vh] overflow-y-auto pr-1">
+            <div className="space-y-1 max-h-[28vh] overflow-y-auto pr-1">
               {selectedInvoice.items.map((ci: any, idx: number) => {
                 const totalItemsInInvoice = selectedInvoice.items.reduce((sum: number, it: any) => sum + (it.quantity || 1), 0)
                 const fallbackUnitPrice = (selectedInvoice.grossTotal || selectedInvoice.total) / Math.max(1, totalItemsInInvoice)
@@ -735,69 +828,98 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
                   ""
 
                 return (
-                  <div key={idx} className="flex justify-between items-start text-xs border-b border-gray-100 dark:border-slate-800 pb-1 last:border-0">
-                    <span className="pr-4 leading-tight">
-                      {ci.quantity}x {ci.item.name}
+                  <div key={idx} className="flex justify-between items-start text-xs border-b border-dashed border-gray-100 dark:border-slate-700/50 pb-1 last:border-0 leading-tight">
+                    <span className="pr-3 leading-tight">
+                      <strong className="font-bold">{ci.quantity}x</strong> {ci.item.name}
                       {itemManufacturer ? ` (${itemManufacturer})` : ''}
                     </span>
-                    <span className="font-bold whitespace-nowrap">₱{lineTotal.toFixed(2)}</span>
+                    <span className="font-bold whitespace-nowrap font-mono tabular-nums">₱{lineTotal.toFixed(2)}</span>
                   </div>
                 )
               })}
             </div>
 
-            <div className="space-y-1 text-gray-600 dark:text-slate-300">
-              {selectedInvoice.customerName && (
-                <div className="flex justify-between text-blue-800 dark:text-blue-300 font-bold border-b border-gray-100 dark:border-slate-800 pb-1">
-                  <span>Customer:</span>
-                  <span>{selectedInvoice.customerName}</span>
-                </div>
-              )}
-              <div className="flex justify-between"><span>Gross Total Base:</span><span>₱{selectedInvoice.grossTotal?.toFixed(2) || selectedInvoice.total.toFixed(2)}</span></div>
+            {/* Dashed Separator */}
+            <div className="border-t border-dashed border-gray-300 dark:border-slate-600 my-0.5" />
+
+            <div className="space-y-1 text-gray-600 dark:text-slate-300 text-xs">
+              <div className="flex justify-between text-[11px]">
+                <span>Gross Total Base:</span>
+                <span className="font-mono tabular-nums">₱{(selectedInvoice.grossTotal || selectedInvoice.total).toFixed(2)}</span>
+              </div>
               {selectedInvoice.discount > 0 && (
-                <div className="flex justify-between text-green-700 dark:text-green-400 font-bold">
-                  <span>Applied Markdown ({selectedInvoice.discountLabel}):</span>
-                  <span>-₱{selectedInvoice.discount.toFixed(2)}</span>
+                <div className="flex justify-between text-[11px] text-green-700 dark:text-green-400 font-bold">
+                  <span>Markdown ({selectedInvoice.discountLabel}):</span>
+                  <span className="font-mono tabular-nums">-₱{selectedInvoice.discount.toFixed(2)}</span>
                 </div>
               )}
-              <div className="flex justify-between"><span>Net Taxable Base (VAT Ex):</span><span>₱{selectedInvoice.taxableBase?.toFixed(2) || selectedInvoice.total.toFixed(2)}</span></div>
-              <div className="flex justify-between"><span>Value Added Tax (12%):</span><span>₱{selectedInvoice.vat?.toFixed(2) || "0.00"}</span></div>
-              <div className={`flex justify-between border-t border-dashed border-gray-200 dark:border-slate-700 pt-1 font-bold text-sm ${selectedInvoice.isRefunded ? 'text-gray-400 dark:text-gray-500 line-through' : 'text-gray-900 dark:text-white'}`}>
-                <span>Grand Total Cost</span>
-                <span>₱{selectedInvoice.total.toFixed(2)}</span>
+              <div className="flex justify-between text-[10px] text-gray-500 dark:text-slate-400">
+                <span>Net Taxable Base (VAT Ex):</span>
+                <span className="font-mono tabular-nums">₱{(selectedInvoice.taxableBase || selectedInvoice.total).toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-[10px] text-gray-500 dark:text-slate-400">
+                <span>Value Added Tax (12%):</span>
+                <span className="font-mono tabular-nums">₱{(selectedInvoice.vat || 0).toFixed(2)}</span>
+              </div>
+
+              <div className="border-t border-dashed border-gray-300 dark:border-slate-600 pt-1 flex justify-between font-black text-sm text-gray-900 dark:text-white">
+                <span>GRAND TOTAL:</span>
+                <span className="font-mono tabular-nums text-base text-blue-600 dark:text-blue-400">₱{selectedInvoice.total.toFixed(2)}</span>
+              </div>
+
+              <div className="border-t border-dashed border-gray-300 dark:border-slate-600 pt-1 space-y-0.5 text-[11px]">
+                <div className="flex justify-between">
+                  <span>Payment Mode:</span>
+                  <span className="font-bold uppercase text-blue-700 dark:text-blue-400">
+                    {selectedInvoice.paymentMethod === "cash"
+                      ? "CASH"
+                      : selectedInvoice.onlineChannel
+                        ? `ONLINE / ${selectedInvoice.onlineChannel.toUpperCase()}`
+                        : "ONLINE PAYMENT"}
+                  </span>
+                </div>
+                {selectedInvoice.paymentMethod === "other" && selectedInvoice.referenceNumber && (
+                  <div className="flex justify-between text-[10px]">
+                    <span>Reference No:</span>
+                    <span className="font-mono font-bold text-gray-900 dark:text-white">{selectedInvoice.referenceNumber}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span>Amount Tendered:</span>
+                  <span className="font-mono font-bold tabular-nums">
+                    ₱{Number(selectedInvoice.cashReceived || selectedInvoice.total).toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex justify-between font-bold">
+                  <span>Change Due:</span>
+                  <span className="font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                    ₱{Number(selectedInvoice.change || 0).toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex justify-between pt-0.5 text-[10px]">
+                  <span>Status:</span>
+                  <span className={`font-bold uppercase ${selectedInvoice.isRefunded ? 'text-red-600' : 'text-green-600'}`}>
+                    {selectedInvoice.isRefunded ? 'VOIDED' : 'COMPLETED'}
+                  </span>
+                </div>
               </div>
             </div>
 
-            <div className="border-t border-dashed border-gray-200 dark:border-slate-700 pt-2 space-y-1 bg-gray-50/50 dark:bg-slate-900/50 p-2 rounded border dark:border-slate-700 text-[10px]">
-              <div className="flex justify-between"><span>Operator Token:</span><span className="uppercase font-bold text-gray-700 dark:text-gray-200">{selectedInvoice.processedBy}</span></div>
-              <div className="flex justify-between"><span>Payment Mode Route:</span><span className="uppercase font-bold text-blue-700 dark:text-blue-400">
-                {selectedInvoice.paymentMethod === "cash"
-                  ? "CASH"
-                  : selectedInvoice.onlineChannel
-                    ? `ONLINE / ${selectedInvoice.onlineChannel.toUpperCase()}`
-                    : "ONLINE PAYMENT"}
-              </span></div>
-              {selectedInvoice.paymentMethod === "other" && selectedInvoice.referenceNumber && (
-                <div className="flex justify-between font-mono text-[10px]">
-                  <span>Reference No:</span>
-                  <span className="font-bold text-gray-900 dark:text-white">{selectedInvoice.referenceNumber}</span>
-                </div>
-              )}
-              <div className="flex justify-between"><span>Cash Tendered Amount:</span><span>₱{(selectedInvoice.cashReceived || selectedInvoice.total).toFixed(2)}</span></div>
-              <div className="flex justify-between font-bold text-blue-800 dark:text-blue-300"><span>Change Return Cash:</span><span>₱{selectedInvoice.change?.toFixed(2) || "0.00"}</span></div>
-              <div className="flex justify-between pt-1 border-t border-gray-200 dark:border-slate-700 mt-1 font-bold">
-                <span>Ledger Line Status:</span>
-                <span className={selectedInvoice.isRefunded ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}>
-                  {selectedInvoice.isRefunded ? 'VOIDED TRANSACTION' : 'PROCESSED TRANSACTION'}
-                </span>
-              </div>
+            {/* Dashed Separator */}
+            <div className="border-t border-dashed border-gray-300 dark:border-slate-600 my-0.5" />
+
+            {/* Thermal Receipt Footer */}
+            <div className="text-center text-[10px] text-gray-500 dark:text-slate-400 space-y-0.5 pt-0.5">
+              <div>Total Items Count: {selectedInvoice.items.reduce((sum: number, it: any) => sum + (it.quantity || 1), 0)}</div>
+              <div className="font-bold text-gray-800 dark:text-slate-200 uppercase">Thank you for your purchase!</div>
+              <div className="text-[9px]">Official reprint voucher.</div>
             </div>
 
-            <div className="flex gap-2 pt-2 border-t border-gray-200 dark:border-slate-700">
+            <div className="pos-receipt-no-print flex gap-2 pt-2 border-t border-gray-200 dark:border-slate-700">
               <button 
                 type="button" 
                 onClick={() => window.print()}
-                className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg tracking-wide shadow-xs flex items-center justify-center gap-1.5 text-xs transition-colors"
+                className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl tracking-wide shadow-xs flex items-center justify-center gap-1.5 text-xs transition-colors cursor-pointer"
               >
                 <Printer className="w-4 h-4" />
                 Reprint Receipt
@@ -805,7 +927,7 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
               <button 
                 type="button" 
                 onClick={() => setSelectedInvoice(null)} 
-                className="flex-1 py-2 bg-gray-900 dark:bg-slate-700 text-white hover:bg-gray-800 dark:hover:bg-slate-600 font-bold rounded-lg tracking-wide shadow-xs text-xs transition-colors"
+                className="flex-1 py-2 bg-gray-900 dark:bg-slate-700 text-white hover:bg-gray-800 dark:hover:bg-slate-600 font-bold rounded-xl tracking-wide shadow-xs text-xs transition-colors cursor-pointer"
               >
                 Close Receipt
               </button>

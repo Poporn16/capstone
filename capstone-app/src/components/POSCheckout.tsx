@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react"
-import type { InventoryItem, InventoryBatch, Sale, NamedPerson, CartItem, DiscountType, OnlineChannel } from "../types"
+import type { InventoryItem, InventoryBatch, Sale, NamedPerson, CartItem, DiscountType, OnlineChannel, Operator } from "../types"
 import { supabase } from "../utils/apiClient"
 import { getCategoryStyles } from "../utils/categoryColors"
 import { findMatchingInventoryOptions, getItemManufacturerOptions, useBarcodeScanner, type ScanOption } from "../utils/barcodeScanner"
-import { ArrowLeft, Printer, CreditCard, X, Users, Search, Check, Sparkles, Scan, Barcode, CheckCircle2, AlertCircle, AlertTriangle, Building2 } from "lucide-react"
+import { ArrowLeft, Printer, CreditCard, X, Users, Search, Check, Sparkles, Scan, Barcode, CheckCircle2, AlertCircle, AlertTriangle, Building2, User } from "lucide-react"
 
 export type { NamedPerson, ScanOption, CartItem, DiscountType, OnlineChannel }
 
@@ -12,9 +12,10 @@ interface POSCheckoutProps {
   sales?: Sale[]
   categoriesList: string[]
   onCompleteSale: (sale: Sale) => void
+  currentOperator?: Operator | null
 }
 
-export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }: POSCheckoutProps) {
+export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, currentOperator }: POSCheckoutProps) {
   const [cart, setCart] = useState<CartItem[]>([])
   const [query, setQuery] = useState("")
   const [activeCategoryTab, setActiveCategoryTab] = useState<string>("all")
@@ -569,7 +570,8 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
       onlineChannel: paymentMethod === "other" ? onlineChannel : null,
       referenceNumber: paymentMethod === "other" ? referenceNumber.trim() : undefined,
       discountLabel: getDiscountLabel(),
-      customerName: fullCustomerName || undefined
+      customerName: fullCustomerName || undefined,
+      processedBy: currentOperator?.displayName || currentOperator?.username || "Cashier"
     }
 
     onCompleteSale(saleRecord as any)
@@ -616,6 +618,22 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
           {/* Top Search Bar & Category Pills */}
           <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xs border border-slate-200/80 dark:border-slate-700 p-4 space-y-3 shrink-0 transition-colors">
             
+            {currentOperator && (
+              <div className="flex items-center justify-between pb-2.5 border-b border-slate-100 dark:border-slate-700/60 text-[11px]">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-lg bg-[#1b5e59] text-white flex items-center justify-center font-bold text-[10px] shadow-xs">
+                    <User className="w-3.5 h-3.5" />
+                  </div>
+                  <span className="text-slate-500 dark:text-slate-400 font-semibold">Terminal Cashier:</span>
+                  <span className="font-extrabold text-slate-900 dark:text-white text-xs">{currentOperator.displayName}</span>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-bold uppercase text-[9px]">
+                    {currentOperator.systemRole}
+                  </span>
+                </div>
+                <span className="font-mono text-slate-400 text-[10px]">@{currentOperator.username}</span>
+              </div>
+            )}
+
             {/* Search Input */}
             <div className="relative flex items-center">
               <input 
@@ -1030,12 +1048,25 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                     <button
                       key={amt}
                       type="button"
-                      onClick={() => setCashReceived(amt.toString())}
+                      onClick={() => {
+                        const current = parseFloat(cashReceived) || 0
+                        setCashReceived((current + amt).toString())
+                      }}
                       className="px-2 py-0.5 rounded-md bg-white hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-mono tabular-nums font-bold text-[10px] transition-all active:scale-95 cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
                     >
-                      ₱{amt}
+                      +₱{amt}
                     </button>
                   ))}
+                  {parseFloat(cashReceived) > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setCashReceived("")}
+                      className="px-1.5 py-0.5 rounded-md bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900 text-rose-600 dark:text-rose-400 font-bold text-[10px] border border-rose-200 dark:border-rose-900 transition-all active:scale-95 cursor-pointer"
+                      title="Clear Cash Rendered"
+                    >
+                      Clear
+                    </button>
+                  )}
                 </div>
 
                 {parseFloat(cashReceived) > 0 && (
@@ -1364,6 +1395,10 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
           {/* Scoped Thermal Receipt Print Stylesheet */}
           <style dangerouslySetInnerHTML={{ __html: `
             @media print {
+              @page {
+                size: 80mm auto;
+                margin: 0mm;
+              }
               body * {
                 visibility: hidden !important;
               }
@@ -1371,18 +1406,20 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
                 visibility: visible !important;
               }
               #pos-thermal-receipt {
-                position: fixed !important;
+                position: absolute !important;
                 left: 0 !important;
                 top: 0 !important;
-                width: 100% !important;
+                width: 78mm !important;
                 max-width: 80mm !important;
                 margin: 0 auto !important;
-                padding: 12px !important;
+                padding: 6mm 4mm !important;
                 box-shadow: none !important;
                 border: none !important;
-                background: white !important;
-                color: black !important;
-                font-family: monospace !important;
+                background: #ffffff !important;
+                color: #000000 !important;
+                font-family: 'Courier New', Courier, Monaco, monospace !important;
+                font-size: 11px !important;
+                line-height: 1.2 !important;
               }
               .pos-receipt-no-print {
                 display: none !important;
@@ -1393,7 +1430,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
           <div 
             id="pos-thermal-receipt"
             onClick={e => e.stopPropagation()}
-            className="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full p-5 font-mono text-[11px] text-slate-800 dark:text-slate-100 space-y-3 shadow-2xl border border-slate-200 dark:border-slate-700 max-h-[88vh] flex flex-col justify-between my-auto relative"
+            className="bg-white dark:bg-slate-800 rounded-2xl max-w-sm w-full p-5 font-mono text-[11px] text-slate-800 dark:text-slate-100 space-y-2.5 shadow-2xl border border-slate-200 dark:border-slate-700 max-h-[88vh] flex flex-col justify-between my-auto relative"
           >
             {/* Top Right Close Button */}
             <button
@@ -1406,20 +1443,46 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
               <X className="w-4 h-4" />
             </button>
 
-            <div className="text-center pr-6 sm:pr-0">
-              <h3 className="font-bold text-sm text-slate-900 dark:text-white">Malabon Pharmacy and Clinic</h3>
-              <p className="text-slate-500 dark:text-slate-400 text-[10px]">Invoice Record Voucher #{lastSale.id}</p>
-              <p className="text-slate-400 dark:text-slate-500 text-[9px] mt-0.5">{formatReceiptDate(lastSale.date)}</p>
+            {/* Thermal Receipt Header */}
+            <div className="text-center space-y-0.5 pr-6 sm:pr-0">
+              <h3 className="font-black text-sm text-slate-900 dark:text-white uppercase tracking-tight">
+                Malabon Pharmacy and Clinic
+              </h3>
+              <p className="text-slate-500 dark:text-slate-400 text-[10px]">Official Receipt / Cash Voucher</p>
+              <div className="text-[10px] text-slate-500 dark:text-slate-400 pt-0.5 space-y-0.5">
+                <div>Invoice #: <span className="font-bold text-slate-800 dark:text-white font-mono">#{lastSale.id}</span></div>
+                <div>Date: {formatReceiptDate(lastSale.date)}</div>
+                <div>Cashier: <span className="font-semibold">{lastSale.processedBy || currentOperator?.displayName || "Cashier"}</span></div>
+                {(() => {
+                  const cleanCustomerName = (lastSale.customerName || "")
+                    .replace(/\s*\(ID:.*?\)/gi, "")
+                    .replace(/\s*ID:.*$/gi, "")
+                    .trim()
+                  if (!cleanCustomerName) return null
+                  return <div>Customer: <span className="font-semibold">{cleanCustomerName}</span></div>
+                })()}
+              </div>
             </div>
+
+            {/* Dotted / Dashed Separator */}
+            <div className="border-t border-dashed border-slate-300 dark:border-slate-600 my-0.5" />
+
+            {/* Column Headers */}
+            <div className="flex justify-between text-[10px] font-bold text-slate-700 dark:text-slate-300 uppercase py-0.5">
+              <span>Qty  Description</span>
+              <span>Amount</span>
+            </div>
+
+            <div className="border-t border-dashed border-slate-300 dark:border-slate-600 my-0.5" />
             
             {/* Scrollable Receipt Items List */}
-            <div className="border-t border-b border-dashed border-slate-200 dark:border-slate-700 py-2.5 space-y-1.5 max-h-[32vh] overflow-y-auto pr-1">
+            <div className="space-y-1 max-h-[28vh] overflow-y-auto pr-1">
               {lastSale.items.map((ci: any, idx: number) => {
                 const itemLineTotal = ci.batch && ci.batch.price > 0 ? ci.batch.price * ci.quantity : getItemBatchAwarePrice(ci.item, ci.quantity)
                 return (
-                  <div key={idx} className="flex justify-between items-start text-xs border-b border-slate-100 dark:border-slate-800 pb-1 last:border-0">
-                    <span className="pr-4 leading-tight">
-                      {ci.quantity}x {ci.item.name}
+                  <div key={idx} className="flex justify-between items-start text-xs border-b border-dashed border-slate-100 dark:border-slate-700/50 pb-1 last:border-0 leading-tight">
+                    <span className="pr-3 leading-tight">
+                      <strong className="font-bold">{ci.quantity}x</strong> {ci.item.name}
                     </span>
                     <span className="font-bold whitespace-nowrap font-mono tabular-nums">₱{itemLineTotal.toFixed(2)}</span>
                   </div>
@@ -1427,58 +1490,74 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale }
               })}
             </div>
 
-            <div className="space-y-1 text-slate-600 dark:text-slate-300">
-              {(() => {
-                const cleanCustomerName = (lastSale.customerName || "")
-                  .replace(/\s*\(ID:.*?\)/gi, "")
-                  .replace(/\s*ID:.*$/gi, "")
-                  .trim()
-                if (!cleanCustomerName) return null
-                return (
-                  <div className="flex justify-between text-[#1b5e59] dark:text-[#2dd4bf] font-bold border-b border-slate-100 dark:border-slate-800 pb-1">
-                    <span>Customer:</span>
-                    <span>{cleanCustomerName}</span>
-                  </div>
-                )
-              })()}
-              <div className="flex justify-between">
+            {/* Dashed Separator */}
+            <div className="border-t border-dashed border-slate-300 dark:border-slate-600 my-0.5" />
+
+            <div className="space-y-1 text-slate-600 dark:text-slate-300 text-xs">
+              <div className="flex justify-between text-[11px]">
                 <span>Gross Total Base:</span>
-                <span className="font-mono tabular-nums">₱{lastSale.grossTotal?.toFixed(2) || lastSale.total.toFixed(2)}</span>
+                <span className="font-mono tabular-nums">₱{(lastSale.grossTotal || lastSale.total).toFixed(2)}</span>
               </div>
               {lastSale.discount > 0 && (
-                <div className="flex justify-between text-emerald-700 dark:text-emerald-400 font-bold">
-                  <span>Applied Markdown ({lastSale.discountLabel}):</span>
+                <div className="flex justify-between text-[11px] text-emerald-700 dark:text-emerald-400 font-bold">
+                  <span>Markdown ({lastSale.discountLabel}):</span>
                   <span className="font-mono tabular-nums">-₱{lastSale.discount.toFixed(2)}</span>
                 </div>
               )}
-              <div className="flex justify-between">
+              <div className="flex justify-between text-[10px] text-slate-500 dark:text-slate-400">
                 <span>Net Taxable Base (VAT Ex):</span>
-                <span className="font-mono tabular-nums">₱{lastSale.taxableBase?.toFixed(2) || lastSale.total.toFixed(2)}</span>
+                <span className="font-mono tabular-nums">₱{(lastSale.taxableBase || lastSale.total).toFixed(2)}</span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between text-[10px] text-slate-500 dark:text-slate-400">
                 <span>Value Added Tax (12%):</span>
-                <span className="font-mono tabular-nums">₱{lastSale.vat?.toFixed(2) || "0.00"}</span>
+                <span className="font-mono tabular-nums">₱{(lastSale.vat || 0).toFixed(2)}</span>
               </div>
-              <div className="flex justify-between border-t border-dashed border-slate-200 dark:border-slate-700 pt-1 font-bold text-sm text-slate-900 dark:text-white">
-                <span>Grand Total Cost</span>
+
+              <div className="border-t border-dashed border-slate-300 dark:border-slate-600 pt-1 flex justify-between font-black text-sm text-slate-900 dark:text-white">
+                <span>GRAND TOTAL:</span>
                 <span className="font-mono tabular-nums text-base text-[#1b5e59] dark:text-[#2dd4bf]">₱{lastSale.total.toFixed(2)}</span>
               </div>
-              <div className="flex justify-between pt-1 border-t border-slate-200 dark:border-slate-700 text-[10px]">
-                <span>Payment Method:</span>
-                <span className="font-bold uppercase text-[#1b5e59] dark:text-[#2dd4bf]">
-                  {lastSale.paymentMethod === "other"
-                    ? lastSale.onlineChannel
-                      ? `ONLINE / ${lastSale.onlineChannel.toUpperCase()}`
-                      : "ONLINE PAYMENT"
-                    : "CASH"}
-                </span>
-              </div>
-              {lastSale.paymentMethod === "other" && lastSale.referenceNumber && (
-                <div className="flex justify-between text-[10px] text-slate-600 dark:text-slate-300">
-                  <span>Reference No:</span>
-                  <span className="font-mono tabular-nums font-bold text-slate-900 dark:text-white">{lastSale.referenceNumber}</span>
+
+              <div className="border-t border-dashed border-slate-300 dark:border-slate-600 pt-1 space-y-0.5 text-[11px]">
+                <div className="flex justify-between">
+                  <span>Payment Mode:</span>
+                  <span className="font-bold uppercase text-[#1b5e59] dark:text-[#2dd4bf]">
+                    {lastSale.paymentMethod === "other"
+                      ? lastSale.onlineChannel
+                        ? `ONLINE / ${lastSale.onlineChannel.toUpperCase()}`
+                        : "ONLINE PAYMENT"
+                      : "CASH"}
+                  </span>
                 </div>
-              )}
+                {lastSale.paymentMethod === "other" && lastSale.referenceNumber && (
+                  <div className="flex justify-between text-[10px]">
+                    <span>Reference No:</span>
+                    <span className="font-mono font-bold text-slate-900 dark:text-white">{lastSale.referenceNumber}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span>Amount Tendered:</span>
+                  <span className="font-mono font-bold tabular-nums">
+                    ₱{Number(lastSale.cashReceived || lastSale.total).toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex justify-between font-bold">
+                  <span>Change Due:</span>
+                  <span className="font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                    ₱{Number(lastSale.change || 0).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Dashed Separator */}
+            <div className="border-t border-dashed border-slate-300 dark:border-slate-600 my-0.5" />
+
+            {/* Thermal Receipt Footer */}
+            <div className="text-center text-[10px] text-slate-500 dark:text-slate-400 space-y-0.5 pt-0.5">
+              <div>Total Items Count: {lastSale.items.reduce((sum: number, it: any) => sum + (it.quantity || 1), 0)}</div>
+              <div className="font-bold text-slate-800 dark:text-slate-200 uppercase">Thank you for your purchase!</div>
+              <div className="text-[9px]">Please keep this receipt for warranty / returns.</div>
             </div>
 
             <div className="pos-receipt-no-print flex gap-2 pt-2 border-t border-slate-200 dark:border-slate-700">

@@ -58,6 +58,8 @@ export function Dashboard({
   const [hoveredPoint, setHoveredPoint] = useState<{ label: string; value: number; x: number; y: number } | null>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [chartWidth, setChartWidth] = useState<number>(800);
+  const [lowStockCategory, setLowStockCategory] = useState<string>("all");
+  const [nearlyExpiredCategory, setNearlyExpiredCategory] = useState<string>("all");
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
@@ -166,7 +168,13 @@ export function Dashboard({
     // 2. Widget Data: Low Stock Alerts
     const lowStock = safeInventory
       .filter(item => item && (Number(item.stock) || 0) <= (Number(item.minStock) || 10))
-      .sort((a, b) => (Number(a.stock) || 0) - (Number(b.stock) || 0));
+      .sort((a, b) => {
+        const catA = (a.category || "General").trim().toLowerCase();
+        const catB = (b.category || "General").trim().toLowerCase();
+        const comp = catA.localeCompare(catB);
+        if (comp !== 0) return comp;
+        return (Number(a.stock) || 0) - (Number(b.stock) || 0);
+      });
 
     // 3. Widget Data: Nearly Expired Medicines
     const nearlyExpired = safeInventory
@@ -185,7 +193,13 @@ export function Dashboard({
         return { ...b, daysLeft: Math.ceil(diffTime / (1000 * 60 * 60 * 24)) };
       })
       .filter(b => b.daysLeft <= 180)
-      .sort((a, b) => a.daysLeft - b.daysLeft);
+      .sort((a, b) => {
+        const catA = (a.category || "General").trim().toLowerCase();
+        const catB = (b.category || "General").trim().toLowerCase();
+        const comp = catA.localeCompare(catB);
+        if (comp !== 0) return comp;
+        return a.daysLeft - b.daysLeft;
+      });
 
     // 4. Widget Data: Top Product
     const topProd = Object.values(productSalesMap).sort((a, b) => b.quantity - a.quantity);
@@ -210,6 +224,33 @@ export function Dashboard({
       recentOrders: recent
     };
   }, [safeInventory, safeSales]);
+
+  // Unique categories & filtered lists for Low Stock and Nearly Expired
+  const lowStockCategories = useMemo(() => {
+    const cats = new Set<string>();
+    lowStockAlerts.forEach(item => {
+      if (item && item.category) cats.add(item.category.trim());
+    });
+    return Array.from(cats).sort();
+  }, [lowStockAlerts]);
+
+  const filteredLowStockAlerts = useMemo(() => {
+    if (lowStockCategory === "all") return lowStockAlerts;
+    return lowStockAlerts.filter(i => (i.category || "").trim().toLowerCase() === lowStockCategory.trim().toLowerCase());
+  }, [lowStockAlerts, lowStockCategory]);
+
+  const nearlyExpiredCategories = useMemo(() => {
+    const cats = new Set<string>();
+    nearlyExpiredProducts.forEach(b => {
+      if (b && b.category) cats.add(b.category.trim());
+    });
+    return Array.from(cats).sort();
+  }, [nearlyExpiredProducts]);
+
+  const filteredNearlyExpiredProducts = useMemo(() => {
+    if (nearlyExpiredCategory === "all") return nearlyExpiredProducts;
+    return nearlyExpiredProducts.filter(b => (b.category || "").trim().toLowerCase() === nearlyExpiredCategory.trim().toLowerCase());
+  }, [nearlyExpiredProducts, nearlyExpiredCategory]);
 
   // 6. Memoized Graph Data Processing for Sales Overview
   const graphPoints = useMemo(() => {
@@ -368,106 +409,182 @@ export function Dashboard({
 
   return (
     <div className="space-y-3 text-xs font-sans">
-      {/* 1. Top 6 Summary KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5">
-        {/* Today's Revenue */}
-        <div className="bg-white dark:bg-slate-800 rounded-xl p-3 border border-gray-200/80 dark:border-slate-700/80 shadow-xs flex flex-col justify-between card-hover">
-          <div className="flex items-center justify-between">
-            <span className="text-gray-500 dark:text-slate-400 font-bold text-[11px]">Today's Revenue</span>
-            <div className="w-6 h-6 rounded-lg bg-blue-50 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 flex items-center justify-center shadow-2xs">
-              <DollarSign className="w-3.5 h-3.5" />
+      {/* 1. Summary KPI Cards - Financial metrics visible to Admins only; Staff sees operational counts */}
+      {isAdminUser ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2.5">
+          {/* Today's Revenue */}
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-3 border border-gray-200/80 dark:border-slate-700/80 shadow-xs flex flex-col justify-between card-hover">
+            <div className="flex items-center justify-between">
+              <span className="text-gray-500 dark:text-slate-400 font-bold text-[11px]">Today's Revenue</span>
+              <div className="w-6 h-6 rounded-lg bg-blue-50 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 flex items-center justify-center shadow-2xs">
+                <DollarSign className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <div className="mt-2">
+              <div className="text-base font-extrabold text-gray-900 dark:text-white tracking-tight">
+                ₱{todayRevenue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <p className="text-gray-400 dark:text-slate-400 text-[10px] font-medium mt-0.5">
+                {todayOrdersCount} orders today
+              </p>
             </div>
           </div>
-          <div className="mt-2">
-            <div className="text-base font-extrabold text-gray-900 dark:text-white tracking-tight">
-              ₱{todayRevenue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </div>
-            <p className="text-gray-400 dark:text-slate-400 text-[10px] font-medium mt-0.5">
-              {todayOrdersCount} orders today
-            </p>
-          </div>
-        </div>
 
-        {/* Total Revenue */}
-        <div className="bg-white dark:bg-slate-800 rounded-xl p-3 border border-gray-200/80 dark:border-slate-700/80 shadow-xs flex flex-col justify-between card-hover">
-          <div className="flex items-center justify-between">
-            <span className="text-gray-500 dark:text-slate-400 font-bold text-[11px]">Total Revenue</span>
-            <div className="w-6 h-6 rounded-lg bg-emerald-50 dark:bg-emerald-950/70 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-2xs">
-              <TrendingUp className="w-3.5 h-3.5" />
+          {/* Total Revenue */}
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-3 border border-gray-200/80 dark:border-slate-700/80 shadow-xs flex flex-col justify-between card-hover">
+            <div className="flex items-center justify-between">
+              <span className="text-gray-500 dark:text-slate-400 font-bold text-[11px]">Total Revenue</span>
+              <div className="w-6 h-6 rounded-lg bg-emerald-50 dark:bg-emerald-950/70 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-2xs">
+                <TrendingUp className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <div className="mt-2">
+              <div className="text-base font-extrabold text-gray-900 dark:text-white tracking-tight">
+                ₱{totalRevenue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <p className="text-gray-400 dark:text-slate-400 text-[10px] font-medium mt-0.5">{totalTransactions} total sales</p>
             </div>
           </div>
-          <div className="mt-2">
-            <div className="text-base font-extrabold text-gray-900 dark:text-white tracking-tight">
-              ₱{totalRevenue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </div>
-            <p className="text-gray-400 dark:text-slate-400 text-[10px] font-medium mt-0.5">{totalTransactions} total sales</p>
-          </div>
-        </div>
 
-        {/* Cost of Goods */}
-        <div className="bg-white dark:bg-slate-800 rounded-xl p-3 border border-gray-200/80 dark:border-slate-700/80 shadow-xs flex flex-col justify-between card-hover">
-          <div className="flex items-center justify-between">
-            <span className="text-gray-500 dark:text-slate-400 font-bold text-[11px]">Cost of Goods</span>
-            <div className="w-6 h-6 rounded-lg bg-purple-50 dark:bg-purple-950/70 text-purple-600 dark:text-purple-400 flex items-center justify-center shadow-2xs">
-              <Package className="w-3.5 h-3.5" />
+          {/* Cost of Goods */}
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-3 border border-gray-200/80 dark:border-slate-700/80 shadow-xs flex flex-col justify-between card-hover">
+            <div className="flex items-center justify-between">
+              <span className="text-gray-500 dark:text-slate-400 font-bold text-[11px]">Cost of Goods</span>
+              <div className="w-6 h-6 rounded-lg bg-purple-50 dark:bg-purple-950/70 text-purple-600 dark:text-purple-400 flex items-center justify-center shadow-2xs">
+                <Package className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <div className="mt-2">
+              <div className="text-base font-extrabold text-gray-800 dark:text-slate-200 tracking-tight">
+                ₱{costOfGoods.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <p className="text-gray-400 dark:text-slate-400 text-[10px] font-medium mt-0.5">COGS Sold</p>
             </div>
           </div>
-          <div className="mt-2">
-            <div className="text-base font-extrabold text-gray-800 dark:text-slate-200 tracking-tight">
-              ₱{costOfGoods.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </div>
-            <p className="text-gray-400 dark:text-slate-400 text-[10px] font-medium mt-0.5">COGS Sold</p>
-          </div>
-        </div>
 
-        {/* Profit */}
-        <div className="bg-white dark:bg-slate-800 rounded-xl p-3 border border-gray-200/80 dark:border-slate-700/80 shadow-xs flex flex-col justify-between card-hover">
-          <div className="flex items-center justify-between">
-            <span className="text-gray-500 dark:text-slate-400 font-bold text-[11px]">Profit</span>
-            <div className="w-6 h-6 rounded-lg bg-teal-50 dark:bg-teal-950/70 text-teal-600 dark:text-teal-400 flex items-center justify-center shadow-2xs">
-              <Flame className="w-3.5 h-3.5" />
+          {/* Profit */}
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-3 border border-gray-200/80 dark:border-slate-700/80 shadow-xs flex flex-col justify-between card-hover">
+            <div className="flex items-center justify-between">
+              <span className="text-gray-500 dark:text-slate-400 font-bold text-[11px]">Profit</span>
+              <div className="w-6 h-6 rounded-lg bg-teal-50 dark:bg-teal-950/70 text-teal-600 dark:text-teal-400 flex items-center justify-center shadow-2xs">
+                <Flame className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <div className="mt-2">
+              <div className="text-base font-extrabold text-emerald-600 dark:text-emerald-400 tracking-tight">
+                ₱{profit.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <p className="text-gray-400 dark:text-slate-400 text-[10px] font-medium mt-0.5">Net Profit</p>
             </div>
           </div>
-          <div className="mt-2">
-            <div className="text-base font-extrabold text-emerald-600 dark:text-emerald-400 tracking-tight">
-              ₱{profit.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </div>
-            <p className="text-gray-400 dark:text-slate-400 text-[10px] font-medium mt-0.5">Net Profit</p>
-          </div>
-        </div>
 
-        {/* Avg Rev */}
-        <div className="bg-white dark:bg-slate-800 rounded-xl p-3 border border-gray-200/80 dark:border-slate-700/80 shadow-xs flex flex-col justify-between card-hover">
-          <div className="flex items-center justify-between">
-            <span className="text-gray-500 dark:text-slate-400 font-bold text-[11px]">Avg Rev</span>
-            <div className="w-6 h-6 rounded-lg bg-indigo-50 dark:bg-indigo-950/70 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shadow-2xs">
-              <ShoppingCart className="w-3.5 h-3.5" />
+          {/* Avg Rev */}
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-3 border border-gray-200/80 dark:border-slate-700/80 shadow-xs flex flex-col justify-between card-hover">
+            <div className="flex items-center justify-between">
+              <span className="text-gray-500 dark:text-slate-400 font-bold text-[11px]">Avg Rev</span>
+              <div className="w-6 h-6 rounded-lg bg-indigo-50 dark:bg-indigo-950/70 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shadow-2xs">
+                <ShoppingCart className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <div className="mt-2">
+              <div className="text-base font-extrabold text-gray-900 dark:text-white tracking-tight">
+                ₱{avgOrderValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <p className="text-gray-400 dark:text-slate-400 text-[10px] font-medium mt-0.5">Average revenue</p>
             </div>
           </div>
-          <div className="mt-2">
-            <div className="text-base font-extrabold text-gray-900 dark:text-white tracking-tight">
-              ₱{avgOrderValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </div>
-            <p className="text-gray-400 dark:text-slate-400 text-[10px] font-medium mt-0.5">Average revenue</p>
-          </div>
-        </div>
 
-        {/* Inventory Value */}
-        <div className="bg-white dark:bg-slate-800 rounded-xl p-3 border border-gray-200/80 dark:border-slate-700/80 shadow-xs flex flex-col justify-between card-hover">
-          <div className="flex items-center justify-between">
-            <span className="text-gray-500 dark:text-slate-400 font-bold text-[11px]">Inventory Value</span>
-            <div className="w-6 h-6 rounded-lg bg-amber-50 dark:bg-amber-950/70 text-amber-600 dark:text-amber-400 flex items-center justify-center shadow-2xs">
-              <BarChart3 className="w-3.5 h-3.5" />
+          {/* Inventory Value */}
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-3 border border-gray-200/80 dark:border-slate-700/80 shadow-xs flex flex-col justify-between card-hover">
+            <div className="flex items-center justify-between">
+              <span className="text-gray-500 dark:text-slate-400 font-bold text-[11px]">Inventory Value</span>
+              <div className="w-6 h-6 rounded-lg bg-amber-50 dark:bg-amber-950/70 text-amber-600 dark:text-amber-400 flex items-center justify-center shadow-2xs">
+                <BarChart3 className="w-3.5 h-3.5" />
+              </div>
             </div>
-          </div>
-          <div className="mt-2">
-            <div className="text-base font-extrabold text-gray-900 dark:text-white tracking-tight">
-              ₱{totalInventoryValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            <div className="mt-2">
+              <div className="text-base font-extrabold text-gray-900 dark:text-white tracking-tight">
+                ₱{totalInventoryValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <p className="text-gray-400 dark:text-slate-400 text-[10px] font-medium mt-0.5">{totalUnitsInStock} total units</p>
             </div>
-            <p className="text-gray-400 dark:text-slate-400 text-[10px] font-medium mt-0.5">{totalUnitsInStock} total units</p>
           </div>
         </div>
-      </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5">
+          {/* Orders Today */}
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-3 border border-gray-200/80 dark:border-slate-700/80 shadow-xs flex flex-col justify-between card-hover">
+            <div className="flex items-center justify-between">
+              <span className="text-gray-500 dark:text-slate-400 font-bold text-[11px]">Today's Orders</span>
+              <div className="w-6 h-6 rounded-lg bg-blue-50 dark:bg-blue-950/70 text-blue-600 dark:text-blue-400 flex items-center justify-center shadow-2xs">
+                <ShoppingCart className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <div className="mt-2">
+              <div className="text-xl font-extrabold text-gray-900 dark:text-white tracking-tight">
+                {todayOrdersCount}
+              </div>
+              <p className="text-gray-400 dark:text-slate-400 text-[10px] font-medium mt-0.5">
+                Orders completed today
+              </p>
+            </div>
+          </div>
+
+          {/* Total Transactions */}
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-3 border border-gray-200/80 dark:border-slate-700/80 shadow-xs flex flex-col justify-between card-hover">
+            <div className="flex items-center justify-between">
+              <span className="text-gray-500 dark:text-slate-400 font-bold text-[11px]">Completed Sales</span>
+              <div className="w-6 h-6 rounded-lg bg-emerald-50 dark:bg-emerald-950/70 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-2xs">
+                <TrendingUp className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <div className="mt-2">
+              <div className="text-xl font-extrabold text-gray-900 dark:text-white tracking-tight">
+                {totalTransactions}
+              </div>
+              <p className="text-gray-400 dark:text-slate-400 text-[10px] font-medium mt-0.5">
+                Total transactions recorded
+              </p>
+            </div>
+          </div>
+
+          {/* In-Stock Units */}
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-3 border border-gray-200/80 dark:border-slate-700/80 shadow-xs flex flex-col justify-between card-hover">
+            <div className="flex items-center justify-between">
+              <span className="text-gray-500 dark:text-slate-400 font-bold text-[11px]">Units in Stock</span>
+              <div className="w-6 h-6 rounded-lg bg-indigo-50 dark:bg-indigo-950/70 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shadow-2xs">
+                <Package className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <div className="mt-2">
+              <div className="text-xl font-extrabold text-gray-900 dark:text-white tracking-tight">
+                {totalUnitsInStock}
+              </div>
+              <p className="text-gray-400 dark:text-slate-400 text-[10px] font-medium mt-0.5">
+                Total physical items in inventory
+              </p>
+            </div>
+          </div>
+
+          {/* Low Stock Items */}
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-3 border border-gray-200/80 dark:border-slate-700/80 shadow-xs flex flex-col justify-between card-hover">
+            <div className="flex items-center justify-between">
+              <span className="text-gray-500 dark:text-slate-400 font-bold text-[11px]">Low Stock Items</span>
+              <div className="w-6 h-6 rounded-lg bg-amber-50 dark:bg-amber-950/70 text-amber-600 dark:text-amber-400 flex items-center justify-center shadow-2xs">
+                <AlertTriangle className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <div className="mt-2">
+              <div className="text-xl font-extrabold text-amber-600 dark:text-amber-400 tracking-tight">
+                {lowStockAlerts.length}
+              </div>
+              <p className="text-gray-400 dark:text-slate-400 text-[10px] font-medium mt-0.5">
+                Items requiring restock attention
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 2. Upper Grid: Top Product & Recent Order on Left (2), Sales Overview on Right (1) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-stretch">
@@ -724,23 +841,42 @@ export function Dashboard({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         {/* Low Stock Alerts */}
         <div className="bg-white dark:bg-slate-800 rounded-2xl p-3.5 shadow-2xs border border-gray-100 dark:border-slate-700/80 space-y-2">
-          <div className="flex items-center justify-between border-b dark:border-slate-700/60 pb-2">
+          <div className="flex flex-wrap items-center justify-between border-b dark:border-slate-700/60 pb-2 gap-2">
             <div className="flex items-center gap-2">
               <div className="w-6 h-6 rounded-full bg-orange-50 dark:bg-orange-950/40 text-orange-600 dark:text-orange-400 flex items-center justify-center">
                 <AlertTriangle className="w-3.5 h-3.5" />
               </div>
-              <h2 className="text-xs font-bold text-gray-900 dark:text-white tracking-tight">Low Stock Alerts</h2>
+              <div>
+                <h2 className="text-xs font-bold text-gray-900 dark:text-white tracking-tight">Low Stock Alerts</h2>
+              </div>
             </div>
-            <span className="text-[10px] font-semibold text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/40 px-2 py-0.5 rounded-full">
-              {lowStockAlerts.length} items
-            </span>
+            <div className="flex items-center gap-2">
+              {lowStockCategories.length > 0 && (
+                <select
+                  value={lowStockCategory}
+                  onChange={(e) => setLowStockCategory(e.target.value)}
+                  className="px-2 py-0.5 rounded-lg bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 text-[10px] font-bold uppercase tracking-wider cursor-pointer focus:ring-1 focus:ring-orange-500"
+                  aria-label="Filter low stock by category"
+                >
+                  <option value="all">All Categories ({lowStockAlerts.length})</option>
+                  {lowStockCategories.map(cat => (
+                    <option key={cat} value={cat}>{cat.toUpperCase()}</option>
+                  ))}
+                </select>
+              )}
+              <span className="text-[10px] font-semibold text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/40 px-2 py-0.5 rounded-full">
+                {filteredLowStockAlerts.length} items
+              </span>
+            </div>
           </div>
 
           <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-            {lowStockAlerts.length === 0 ? (
-              <p className="text-gray-400 dark:text-gray-500 text-center py-4 text-xs">All active stock listings restocked safely.</p>
+            {filteredLowStockAlerts.length === 0 ? (
+              <p className="text-gray-400 dark:text-gray-500 text-center py-4 text-xs">
+                {lowStockAlerts.length === 0 ? "All active stock listings restocked safely." : "No low stock items in this category."}
+              </p>
             ) : (
-              lowStockAlerts.map(item => (
+              filteredLowStockAlerts.map(item => (
                 <div
                   key={item.id}
                   onClick={() => isAdminUser && onSelectProduct?.(item.name, item.id)}
@@ -749,8 +885,13 @@ export function Dashboard({
                   }`}
                   title={isAdminUser ? "Click to view & adjust stock for this product" : undefined}
                 >
-                  <span className="font-semibold text-gray-900 dark:text-slate-100 text-xs truncate max-w-[200px]">{item.name}</span>
-                  <div className="flex items-center gap-3 text-xs">
+                  <div className="flex items-center gap-2 min-w-0 pr-2">
+                    <span className="font-semibold text-gray-900 dark:text-slate-100 text-xs truncate max-w-[140px] sm:max-w-[180px]">{item.name}</span>
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-orange-100 dark:bg-orange-950/70 text-orange-800 dark:text-orange-300 uppercase tracking-tight shrink-0 border border-orange-200/80 dark:border-orange-900/60">
+                      {item.category || "General"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs shrink-0">
                     <span className="text-orange-600 dark:text-orange-400 font-bold">{item.stock} left</span>
                     <span className="text-gray-400 text-[10px]">Min: {item.minStock}</span>
                   </div>
@@ -762,23 +903,42 @@ export function Dashboard({
 
         {/* Nearly Expired Medicines */}
         <div className="bg-white dark:bg-slate-800 rounded-2xl p-3.5 shadow-2xs border border-gray-100 dark:border-slate-700/80 space-y-2">
-          <div className="flex items-center justify-between border-b dark:border-slate-700/60 pb-2">
+          <div className="flex flex-wrap items-center justify-between border-b dark:border-slate-700/60 pb-2 gap-2">
             <div className="flex items-center gap-2">
               <div className="w-6 h-6 rounded-full bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 flex items-center justify-center">
                 <ShieldAlert className="w-3.5 h-3.5" />
               </div>
-              <h2 className="text-xs font-bold text-gray-900 dark:text-white tracking-tight">Nearly Expired Medicines</h2>
+              <div>
+                <h2 className="text-xs font-bold text-gray-900 dark:text-white tracking-tight">Nearly Expired Medicines</h2>
+              </div>
             </div>
-            <span className="text-[10px] font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 px-2 py-0.5 rounded-full">
-              {nearlyExpiredProducts.length} batches
-            </span>
+            <div className="flex items-center gap-2">
+              {nearlyExpiredCategories.length > 0 && (
+                <select
+                  value={nearlyExpiredCategory}
+                  onChange={(e) => setNearlyExpiredCategory(e.target.value)}
+                  className="px-2 py-0.5 rounded-lg bg-gray-50 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 text-[10px] font-bold uppercase tracking-wider cursor-pointer focus:ring-1 focus:ring-red-500"
+                  aria-label="Filter near expiry by category"
+                >
+                  <option value="all">All Categories ({nearlyExpiredProducts.length})</option>
+                  {nearlyExpiredCategories.map(cat => (
+                    <option key={cat} value={cat}>{cat.toUpperCase()}</option>
+                  ))}
+                </select>
+              )}
+              <span className="text-[10px] font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 px-2 py-0.5 rounded-full">
+                {filteredNearlyExpiredProducts.length} batches
+              </span>
+            </div>
           </div>
 
           <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-            {nearlyExpiredProducts.length === 0 ? (
-              <p className="text-gray-400 dark:text-gray-500 text-center py-4 text-xs">No batches expiring within 6 months.</p>
+            {filteredNearlyExpiredProducts.length === 0 ? (
+              <p className="text-gray-400 dark:text-gray-500 text-center py-4 text-xs">
+                {nearlyExpiredProducts.length === 0 ? "No batches expiring within 6 months." : "No expiring batches in this category."}
+              </p>
             ) : (
-              nearlyExpiredProducts.map((b, index) => {
+              filteredNearlyExpiredProducts.map((b, index) => {
                 const isRed = b.daysLeft <= 0;
                 const isOrange = b.daysLeft > 0 && b.daysLeft <= 90;
 
@@ -797,8 +957,13 @@ export function Dashboard({
                     }`}
                     title={isAdminUser ? "Click to view & adjust stock for this product" : undefined}
                   >
-                    <span className="font-semibold text-gray-900 dark:text-slate-100 text-xs truncate max-w-[180px]">{b.name}</span>
-                    <div className="flex items-center gap-2.5 text-xs">
+                    <div className="flex items-center gap-2 min-w-0 pr-2">
+                      <span className="font-semibold text-gray-900 dark:text-slate-100 text-xs truncate max-w-[140px] sm:max-w-[170px]">{b.name}</span>
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-200/70 dark:bg-slate-700 text-slate-700 dark:text-slate-200 uppercase tracking-tight shrink-0 border border-slate-300 dark:border-slate-600">
+                        {b.category || "General"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2.5 text-xs shrink-0">
                       <span className={`px-2 py-0.5 rounded-full font-bold text-[9px] uppercase ${badgeClass}`}>
                         {isRed ? "EXPIRED" : `${b.daysLeft}d left`}
                       </span>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { Home, ShoppingCart, Package, Clock, ShieldAlert, LogOut, ClipboardList, Menu, X, Bell, AlertTriangle, Sun, Moon, ChevronLeft, ChevronRight, Flame, UserCheck, TrendingUp } from "lucide-react"
 import { Dashboard } from "./components/Dashboard"
 import { POSCheckout } from "./components/POSCheckout"
@@ -67,6 +67,66 @@ export default function App() {
     document.addEventListener("mousedown", handleClickOutside)
     return () => document.removeEventListener("mousedown", handleClickOutside)
   }, [showNotifications])
+
+  const [notificationCategory, setNotificationCategory] = useState<string>("all")
+
+  const lowStockItems = useMemo(() => {
+    return inventory
+      .filter(i => (Number(i.stock) || 0) <= (Number(i.minStock) || 10))
+      .sort((a, b) => {
+        const catA = (a.category || "General").trim().toLowerCase();
+        const catB = (b.category || "General").trim().toLowerCase();
+        const comp = catA.localeCompare(catB);
+        if (comp !== 0) return comp;
+        return (Number(a.stock) || 0) - (Number(b.stock) || 0);
+      });
+  }, [inventory])
+
+  const expiringItems = useMemo(() => {
+    return inventory
+      .flatMap(item => (item.batches || []).map(b => ({ 
+        name: item.name, 
+        category: item.category,
+        expiryDate: b.expiryDate, 
+        stock: Number(b.stock) || 0,
+        itemStock: Number(item.stock) || 0 
+      })))
+      .filter(b => {
+        if (!b.expiryDate || b.stock <= 0 || b.itemStock <= 0) return false
+        const diffDays = Math.ceil((new Date(b.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+        return diffDays <= 180
+      })
+      .map(b => {
+        const diffDays = Math.ceil((new Date(b.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+        return { ...b, daysLeft: diffDays }
+      })
+      .sort((a, b) => {
+        const catA = (a.category || "General").trim().toLowerCase();
+        const catB = (b.category || "General").trim().toLowerCase();
+        const comp = catA.localeCompare(catB);
+        if (comp !== 0) return comp;
+        return a.daysLeft - b.daysLeft;
+      });
+  }, [inventory])
+
+  const alertCategories = useMemo(() => {
+    const cats = new Set<string>()
+    lowStockItems.forEach(i => { if (i.category) cats.add(i.category.trim()) })
+    expiringItems.forEach(i => { if (i.category) cats.add(i.category.trim()) })
+    return Array.from(cats).sort()
+  }, [lowStockItems, expiringItems])
+
+  const filteredLowStockNotifications = useMemo(() => {
+    if (notificationCategory === "all") return lowStockItems
+    return lowStockItems.filter(i => (i.category || "").trim().toLowerCase() === notificationCategory.trim().toLowerCase())
+  }, [lowStockItems, notificationCategory])
+
+  const filteredExpiringNotifications = useMemo(() => {
+    if (notificationCategory === "all") return expiringItems
+    return expiringItems.filter(i => (i.category || "").trim().toLowerCase() === notificationCategory.trim().toLowerCase())
+  }, [expiringItems, notificationCategory])
+
+  const totalNotificationCount = lowStockItems.length + expiringItems.length
 
   const [showAttendanceModal, setShowAttendanceModal] = useState(false)
   const [logoImgError, setLogoImgError] = useState(false)
@@ -1342,7 +1402,7 @@ export default function App() {
     { id: "pos", label: "Pos–Checkout", icon: ShoppingCart },
   ]
   if (isAdminUser) {
-    navigationTabs.push({ id: "inventory", label: "Item specs", icon: ClipboardList })
+    navigationTabs.push({ id: "inventory", label: "Item category", icon: ClipboardList })
     navigationTabs.push({ id: "stock_adjust", label: "Inventory", icon: Package })
   }
   navigationTabs.push({ id: "history", label: "Sales History", icon: Clock })
@@ -1355,27 +1415,6 @@ export default function App() {
   if (currentOperator?.systemRole === "superadmin") {
     navigationTabs.push({ id: "super_admin", label: "Super Admin", icon: Flame })
   }
-
-  const lowStockItems = inventory
-    .filter(i => (i.stock || 0) <= (i.minStock || 10))
-    .sort((a, b) => (a.stock || 0) - (b.stock || 0))
-  const expiringItems = inventory
-    .flatMap(item => (item.batches || []).map(b => ({ 
-      name: item.name, 
-      expiryDate: b.expiryDate, 
-      stock: Number(b.stock) || 0,
-      itemStock: Number(item.stock) || 0 
-    })))
-    .filter(b => {
-      if (!b.expiryDate || b.stock <= 0 || b.itemStock <= 0) return false
-      const diffDays = Math.ceil((new Date(b.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-      return diffDays <= 180
-    })
-    .map(b => {
-      const diffDays = Math.ceil((new Date(b.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-      return { ...b, daysLeft: diffDays }
-    })
-    .sort((a, b) => a.daysLeft - b.daysLeft)
 
   const handleSelectStockProduct = (productName: string, productId?: string) => {
     if (isAdminUser) {
@@ -1403,8 +1442,6 @@ export default function App() {
       }, 100)
     }
   }
-
-  const totalNotificationCount = lowStockItems.length + expiringItems.length
 
   return (
     <div className={`h-screen max-h-screen overflow-hidden flex flex-col md:flex-row font-sans antialiased transition-colors duration-200 ${
@@ -1493,9 +1530,26 @@ export default function App() {
           theme === "dark" ? "border-[#1C2E2C] text-slate-300" : "border-[#758e8d] text-slate-900"
         }`}>
           {!isSidebarCollapsed && (
-            <div className="text-xs px-1">
-              <p className="font-bold truncate max-w-[180px]">{currentOperator?.displayName}</p>
-              <p className={`text-[11px] font-mono tracking-wide uppercase ${theme === "dark" ? "text-emerald-400 font-semibold" : "text-slate-800 font-bold"}`}>{currentOperator?.systemRole}</p>
+            <div className="p-3 rounded-2xl bg-black/15 dark:bg-black/25 border border-white/20 dark:border-white/10 flex items-center shadow-2xs">
+              <div className="min-w-0 flex-1">
+                <p className="font-extrabold text-sm text-slate-900 dark:text-white truncate" title={currentOperator?.displayName}>
+                  {currentOperator?.displayName}
+                </p>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className={`text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-2xs ${
+                    currentOperator?.systemRole === "superadmin"
+                      ? "bg-purple-600 text-white"
+                      : currentOperator?.systemRole === "admin"
+                      ? "bg-blue-600 text-white"
+                      : "bg-[#1b5e59] text-white"
+                  }`}>
+                    {currentOperator?.systemRole}
+                  </span>
+                  <span className="text-[11px] font-mono text-slate-700 dark:text-emerald-300 font-bold truncate">
+                    @{currentOperator?.username}
+                  </span>
+                </div>
+              </div>
             </div>
           )}
           <button 
@@ -1519,7 +1573,7 @@ export default function App() {
               <h1 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white tracking-tight">
                 {activeTab === "dashboard" && "Dashboard"}
                 {activeTab === "pos" && "Pos–Checkout"}
-                {activeTab === "inventory" && "Item specs"}
+                {activeTab === "inventory" && "Item category"}
                 {activeTab === "stock_adjust" && "Inventory"}
                 {activeTab === "history" && "Sales History"}
                 {activeTab === "reports" && "Sales Report"}
@@ -1553,24 +1607,65 @@ export default function App() {
                     <h4 className="font-bold text-gray-900 dark:text-white text-sm flex items-center gap-1.5"><AlertTriangle className="w-4 h-4 text-orange-500" /> Active Notifications</h4>
                     <button onClick={() => setShowNotifications(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 text-xs p-1 cursor-pointer"><X className="w-4 h-4" /></button>
                   </div>
+
+                  {alertCategories.length > 0 && (
+                    <div className="flex items-center gap-1.5 pb-2 border-b dark:border-[#1C2E2C]">
+                      <span className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider shrink-0">Category:</span>
+                      <select
+                        value={notificationCategory}
+                        onChange={(e) => setNotificationCategory(e.target.value)}
+                        className="w-full px-2 py-1 rounded-lg bg-gray-50 dark:bg-[#1C2E2C] border border-gray-200 dark:border-[#28413e] text-gray-700 dark:text-slate-200 text-[10px] font-bold uppercase cursor-pointer"
+                        aria-label="Filter notifications by category"
+                      >
+                        <option value="all">All Categories ({lowStockItems.length + expiringItems.length})</option>
+                        {alertCategories.map(cat => (
+                          <option key={cat} value={cat}>{cat.toUpperCase()}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
                   <div className="max-h-72 overflow-y-auto space-y-3 text-xs">
                     <div>
-                      <p className="font-bold text-orange-600 dark:text-orange-400 uppercase text-[10px] tracking-wider mb-1">Low Stock Alerts ({lowStockItems.length})</p>
-                      {lowStockItems.length === 0 ? <p className="text-gray-400 py-1">No low stock alerts.</p> : lowStockItems.map(item => <div key={item.id} onClick={() => handleSelectStockProduct(item.name, item.id)} className="p-2 bg-orange-50/60 dark:bg-orange-950/30 rounded-lg border border-orange-100 dark:border-orange-900/40 mb-1 flex justify-between cursor-pointer hover:bg-orange-100/60 dark:hover:bg-orange-900/50 transition-colors"><span className="font-medium text-gray-900 dark:text-gray-100">{item.name}</span><span className="font-bold text-orange-700 dark:text-orange-300">{item.stock} left</span></div>)}
+                      <p className="font-bold text-orange-600 dark:text-orange-400 uppercase text-[10px] tracking-wider mb-1">Low Stock Alerts ({filteredLowStockNotifications.length})</p>
+                      {filteredLowStockNotifications.length === 0 ? (
+                        <p className="text-gray-400 py-1">No low stock alerts{notificationCategory !== "all" ? " in this category" : ""}.</p>
+                      ) : (
+                        filteredLowStockNotifications.map(item => (
+                          <div 
+                            key={item.id} 
+                            onClick={() => handleSelectStockProduct(item.name, item.id)} 
+                            className="p-2 bg-orange-50/60 dark:bg-orange-950/30 rounded-lg border border-orange-100 dark:border-orange-900/40 mb-1 flex justify-between items-center cursor-pointer hover:bg-orange-100/60 dark:hover:bg-orange-900/50 transition-colors"
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0 pr-2">
+                              <span className="font-medium text-gray-900 dark:text-gray-100 truncate max-w-[170px]">{item.name}</span>
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-orange-100 dark:bg-orange-950/70 text-orange-800 dark:text-orange-300 uppercase tracking-tight shrink-0 border border-orange-200/80 dark:border-orange-900/60">
+                                {item.category || "General"}
+                              </span>
+                            </div>
+                            <span className="font-bold text-orange-700 dark:text-orange-300 shrink-0">{item.stock} left</span>
+                          </div>
+                        ))
+                      )}
                     </div>
                     <div>
-                      <p className="font-bold text-red-600 dark:text-red-400 uppercase text-[10px] tracking-wider mb-1">Expiring Batch Alerts ({expiringItems.length})</p>
-                      {expiringItems.length === 0 ? (
-                        <p className="text-gray-400 py-1">No expiring batches.</p>
+                      <p className="font-bold text-red-600 dark:text-red-400 uppercase text-[10px] tracking-wider mb-1">Expiring Batch Alerts ({filteredExpiringNotifications.length})</p>
+                      {filteredExpiringNotifications.length === 0 ? (
+                        <p className="text-gray-400 py-1">No expiring batches{notificationCategory !== "all" ? " in this category" : ""}.</p>
                       ) : (
-                        expiringItems.map((item, idx) => (
+                        filteredExpiringNotifications.map((item, idx) => (
                           <div 
                             key={idx} 
                             onClick={() => handleSelectStockProduct(item.name)} 
                             className="p-2 bg-red-50/60 dark:bg-red-950/30 rounded-lg border border-red-100 dark:border-red-900/40 mb-1 flex justify-between items-center cursor-pointer hover:bg-red-100/60 dark:hover:bg-red-900/50 transition-colors"
                           >
-                            <span className="font-medium text-gray-900 dark:text-gray-100">{item.name}</span>
-                            <span className="font-bold text-red-700 dark:text-red-300">{item.daysLeft <= 0 ? "EXPIRED" : `${item.daysLeft}d left`}</span>
+                            <div className="flex items-center gap-1.5 min-w-0 pr-2">
+                              <span className="font-medium text-gray-900 dark:text-gray-100 truncate max-w-[170px]">{item.name}</span>
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-200/70 dark:bg-slate-700 text-slate-700 dark:text-slate-200 uppercase tracking-tight shrink-0 border border-slate-300 dark:border-slate-600">
+                                {item.category || "General"}
+                              </span>
+                            </div>
+                            <span className="font-bold text-red-700 dark:text-red-300 shrink-0">{item.daysLeft <= 0 ? "EXPIRED" : `${item.daysLeft}d left`}</span>
                           </div>
                         ))
                       )}
@@ -1583,7 +1678,7 @@ export default function App() {
         </header>
         <main className="flex-1 px-4 sm:px-6 py-5 overflow-y-auto isolate">
           {activeTab === "dashboard" && <Dashboard inventory={inventory} sales={sales} isAdminUser={isAdminUser} onSelectProduct={handleSelectStockProduct} onSelectSale={handleSelectSale} />}
-          {activeTab === "pos" && <POSCheckout inventory={inventory} sales={sales} categoriesList={categoriesList} onCompleteSale={addSale} />}
+          {activeTab === "pos" && <POSCheckout currentOperator={currentOperator} inventory={inventory} sales={sales} categoriesList={categoriesList} onCompleteSale={addSale} />}
           {activeTab === "inventory" && <InventoryManager currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} refreshCategories={fetchCategories} refreshInventory={fetchInventory} onUpdateInventory={updateInventoryItem} onDeleteProduct={deleteInventoryItem} onLogAction={logSystemAction} />}
           {activeTab === "stock_adjust" && <StockAdjustment currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} fetchInventory={fetchInventory} onLogAction={logSystemAction} />}
           {activeTab === "history" && <SalesHistory inventory={inventory} currentOperator={currentOperator} sales={sales} onToggleRefund={handleToggleRefund} />}
