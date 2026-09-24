@@ -24,7 +24,8 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
   const [currentTime, setCurrentTime] = useState(() => Date.now())
 
   // Validation / Fake Shift States
-  const [validFilter, setValidFilter] = useState<"all" | "approved" | "suspicious" | "invalid">("all")
+  const [validFilter, setValidFilter] = useState<"all" | "approved" | "invalid">("all")
+  const [recordToFlagFake, setRecordToFlagFake] = useState<AttendanceRecord | null>(null)
   const [recordToDelete, setRecordToDelete] = useState<AttendanceRecord | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [notification, setNotification] = useState<string | null>(null)
@@ -91,6 +92,7 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
         })
 
         if (staleRecords.length > 0) {
+          const nextInv = new Set(invalidatedIds)
           for (const s of staleRecords) {
             const inT = new Date(s.time_in).getTime()
             const cappedOut = new Date(inT + MAX_SHIFT_MS).toISOString()
@@ -100,7 +102,9 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
               time_out: cappedOut,
               duration_minutes: MAX_SHIFT_MINUTES
             }).eq("id", s.id)
+            nextInv.add(String(s.id))
           }
+          saveInvalidatedIds(nextInv)
         }
 
         // 2. Auto-repair legacy bloated records in database (> 12 hours duration)
@@ -259,8 +263,7 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
   }
 
   const countInvalid = records.filter(r => invalidatedIds.has(r.id)).length
-  const countSuspicious = records.filter(r => !invalidatedIds.has(r.id) && r.durationMinutes !== undefined && r.durationMinutes < 5).length
-  const countApproved = records.filter(r => !invalidatedIds.has(r.id) && (r.durationMinutes === undefined || r.durationMinutes >= 5)).length
+  const countApproved = records.filter(r => !invalidatedIds.has(r.id)).length
 
   const filteredRecords = useMemo(() => {
     return records
@@ -277,11 +280,9 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
         const matchRole = roleFilter === "all" || (r.systemRole || "staff").toLowerCase() === roleFilter.toLowerCase()
 
         const isInv = invalidatedIds.has(r.id)
-        const isSusp = !isInv && r.durationMinutes !== undefined && r.durationMinutes < 5
 
         let matchValid = true
-        if (validFilter === "approved") matchValid = !isInv && !isSusp
-        else if (validFilter === "suspicious") matchValid = isSusp
+        if (validFilter === "approved") matchValid = !isInv
         else if (validFilter === "invalid") matchValid = isInv
 
         return matchSearch && matchRole && matchValid
@@ -338,8 +339,7 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
     ]
     const rows = filteredRecords.map(r => {
       const isInv = invalidatedIds.has(r.id)
-      const isSusp = !isInv && r.durationMinutes !== undefined && r.durationMinutes < 5
-      const valStatus = isInv ? "Voided / Fake" : (isSusp ? "Suspicious (<5m)" : "Approved / Valid")
+      const valStatus = isInv ? "Voided / Fake" : "Approved / Valid"
       return [
         `#${r.id}`,
         r.username,
@@ -424,10 +424,10 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
           </h3>
         </div>
         <div className="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs card-hover">
-          <span className="text-gray-400 dark:text-slate-400 font-bold text-[10px] uppercase tracking-wider block">Suspicious Shifts (&lt;5m)</span>
-          <h3 className="text-amber-600 dark:text-amber-400 font-bold text-xl mt-1 font-mono flex items-center gap-1.5">
-            <AlertTriangle className="w-4 h-4 text-amber-500" />
-            <span>{countSuspicious}</span>
+          <span className="text-gray-400 dark:text-slate-400 font-bold text-[10px] uppercase tracking-wider block">Validated Shifts</span>
+          <h3 className="text-emerald-600 dark:text-emerald-400 font-bold text-xl mt-1 font-mono flex items-center gap-1.5">
+            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+            <span>{countApproved}</span>
           </h3>
         </div>
         <div className="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs card-hover">
@@ -533,24 +533,13 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
             <button
               type="button"
               onClick={() => setValidFilter("approved")}
-              className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase transition-all ${
+              className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase transition-all cursor-pointer ${
                 validFilter === "approved"
                   ? "bg-emerald-600 text-white shadow-2xs"
                   : "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100"
               }`}
             >
               ✅ Validated ({countApproved})
-            </button>
-            <button
-              type="button"
-              onClick={() => setValidFilter("suspicious")}
-              className={`px-3 py-1 rounded-lg text-[10px] font-bold uppercase transition-all ${
-                validFilter === "suspicious"
-                  ? "bg-amber-500 text-white shadow-2xs"
-                  : "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 hover:bg-amber-100"
-              }`}
-            >
-              ⚠️ Suspicious &lt;5m ({countSuspicious})
             </button>
             <button
               type="button"
@@ -696,7 +685,7 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
                             {liveDurationStr}
                           </span>
                         ) : (
-                          <span className={isSusp ? "text-amber-600 dark:text-amber-400" : "text-blue-700 dark:text-blue-400"}>
+                          <span className="text-blue-700 dark:text-blue-400">
                             {durationStr}
                           </span>
                         )}
@@ -712,19 +701,10 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
                             <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
                             Clocked In
                           </span>
-                        ) : isSusp ? (
-                          <span className="px-2.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300 inline-flex items-center gap-1 border border-amber-300 dark:border-amber-700">
-                            <AlertTriangle className="w-3 h-3" />
-                            Suspicious (&lt;5m)
-                          </span>
-                        ) : r.durationMinutes !== undefined && r.durationMinutes >= 720 ? (
-                          <span className="px-2.5 py-0.5 rounded-full text-[9px] font-bold bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300 inline-flex items-center gap-1">
-                            ⏱️ 12h Capped
-                          </span>
                         ) : (
                           <span className="px-2.5 py-0.5 rounded-full text-[9px] font-bold bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 inline-flex items-center gap-1 border border-emerald-300/80 dark:border-emerald-700">
                             <CheckCircle2 className="w-3 h-3" />
-                            Completed
+                            Validated
                           </span>
                         )}
                       </td>
@@ -733,16 +713,22 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
                           {/* Toggle Validation Button */}
                           <button
                             type="button"
-                            onClick={() => handleToggleValidation(r)}
-                            className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 ${
+                            onClick={() => {
+                              if (isInv) {
+                                handleToggleValidation(r)
+                              } else {
+                                setRecordToFlagFake(r)
+                              }
+                            }}
+                            className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer active:scale-95 ${
                               isInv
                                 ? "bg-emerald-100 hover:bg-emerald-200 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300"
                                 : "bg-amber-100 hover:bg-amber-200 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300"
                             }`}
-                            title={isInv ? "Restore shift as Valid/Approved" : "Mark shift as Fake / Invalid (Exclude from payroll)"}
+                            title={isInv ? "Restore shift as Validated" : "Flag shift as Fake / Invalid (Confirm required)"}
                           >
                             {isInv ? <CheckCircle2 className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
-                            {isInv ? "Re-Approve" : "Flag Fake"}
+                            {isInv ? "Validated" : "Flag Fake"}
                           </button>
 
                           {/* Delete Attendance Record Button */}
@@ -764,6 +750,72 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
           </table>
         </div>
       </div>
+
+      {/* Flag Fake Confirmation Modal */}
+      {recordToFlagFake && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-amber-600 dark:text-amber-400">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-950/80 flex items-center justify-center">
+                <ShieldAlert className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-gray-900 dark:text-white">Flag Shift as Fake / Invalid?</h3>
+                <p className="text-xs text-gray-500 dark:text-slate-400">Attendance Shift #{recordToFlagFake.id}</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-gray-50 dark:bg-slate-900 rounded-xl border border-gray-100 dark:border-slate-800 text-xs space-y-2">
+              <div className="flex justify-between">
+                <span className="text-gray-500 dark:text-slate-400">Staff Member:</span>
+                <span className="font-bold text-gray-800 dark:text-white">{recordToFlagFake.displayName} (@{recordToFlagFake.username})</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500 dark:text-slate-400">Time In:</span>
+                <span className="font-mono text-gray-700 dark:text-slate-300">{new Date(recordToFlagFake.timeIn).toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500 dark:text-slate-400">Time Out:</span>
+                <span className="font-mono text-gray-700 dark:text-slate-300">
+                  {recordToFlagFake.timeOut ? new Date(recordToFlagFake.timeOut).toLocaleString() : "Active Shift"}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500 dark:text-slate-400">Duration:</span>
+                <span className="font-mono font-bold text-blue-600">
+                  {recordToFlagFake.durationMinutes !== undefined ? `${Math.floor(recordToFlagFake.durationMinutes / 60)}h ${recordToFlagFake.durationMinutes % 60}m` : "-"}
+                </span>
+              </div>
+            </div>
+
+            <div className="bg-rose-50 dark:bg-rose-950/40 p-3 rounded-xl border border-rose-200 dark:border-rose-900 text-xs text-rose-800 dark:text-rose-300">
+              ⚠️ Flagging this shift as Fake will void the attendance and deduct its hours from calculated total valid work time.
+            </div>
+
+            <div className="flex justify-end items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setRecordToFlagFake(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const target = recordToFlagFake
+                  setRecordToFlagFake(null)
+                  handleToggleValidation(target)
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-600/20 flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+              >
+                <ShieldAlert className="w-3.5 h-3.5" />
+                <span>Confirm Flag Fake</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {recordToDelete && (

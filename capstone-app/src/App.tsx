@@ -201,7 +201,6 @@ export default function App() {
     const handleUnload = () => {
       try {
         localStorage.removeItem(`pinv_active_heartbeat_${uName}_tab_${tabId}`)
-        clockOutUser(uName)
       } catch (e) {}
     }
     window.addEventListener("beforeunload", handleUnload)
@@ -229,7 +228,7 @@ export default function App() {
   const MAX_SHIFT_MINUTES = 12 * 60 // 12 hours maximum shift limit
   const MAX_SHIFT_MS = MAX_SHIFT_MINUTES * 60 * 1000
 
-  const clockOutUser = async (uName: string) => {
+  const clockOutUserOnLogout = async (uName: string) => {
     if (!uName) return
     const target = uName.trim().toLowerCase()
     try {
@@ -241,6 +240,9 @@ export default function App() {
 
       if (data && data.length > 0) {
         const nowMs = Date.now()
+        const stored = localStorage.getItem("pinv_invalidated_attendance_ids")
+        const invalidatedSet = new Set<string>(stored ? JSON.parse(stored) : [])
+
         for (const record of data) {
           const inTime = new Date(record.time_in).getTime()
           const isStale = !isNaN(inTime) && (nowMs - inTime > MAX_SHIFT_MS)
@@ -257,11 +259,17 @@ export default function App() {
               duration_minutes: durationMinutes
             })
             .eq("id", record.id)
+
+          // Per requirements: If user did not manually click Time Out, invalidate the attendance shift
+          invalidatedSet.add(String(record.id))
         }
+
+        localStorage.setItem("pinv_invalidated_attendance_ids", JSON.stringify(Array.from(invalidatedSet)))
+        window.dispatchEvent(new Event("pinv_attendance_invalidated"))
         window.dispatchEvent(new Event("pinv_attendance_updated"))
       }
     } catch (e) {
-      console.error("Error clocking out user from Supabase", e)
+      console.error("Error invalidating un-timed-out user attendance on logout", e)
     }
   }
 
@@ -285,7 +293,7 @@ export default function App() {
       let hasValidActiveShift = false
 
       if (data && data.length > 0) {
-        // Auto-close any stale active shifts older than 12 hours
+        // Close any stale active shifts older than 12 hours and invalidate them since staff never timed out
         for (const r of data) {
           const inTime = new Date(r.time_in).getTime()
           if (!isNaN(inTime) && (nowMs - inTime > MAX_SHIFT_MS)) {
@@ -297,6 +305,14 @@ export default function App() {
                 duration_minutes: MAX_SHIFT_MINUTES
               })
               .eq("id", r.id)
+
+            try {
+              const stored = localStorage.getItem("pinv_invalidated_attendance_ids")
+              const set = new Set<string>(stored ? JSON.parse(stored) : [])
+              set.add(String(r.id))
+              localStorage.setItem("pinv_invalidated_attendance_ids", JSON.stringify(Array.from(set)))
+              window.dispatchEvent(new Event("pinv_attendance_invalidated"))
+            } catch (e) {}
           } else {
             hasValidActiveShift = true
           }
@@ -355,7 +371,7 @@ export default function App() {
     if (op?.username) {
       const uName = String(op.username).trim().toLowerCase()
       clearAllUserHeartbeats(uName)
-      clockOutUser(uName)
+      clockOutUserOnLogout(uName)
       try {
         logSystemAction("SESSION_LOGOUT", "AUTHENTICATION Portal", `Terminated station session for @${op.username}`)
       } catch (e) {}
@@ -467,7 +483,7 @@ export default function App() {
           if (act === "TARGET_SESSION_TERMINATED") {
             const targetUser = String(logData.details_summary || "").trim().toLowerCase()
             if (targetUser === currentUser) {
-              clockOutUser(currentUser)
+              clockOutUserOnLogout(currentUser)
               clearAllUserHeartbeats(currentUser)
               clearSessionData()
               setCurrentOperator(null)
@@ -494,7 +510,7 @@ export default function App() {
           const curr = String(currentOperator.username).trim().toLowerCase()
           const initiator = String(data.initiatedBy || "").trim().toLowerCase()
           if (target === curr && (initiator === "" || initiator !== curr)) {
-            clockOutUser(curr)
+            clockOutUserOnLogout(curr)
             clearAllUserHeartbeats(curr)
             clearSessionData()
             setCurrentOperator(null)
@@ -504,7 +520,7 @@ export default function App() {
         } else if (data.type === 'FORCE_LOGOUT_BELOW_SUPER_ADMIN') {
           if (String(currentOperator.systemRole).toLowerCase() !== 'superadmin') {
             const curr = String(currentOperator.username).trim().toLowerCase()
-            clockOutUser(curr)
+            clockOutUserOnLogout(curr)
             clearAllUserHeartbeats(curr)
             clearSessionData()
             setCurrentOperator(null)
@@ -532,7 +548,7 @@ export default function App() {
       if (currentOperator && String(currentOperator.systemRole).toLowerCase() !== 'superadmin') {
         const curr = String(currentOperator.username || "").trim().toLowerCase()
         if (curr) {
-          clockOutUser(curr)
+          clockOutUserOnLogout(curr)
           clearAllUserHeartbeats(curr)
         }
         clearSessionData()
@@ -1530,26 +1546,19 @@ export default function App() {
           theme === "dark" ? "border-[#1C2E2C] text-slate-300" : "border-[#758e8d] text-slate-900"
         }`}>
           {!isSidebarCollapsed && (
-            <div className="p-3 rounded-2xl bg-black/15 dark:bg-black/25 border border-white/20 dark:border-white/10 flex items-center shadow-2xs">
-              <div className="min-w-0 flex-1">
-                <p className="font-extrabold text-sm text-slate-900 dark:text-white truncate" title={currentOperator?.displayName}>
-                  {currentOperator?.displayName}
-                </p>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <span className={`text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-2xs ${
-                    currentOperator?.systemRole === "superadmin"
-                      ? "bg-purple-600 text-white"
-                      : currentOperator?.systemRole === "admin"
-                      ? "bg-blue-600 text-white"
-                      : "bg-[#1b5e59] text-white"
-                  }`}>
-                    {currentOperator?.systemRole}
-                  </span>
-                  <span className="text-[11px] font-mono text-slate-700 dark:text-emerald-300 font-bold truncate">
-                    @{currentOperator?.username}
-                  </span>
-                </div>
-              </div>
+            <div className="p-2.5 px-3 rounded-2xl bg-black/15 dark:bg-black/25 border border-white/20 dark:border-white/10 flex items-center justify-between gap-2 shadow-2xs">
+              <span className="font-extrabold text-sm text-slate-900 dark:text-white truncate" title={currentOperator?.displayName}>
+                {currentOperator?.displayName}
+              </span>
+              <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded shadow-2xs shrink-0 ${
+                currentOperator?.systemRole === "superadmin"
+                  ? "bg-purple-600 text-white"
+                  : currentOperator?.systemRole === "admin"
+                  ? "bg-blue-600 text-white"
+                  : "bg-[#1b5e59] text-white"
+              }`}>
+                {currentOperator?.systemRole}
+              </span>
             </div>
           )}
           <button 

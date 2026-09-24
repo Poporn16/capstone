@@ -99,7 +99,20 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
         return ["walk-in", "walk-in customer", "regular customer", "walkin"].includes(cName.trim().toLowerCase());
       });
     } else if (customerFilter === "all_discounts") {
-      result = result.filter(sale => (Number(sale.discount) > 0 || (Boolean(sale.discountLabel) && sale.discountLabel.trim() !== "" && sale.discountLabel.toLowerCase() !== "none")));
+      result = result.filter(sale => {
+        const dVal = Number(sale.discount) || 0;
+        const dLabel = (sale.discountLabel || "").trim().toLowerCase();
+        const isNoneLabel = !dLabel || dLabel === "none" || dLabel.startsWith("none (") || dLabel.startsWith("none(");
+        if (dVal > 0 && !isNoneLabel) return true;
+        if (!isNoneLabel && (
+          dLabel.includes("senior") ||
+          dLabel.includes("pwd") ||
+          dLabel.includes("solo") ||
+          dLabel.includes("naac") ||
+          dLabel.includes("custom")
+        )) return true;
+        return false;
+      });
     } else if (customerFilter === "senior") {
       result = result.filter(sale => (sale.discountLabel || "").toLowerCase().includes("senior"));
     } else if (customerFilter === "pwd") {
@@ -287,11 +300,6 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
 
   return (
     <div className="space-y-6 text-xs font-medium font-sans">
-      {!isAdmin && (
-        <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 rounded-xl text-amber-800 dark:text-amber-300 text-xs font-medium flex items-center justify-between">
-          <span>🔒 <strong>Staff Restricted View:</strong> Downloading sale history spreadsheets and voiding receipts require Administrator privileges.</span>
-        </div>
-      )}
 
       <div className="bg-white dark:bg-slate-800 p-5 rounded-xl border border-gray-100 dark:border-slate-700 shadow-sm space-y-4">
         <div className="relative">

@@ -3,7 +3,7 @@ import type { InventoryItem, Operator } from "../types"
 import { supabase } from "../utils/apiClient"
 import { downloadExcelWithAutoFit, parseSpreadsheetFile } from "../utils/excelUtils"
 import { useBarcodeScanner, matchBarcodeToItem } from "../utils/barcodeScanner"
-import { Plus, Minus, Layers, AlertCircle, Trash2, Calendar, Download, Upload, FileSpreadsheet, Clock, CheckCircle2, X, Edit2, Search, Building2, Sparkles, Scan, Check, Barcode } from "lucide-react"
+import { Plus, Minus, Layers, AlertCircle, Trash2, Calendar, Download, Upload, FileSpreadsheet, Clock, CheckCircle2, X, Edit2, Search, Building2, Sparkles, Scan, Check, Barcode, Package } from "lucide-react"
 import { BarcodePrintModal } from "./BarcodePrintModal"
 
 interface StockAdjustmentProps {
@@ -978,18 +978,9 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                       <h2 className="text-base font-bold text-gray-900 dark:text-white leading-tight">{selectedItem.name}</h2>
                     </div>
                     
-                    {/* Barcode & Manufacturer Brand Badge in Header */}
+                    {/* Barcode in Header */}
                     <div className="flex items-center gap-2 flex-wrap text-[11px] text-slate-600 dark:text-slate-300 font-mono">
                       <span className="text-slate-500 dark:text-slate-400">Barcode: #{selectedItem.barcode || "N/A"}</span>
-                      {selectedItem.batches && selectedItem.batches.length > 0 && selectedItem.manufacturer && (
-                        <>
-                          <span>•</span>
-                          <span className="flex items-center gap-1 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 font-bold">
-                            <Building2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                            Manufacturer: {selectedItem.manufacturer}
-                          </span>
-                        </>
-                      )}
                     </div>
                   </div>
                   <div className="text-right">
@@ -1303,19 +1294,32 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
 
                   <div className="space-y-1">
                     <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] tracking-wider">Initial Stock Units Quantity *</label>
-                    <input 
-                      type="text" 
-                      required 
-                      disabled={isProcessing}
-                      placeholder="Type initial quantity..." 
-                      value={batchQty}
-                      onChange={e => {
-                        const inputVal = e.target.value
-                        const cleanVal = inputVal.replace(/[^0-9]/g, "")
-                        setBatchQty(cleanVal)
-                      }}
-                      className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-900 dark:text-white font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500" 
-                    />
+                    <div className="flex items-center gap-2">
+                      <input 
+                        type="number" 
+                        min="1"
+                        step="1"
+                        required 
+                        disabled={isProcessing}
+                        placeholder="Type initial quantity..." 
+                        value={batchQty}
+                        onChange={e => setBatchQty(e.target.value)}
+                        className="flex-1 p-2 border border-gray-200 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-900 dark:text-white font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500" 
+                      />
+                      <button
+                        type="button"
+                        disabled={isProcessing}
+                        onClick={() => {
+                          const current = parseInt(batchQty) || 0
+                          setBatchQty(String(current + 100))
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs shrink-0 cursor-pointer disabled:opacity-50"
+                        title="Add 1 Box (+100 quantity)"
+                      >
+                        <Package className="w-3.5 h-3.5" />
+                        <span>+1 Box (100)</span>
+                      </button>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">

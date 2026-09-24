@@ -40,7 +40,7 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
         const MAX_SHIFT_MS = MAX_SHIFT_MINUTES * 60 * 1000
         const nowMs = Date.now()
 
-        // Auto-close stale active shifts older than 12 hours in database
+        // Auto-close stale active shifts older than 12 hours in database and invalidate them
         const staleRecords = attRes.data.filter((d: any) => {
           if (d.time_out) return false
           const inT = new Date(d.time_in).getTime()
@@ -48,6 +48,8 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
         })
 
         if (staleRecords.length > 0) {
+          const storedInv = localStorage.getItem("pinv_invalidated_attendance_ids")
+          const nextInv = new Set<string>(storedInv ? JSON.parse(storedInv) : [])
           for (const s of staleRecords) {
             const inT = new Date(s.time_in).getTime()
             const cappedOut = new Date(inT + MAX_SHIFT_MS).toISOString()
@@ -57,7 +59,10 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
               time_out: cappedOut,
               duration_minutes: MAX_SHIFT_MINUTES
             }).eq("id", s.id)
+            nextInv.add(String(s.id))
           }
+          localStorage.setItem("pinv_invalidated_attendance_ids", JSON.stringify(Array.from(nextInv)))
+          window.dispatchEvent(new Event("pinv_attendance_invalidated"))
         }
 
         // Auto-cleanup any duplicate active shifts in database if they exist
