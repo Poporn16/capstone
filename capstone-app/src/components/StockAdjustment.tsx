@@ -1294,17 +1294,17 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
 
                   <div className="space-y-1">
                     <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] tracking-wider">Initial Stock Units Quantity *</label>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 w-full">
                       <input 
                         type="number" 
                         min="1"
                         step="1"
                         required 
                         disabled={isProcessing}
-                        placeholder="Type initial quantity..." 
+                        placeholder="0" 
                         value={batchQty}
                         onChange={e => setBatchQty(e.target.value)}
-                        className="flex-1 p-2 border border-gray-200 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-900 dark:text-white font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500" 
+                        className="min-w-0 flex-1 p-2 border border-gray-200 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-900 dark:text-white font-mono font-bold focus:outline-none focus:ring-1 focus:ring-blue-500" 
                       />
                       <button
                         type="button"
@@ -1313,11 +1313,12 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                           const current = parseInt(batchQty) || 0
                           setBatchQty(String(current + 100))
                         }}
-                        className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs shrink-0 cursor-pointer disabled:opacity-50"
-                        title="Add 1 Box (+100 quantity)"
+                        className="shrink-0 px-2.5 py-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                        title="Add 1 Box (100 units)"
                       >
-                        <Package className="w-3.5 h-3.5" />
-                        <span>+1 Box (100)</span>
+                        <Package className="w-3.5 h-3.5 shrink-0" />
+                        <span>+1 Box</span>
+                        <span className="text-[10px] text-blue-200 font-mono font-bold">(100)</span>
                       </button>
                     </div>
                   </div>
