@@ -964,18 +964,23 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     const pin = editPin.trim()
     const role = editRole.trim()
 
-    if (!dName || !pin || !role) {
-      alert("Please fill in all account profile fields.")
+    if (!dName || !role) {
+      alert("Please fill in full display employee name and authorization role.")
       return
+    }
+
+    const updatePayload: { display_name: string; system_role: string; password_hash?: string } = {
+      display_name: dName,
+      system_role: role
+    }
+
+    if (pin) {
+      updatePayload.password_hash = hashPassword(pin)
     }
 
     const { error } = await supabase
       .from("operator_profiles")
-      .update({
-        display_name: dName,
-        password_hash: hashPassword(pin),
-        system_role: role
-      })
+      .update(updatePayload)
       .eq("id", editingProfile.id)
 
     if (error) {
@@ -1625,7 +1630,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                               onClick={() => {
                                 setEditingProfile(p)
                                 setEditDisplayName(p.display_name)
-                                setEditPin(p.password_hash || "")
+                                setEditPin("")
                                 setEditRole(p.system_role)
                                 setOpenActionProfileId(null)
                               }}
@@ -2289,10 +2294,10 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                 </label>
                 <input
                   type="password"
-                  required
                   value={editPin}
                   onChange={e => setEditPin(e.target.value)}
-                  className="w-full p-2.5 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-mono bg-white dark:bg-slate-900 text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder="Leave blank to keep existing password..."
+                  className="w-full p-2.5 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-mono bg-white dark:bg-slate-900 text-gray-800 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500 placeholder:font-sans focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
               </div>
 

@@ -76,7 +76,8 @@ capstone/
 │   │   │   ├── SalesReport.tsx           # Comprehensive sales analytics & charts
 │   │   │   ├── StaffAttendanceModal.tsx  # Quick Time In / Time Out clock modal
 │   │   │   ├── StaffAttendancePage.tsx   # Staff attendance log directory & Excel export
-│   │   │   └── StockAdjustment.tsx       # "Inventory" - Batch stock adjustment & Excel sync
+│   │   │   ├── StockAdjustment.tsx       # "Inventory" - Batch stock adjustment & Excel sync
+│   │   │   └── SuperAdminPanel.tsx       # Super Admin governance, database management, & system metrics
 │   │   ├── types/
 │   │   │   └── index.ts                  # Shared TypeScript interfaces & types
 │   │   ├── utils/

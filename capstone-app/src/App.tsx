@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react"
-import { Home, ShoppingCart, Package, Clock, ShieldAlert, LogOut, ClipboardList, Menu, X, Bell, AlertTriangle, Sun, Moon, ChevronLeft, ChevronRight, Flame, UserCheck, TrendingUp } from "lucide-react"
+import { Home, ShoppingCart, Package, Clock, ShieldAlert, LogOut, ClipboardList, Menu, X, Bell, AlertTriangle, Sun, Moon, ChevronLeft, ChevronRight, Flame, UserCheck, TrendingUp, CheckCircle2 } from "lucide-react"
 import { Dashboard } from "./components/Dashboard"
 import { POSCheckout } from "./components/POSCheckout"
 import { InventoryManager } from "./components/InventoryManager"
@@ -130,6 +130,8 @@ export default function App() {
 
   const [showAttendanceModal, setShowAttendanceModal] = useState(false)
   const [logoImgError, setLogoImgError] = useState(false)
+  const [logoutWarningRecord, setLogoutWarningRecord] = useState<{ id: any; time_in: string } | null>(null)
+  const [isCheckingLogout, setIsCheckingLogout] = useState(false)
 
   const [currentOperator, setCurrentOperator] = useState<Operator | null>(() => {
     try {
@@ -366,12 +368,14 @@ export default function App() {
     } catch (e) {}
   }
 
-  const handleLogout = () => {
+  const handleLogout = (alreadyTimedOut = false) => {
     const op = currentOperator
     if (op?.username) {
       const uName = String(op.username).trim().toLowerCase()
       clearAllUserHeartbeats(uName)
-      clockOutUserOnLogout(uName)
+      if (!alreadyTimedOut) {
+        clockOutUserOnLogout(uName)
+      }
       try {
         logSystemAction("SESSION_LOGOUT", "AUTHENTICATION Portal", `Terminated station session for @${op.username}`)
       } catch (e) {}
@@ -379,6 +383,95 @@ export default function App() {
     clearSessionData()
     setCurrentOperator(null)
     setActiveTab("dashboard")
+  }
+
+  const handleLogoutClick = async () => {
+    if (!currentOperator?.username) {
+      handleLogout()
+      return
+    }
+
+    const uName = String(currentOperator.username).trim().toLowerCase()
+    setIsCheckingLogout(true)
+
+    try {
+      const { data, error } = await supabase
+        .from("staff_attendance")
+        .select("id, time_in")
+        .ilike("username", uName)
+        .is("time_out", null)
+        .order("id", { ascending: false })
+        .limit(1)
+
+      if (!error && data && data.length > 0) {
+        setLogoutWarningRecord(data[0])
+        setIsCheckingLogout(false)
+        return
+      }
+    } catch (e) {
+      console.error("Failed to check active attendance before logout", e)
+    } finally {
+      setIsCheckingLogout(false)
+    }
+
+    handleLogout()
+  }
+
+  const handleConfirmTimeOutAndLogout = async () => {
+    if (!logoutWarningRecord || !currentOperator?.username) {
+      setLogoutWarningRecord(null)
+      handleLogout()
+      return
+    }
+
+    const uName = String(currentOperator.username).trim().toLowerCase()
+    const nowMs = Date.now()
+    const inTime = new Date(logoutWarningRecord.time_in).getTime()
+    const isStale = !isNaN(inTime) && (nowMs - inTime > MAX_SHIFT_MS)
+    const outTimeMs = isStale ? inTime + MAX_SHIFT_MS : nowMs
+    const timeOutIso = new Date(outTimeMs).toISOString()
+    const durationMinutes = isStale
+      ? MAX_SHIFT_MINUTES
+      : Math.max(1, Math.round((nowMs - inTime) / (1000 * 60)))
+
+    const numId = Number(logoutWarningRecord.id)
+    if (!isNaN(numId)) {
+      try {
+        await supabase.from("staff_attendance").update({
+          time_out: timeOutIso,
+          duration_minutes: durationMinutes
+        }).eq("id", numId)
+
+        const stored = localStorage.getItem("pinv_invalidated_attendance_ids")
+        if (stored) {
+          const invSet = new Set<string>(JSON.parse(stored))
+          invSet.delete(String(numId))
+          localStorage.setItem("pinv_invalidated_attendance_ids", JSON.stringify(Array.from(invSet)))
+        }
+
+        const formattedTime = new Date(outTimeMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        const hours = Math.floor(durationMinutes / 60)
+        const mins = durationMinutes % 60
+        const durationStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`
+
+        await logSystemAction(
+          "STAFF_TIME_OUT",
+          "ATTENDANCE_STATION",
+          `Staff @${currentOperator.username} (${currentOperator.displayName}) recorded TIME OUT on logout at ${formattedTime} (Shift: ${durationStr})`
+        )
+        window.dispatchEvent(new Event("pinv_attendance_updated"))
+      } catch (e) {
+        console.error("Error updating attendance on logout confirmation", e)
+      }
+    }
+
+    setLogoutWarningRecord(null)
+    handleLogout(true)
+  }
+
+  const handleConfirmLogoutAnyway = () => {
+    setLogoutWarningRecord(null)
+    handleLogout(false)
   }
 
   // Periodic session expiration check (checks every minute while logged in)
@@ -1563,12 +1656,13 @@ export default function App() {
           )}
           <button 
             type="button" 
-            onClick={handleLogout} 
-            className="w-full flex items-center justify-center gap-2 py-2 px-3 font-bold rounded-xl transition-all text-xs cursor-pointer bg-red-600 hover:bg-red-700 active:scale-95 text-white shadow-xs"
+            onClick={handleLogoutClick} 
+            disabled={isCheckingLogout}
+            className="w-full flex items-center justify-center gap-2 py-2 px-3 font-bold rounded-xl transition-all text-xs cursor-pointer bg-red-600 hover:bg-red-700 active:scale-95 text-white shadow-xs disabled:opacity-60"
             title="Log Out Session"
           >
             <LogOut className="w-4 h-4 shrink-0" />
-            {!isSidebarCollapsed && <span>Log Out Session</span>}
+            {!isSidebarCollapsed && <span>{isCheckingLogout ? "Checking Shift..." : "Log Out Session"}</span>}
           </button>
         </div>
       </aside>
@@ -1721,6 +1815,74 @@ export default function App() {
             onClose={() => setShowAttendanceModal(false)}
             onLogAction={logSystemAction}
           />
+        )}
+
+        {logoutWarningRecord && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150 font-sans">
+            <div className="bg-white dark:bg-[#131F1E] border border-gray-200 dark:border-[#1C2E2C] rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+              <div className="flex items-center gap-3 text-amber-600 dark:text-amber-400">
+                <div className="w-11 h-11 rounded-xl bg-amber-100 dark:bg-amber-950/80 flex items-center justify-center shrink-0">
+                  <Clock className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-gray-900 dark:text-white">Active Shift: Not Timed Out</h3>
+                  <p className="text-xs text-gray-500 dark:text-slate-400">Confirmation Required Before Logout</p>
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-gray-50 dark:bg-[#1C2E2C]/50 rounded-xl border border-gray-200 dark:border-[#28413e] text-xs space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-gray-500 dark:text-slate-400">Staff Member:</span>
+                  <span className="font-bold text-gray-800 dark:text-white">
+                    {currentOperator?.displayName} (@{currentOperator?.username})
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500 dark:text-slate-400">Time In (Clock In):</span>
+                  <span className="font-mono text-gray-700 dark:text-slate-300">
+                    {logoutWarningRecord.time_in ? new Date(logoutWarningRecord.time_in).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Active"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="bg-amber-50 dark:bg-amber-950/40 p-3 rounded-xl border border-amber-200 dark:border-amber-900/60 text-xs text-amber-800 dark:text-amber-300 space-y-1">
+                <p className="font-semibold flex items-center gap-1">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  You have not timed out yet!
+                </p>
+                <p className="text-[11px] leading-relaxed text-amber-700 dark:text-amber-400/90">
+                  Would you like to record your <strong>Time Out</strong> before leaving, or continue logging out? Logging out without timing out will flag this attendance shift as <strong>Invalidated</strong>.
+                </p>
+              </div>
+
+              <div className="flex flex-col sm:flex-row justify-end items-stretch sm:items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setLogoutWarningRecord(null)}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer text-center"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmLogoutAnyway}
+                  className="px-3.5 py-2.5 rounded-xl text-xs font-bold text-rose-700 dark:text-rose-300 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 transition-all cursor-pointer text-center active:scale-95"
+                  title="Log out without recording time out (will invalidate shift)"
+                >
+                  Log Out Without Time Out
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmTimeOutAndLogout}
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-[#1b5e59] hover:bg-[#154b47] shadow-md shadow-[#1b5e59]/20 flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-95 text-center"
+                  title="Record Time Out now and log out"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Time Out & Log Out</span>
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>
