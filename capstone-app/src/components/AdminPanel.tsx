@@ -1475,7 +1475,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                   <input 
                     type="text" 
                     required
-                    placeholder="e.g. Kervin"
+                    placeholder="e.g. Juan Cruz"
                     value={personForm.name}
                     onChange={e => setPersonForm({ ...personForm, name: e.target.value })}
                     className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-xs font-bold text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"

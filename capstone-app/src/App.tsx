@@ -945,7 +945,7 @@ export default function App() {
 
       let extractedCustomerName = sale.customer_name || sale.customerName || localCustomerMap[String(sale.id)] || localCustomerMap[String(idx + 1)] || undefined
 
-      // Extract embedded customer name from legacy discount_label e.g. "SENIOR CITIZEN (kervin)"
+      // Extract embedded customer name from legacy discount_label e.g. "SENIOR CITIZEN (Juan Cruz)"
       if (!extractedCustomerName && discLabel.includes("(") && discLabel.includes(")")) {
         const match = discLabel.match(/\(([^)]+)\)/)
         if (match && match[1] && !["20%", "10%", "5%", "100%"].includes(match[1].trim())) {

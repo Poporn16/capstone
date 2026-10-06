@@ -1166,7 +1166,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
                       </label>
                       <input
                         type="text"
-                        placeholder="e.g. Kervin"
+                        placeholder="e.g. Juan Cruz"
                         value={customerName}
                         onFocus={() => setShowCustomerSuggestions(true)}
                         onBlur={() => setTimeout(() => setShowCustomerSuggestions(false), 200)}
@@ -1177,7 +1177,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
                   </div>
 
                   <p className="text-[9px] text-[#154b47] dark:text-[#2dd4bf] font-medium italic">
-                    💡 Type ID <span className="font-mono font-bold">10101</span> to auto-fill <span className="font-bold">Kervin</span>, or type name to auto-fill ID.
+                    💡 Type ID <span className="font-mono font-bold">10101</span> to auto-fill <span className="font-bold">Juan Cruz</span>, or type name to auto-fill ID.
                   </p>
 
                   {/* Suggestions dropdown matching both ID & Name */}

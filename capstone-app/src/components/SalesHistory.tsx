@@ -306,7 +306,7 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-gray-400" />
           <input 
             type="text" 
-            placeholder="Search by customer name (e.g. Kervin), transaction ID, item, or operator..." 
+            placeholder="Search by customer name (e.g. Juan Cruz), transaction ID, item, or operator..." 
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             className="w-full pl-10 pr-4 py-2.5 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-xl font-medium text-gray-800 dark:text-white text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
