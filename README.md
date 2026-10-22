@@ -9,7 +9,7 @@ A modern, full-featured **Point of Sale (POS)**, **Inventory**, and **Batch Mana
 ### 🛒 Core POS & Checkout System
 - **Wedge & Hardware Barcode Scanner Support**: Seamlessly listens for hardware barcode scanners (such as Clabel C986 and 1D/2D handheld optical scanners) globally in the background without needing to focus input fields.
 - **Customer ID & Named Registry**: Automated lookup and synchronization with the `named_persons` database table for customer validation and historical audit trails.
-- **Multi-Channel Payments**: Supports Cash (with automated change calculator) and Digital/Online channels (GCash, PayMaya, Bank Transfer, Card).
+- **Multi-Channel Payments & Proof Attachments**: Supports Cash (with automated change calculator) and Digital/Online channels (GCash, PayMaya, Bank Transfer, Card) with payment receipt screenshot/camera proof attachments.
 - **Printable Receipts**: Live thermal receipt preview with single-click browser printing.
 
 ### 🏷️ Barcode Generation & Label Printing
@@ -29,8 +29,8 @@ A modern, full-featured **Point of Sale (POS)**, **Inventory**, and **Batch Mana
 - **Clean Numeric Formatting**: Numbers and stock quantities are exported cleanly without currency pollution.
 
 ### ⏱️ Staff Attendance & Time Clock
-- **Time In / Time Out Modal**: Quick staff attendance clock-in/out modal with live shift status detection directly from the top header.
-- **Attendance Directory & Analytics**: Dedicated attendance history log with role badges, shift duration calculations, suspicious shift flagging (<5 min), and 12-hour auto-capping.
+- **Time In / Time Out Modal**: Quick staff attendance clock-in/out modal with live shift status detection and mandatory selfie photo verification to prevent buddy punching.
+- **Attendance Directory & Analytics**: Dedicated attendance history log with photo inspection, role badges, shift duration calculations, suspicious shift flagging (<5 min), and 12-hour auto-capping.
 - **Shift Validation & Deletion Controls**: Admin tools to flag/re-approve questionable records and permanently delete erroneous logs.
 - **Excel Audit Export**: Full-fidelity export of staff attendance logs to `.xlsx` spreadsheets for payroll and compliance reporting.
 
@@ -39,7 +39,7 @@ A modern, full-featured **Point of Sale (POS)**, **Inventory**, and **Batch Mana
 - **Core Sales Analytics**: Detailed breakdown of gross revenue, net taxable sales, VAT, profit margins, top-selling categories, and operator performance.
 
 ### 🛡️ Admin Panel & System Governance
-- **Role-Based Access Control**: Strict permissions separating Super Admin, Admin, and Cashier/Staff operations.
+- **Role-Based Access Control**: Strict permissions separating Admin and Cashier/Staff operations.
 - **Bcrypt Security & Auto-Migration**: Modern bcrypt password hashing with automatic transparent inline migration for legacy accounts (`passwordUtils.ts`).
 - **Real-Time Cross-Tab Sync**: Multi-tab synchronization using the `BroadcastChannel` API and Supabase Realtime channels.
 - **System Audit Logs**: Comprehensive activity logging for product creations, stock adjustments, price changes, and user management.
@@ -76,8 +76,7 @@ capstone/
 │   │   │   ├── SalesReport.tsx           # Comprehensive sales analytics & charts
 │   │   │   ├── StaffAttendanceModal.tsx  # Quick Time In / Time Out clock modal
 │   │   │   ├── StaffAttendancePage.tsx   # Staff attendance log directory & Excel export
-│   │   │   ├── StockAdjustment.tsx       # "Inventory" - Batch stock adjustment & Excel sync
-│   │   │   └── SuperAdminPanel.tsx       # Super Admin governance, database management, & system metrics
+│   │   │   └── StockAdjustment.tsx       # "Inventory" - Batch stock adjustment & Excel sync
 │   │   ├── types/
 │   │   │   └── index.ts                  # Shared TypeScript interfaces & types
 │   │   ├── utils/

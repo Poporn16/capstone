@@ -74,11 +74,11 @@ export default function App() {
     return inventory
       .filter(i => (Number(i.stock) || 0) <= (Number(i.minStock) || 10))
       .sort((a, b) => {
+        const stockDiff = (Number(a.stock) || 0) - (Number(b.stock) || 0);
+        if (stockDiff !== 0) return stockDiff;
         const catA = (a.category || "General").trim().toLowerCase();
         const catB = (b.category || "General").trim().toLowerCase();
-        const comp = catA.localeCompare(catB);
-        if (comp !== 0) return comp;
-        return (Number(a.stock) || 0) - (Number(b.stock) || 0);
+        return catA.localeCompare(catB);
       });
   }, [inventory])
 
@@ -101,11 +101,11 @@ export default function App() {
         return { ...b, daysLeft: diffDays }
       })
       .sort((a, b) => {
+        const daysDiff = a.daysLeft - b.daysLeft;
+        if (daysDiff !== 0) return daysDiff;
         const catA = (a.category || "General").trim().toLowerCase();
         const catB = (b.category || "General").trim().toLowerCase();
-        const comp = catA.localeCompare(catB);
-        if (comp !== 0) return comp;
-        return a.daysLeft - b.daysLeft;
+        return catA.localeCompare(catB);
       });
   }, [inventory])
 
@@ -327,14 +327,9 @@ export default function App() {
         }
       }
 
-      // If there was no valid active shift from within the last 12 hours, start a fresh shift
-      if (!hasValidActiveShift) {
-        await supabase.from("staff_attendance").insert([{
-          username: operator.username,
-          display_name: operator.displayName || operator.username,
-          system_role: operator.systemRole || "staff",
-          time_in: new Date().toISOString()
-        }])
+      // If staff has no valid active shift from within the last 12 hours, prompt attendance terminal for photo verification
+      if (!hasValidActiveShift && operator.systemRole === "staff") {
+        setShowAttendanceModal(true)
       }
       window.dispatchEvent(new Event("pinv_attendance_updated"))
     } catch (e) {
@@ -572,16 +567,16 @@ export default function App() {
         if (logData && currentOperator) {
           const act = String(logData.action_type || "")
           const currentUser = String(currentOperator.username || "").trim().toLowerCase()
-          // Only process target session termination events where operator_username is explicitly targeted
-          if (act === "TARGET_SESSION_TERMINATED") {
-            const targetUser = String(logData.details_summary || "").trim().toLowerCase()
-            if (targetUser === currentUser) {
+          // Process target session termination events where operator is explicitly targeted
+          if (act === "TARGET_SESSION_TERMINATED" || act === "FORCE_LOGOUT" || (act === "SESSION_LOGOUT" && String(logData.details_summary || "").includes("forcibly terminated"))) {
+            const targetUser = String(logData.operator_username || logData.details_summary || "").trim().toLowerCase()
+            if (targetUser === currentUser || targetUser.includes(`@${currentUser}`)) {
               clockOutUserOnLogout(currentUser)
               clearAllUserHeartbeats(currentUser)
               clearSessionData()
               setCurrentOperator(null)
               setActiveTab("dashboard")
-              alert("Your session has been terminated by an administrator.")
+              alert("Your account password has been changed or session terminated. Please log in again.")
             }
           }
         }
@@ -601,14 +596,13 @@ export default function App() {
         if (data.type === 'FORCE_LOGOUT' && data.username) {
           const target = String(data.username).trim().toLowerCase()
           const curr = String(currentOperator.username).trim().toLowerCase()
-          const initiator = String(data.initiatedBy || "").trim().toLowerCase()
-          if (target === curr && (initiator === "" || initiator !== curr)) {
+          if (target === curr) {
             clockOutUserOnLogout(curr)
             clearAllUserHeartbeats(curr)
             clearSessionData()
             setCurrentOperator(null)
             setActiveTab("dashboard")
-            alert("Your session has been terminated by an administrator.")
+            alert("Your account password has been changed or session terminated. Please log in again.")
           }
         } else if (data.type === 'FORCE_LOGOUT_BELOW_SUPER_ADMIN') {
           if (String(currentOperator.systemRole).toLowerCase() !== 'superadmin') {
@@ -637,6 +631,17 @@ export default function App() {
     }
     window.addEventListener("storage", handleStorageChange)
 
+    const handleForceUserLogoutEvent = (e: any) => {
+      if (e.detail?.username) {
+        checkForceLogoutPayload({
+          type: 'FORCE_LOGOUT',
+          username: e.detail.username,
+          initiatedBy: e.detail.initiatedBy
+        })
+      }
+    }
+    window.addEventListener("force_user_logout", handleForceUserLogoutEvent)
+
     const handleForceLogoutBelowSAEvent = () => {
       if (currentOperator && String(currentOperator.systemRole).toLowerCase() !== 'superadmin') {
         const curr = String(currentOperator.username || "").trim().toLowerCase()
@@ -663,6 +668,7 @@ export default function App() {
       supabase.removeChannel(channel)
       window.removeEventListener("refresh_sales_data", handleRealtimeRefresh)
       window.removeEventListener("storage", handleStorageChange)
+      window.removeEventListener("force_user_logout", handleForceUserLogoutEvent)
       window.removeEventListener("force_logout_below_superadmin", handleForceLogoutBelowSAEvent)
       if (broadcastChannel) {
         broadcastChannel.onmessage = null
@@ -745,10 +751,12 @@ export default function App() {
     let localChannelMap: Record<string, string> = {}
     let localRefMap: Record<string, string> = {}
     let localCustomerMap: Record<string, string> = {}
+    let localProofPhotoMap: Record<string, string> = {}
     try {
       localChannelMap = JSON.parse(localStorage.getItem("pinv_online_channel_map") || "{}")
       localRefMap = JSON.parse(localStorage.getItem("pinv_ref_number_map") || "{}")
       localCustomerMap = JSON.parse(localStorage.getItem("pinv_customer_sales_map") || "{}")
+      localProofPhotoMap = JSON.parse(localStorage.getItem("pinv_proof_photo_map") || "{}")
     } catch (e) {}
 
     // Fetch view_sales_history along with inventory, batches, and sale_item_batches in parallel
@@ -860,6 +868,7 @@ export default function App() {
           paymentMethod: isCash ? "cash" : "other",
           onlineChannel: resolvedOnlineChan,
           referenceNumber: resolvedRefNumber,
+          paymentProofPhoto: s.payment_proof_photo || s.paymentProofPhoto || localProofPhotoMap[String(s.id)] || localProofPhotoMap[String(idx + 1)] || undefined,
           discountLabel: discLabel,
           customerName: extractedCustomerName,
           processedBy: s.processed_by || "admin",
@@ -974,6 +983,7 @@ export default function App() {
         paymentMethod: isCash ? "cash" : "other",
         onlineChannel: resolvedOnlineChan,
         referenceNumber: resolvedRefNumber,
+        paymentProofPhoto: sale.payment_proof_photo || sale.paymentProofPhoto || localProofPhotoMap[String(sale.id)] || localProofPhotoMap[String(idx + 1)] || undefined,
         discountLabel: discLabel,
         customerName: extractedCustomerName,
         processedBy: sale.processed_by || "admin",
@@ -1002,6 +1012,8 @@ export default function App() {
       total: sale.total,
       payment_method: payMethodValue,
       online_channel: onlineChanValue,
+      reference_number: sale.referenceNumber || null,
+      payment_proof_photo: sale.paymentProofPhoto || null,
       is_refunded: false,
       gross_total: sale.grossTotal,
       subtotal: sale.subtotal,
@@ -1083,6 +1095,15 @@ export default function App() {
         refMap[String(saleId)] = sale.referenceNumber
         refMap[String(sales.length + 1)] = sale.referenceNumber
         localStorage.setItem("pinv_ref_number_map", JSON.stringify(refMap))
+      } catch (e) {}
+    }
+
+    if (sale.paymentProofPhoto && saleId) {
+      try {
+        const photoMap = JSON.parse(localStorage.getItem("pinv_proof_photo_map") || "{}")
+        photoMap[String(saleId)] = sale.paymentProofPhoto
+        photoMap[String(sales.length + 1)] = sale.paymentProofPhoto
+        localStorage.setItem("pinv_proof_photo_map", JSON.stringify(photoMap))
       } catch (e) {}
     }
 

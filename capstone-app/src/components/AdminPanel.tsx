@@ -988,10 +988,15 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
       return
     }
 
+    // If password was changed, immediately terminate any active session for that account
+    if (pin) {
+      triggerForceLogout(editingProfile.username, currentOperator?.username || "admin")
+    }
+
     await onLogAction(
       "UPDATE_ACCOUNT_PROFILE",
       "ADMIN_PANEL",
-      `Updated profile @${editingProfile.username} (Display Name: ${dName}, Role: ${role.toUpperCase()})`
+      `Updated profile @${editingProfile.username} (Display Name: ${dName}, Role: ${role.toUpperCase()}${pin ? ", Password Changed -> Active Sessions Logged Out" : ""})`
     )
 
     alert(`Account profile "@${editingProfile.username}" updated successfully!`)

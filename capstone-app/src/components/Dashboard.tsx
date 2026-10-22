@@ -169,11 +169,11 @@ export function Dashboard({
     const lowStock = safeInventory
       .filter(item => item && (Number(item.stock) || 0) <= (Number(item.minStock) || 10))
       .sort((a, b) => {
+        const stockDiff = (Number(a.stock) || 0) - (Number(b.stock) || 0);
+        if (stockDiff !== 0) return stockDiff;
         const catA = (a.category || "General").trim().toLowerCase();
         const catB = (b.category || "General").trim().toLowerCase();
-        const comp = catA.localeCompare(catB);
-        if (comp !== 0) return comp;
-        return (Number(a.stock) || 0) - (Number(b.stock) || 0);
+        return catA.localeCompare(catB);
       });
 
     // 3. Widget Data: Nearly Expired Medicines
@@ -194,11 +194,11 @@ export function Dashboard({
       })
       .filter(b => b.daysLeft <= 180)
       .sort((a, b) => {
+        const daysDiff = a.daysLeft - b.daysLeft;
+        if (daysDiff !== 0) return daysDiff;
         const catA = (a.category || "General").trim().toLowerCase();
         const catB = (b.category || "General").trim().toLowerCase();
-        const comp = catA.localeCompare(catB);
-        if (comp !== 0) return comp;
-        return a.daysLeft - b.daysLeft;
+        return catA.localeCompare(catB);
       });
 
     // 4. Widget Data: Top Product

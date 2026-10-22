@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import { supabase, triggerForceLogout, triggerForceLogoutBelowSuperAdmin } from "../utils/apiClient"
 import { hashPassword } from "../utils/passwordUtils"
-import { ShieldAlert, UserPlus, Trash2, History, RefreshCw, Eye, X, Flame, Database, AlertOctagon, RotateCcw, LogOut, Download, Edit, Plus, Calendar, HardDrive, Clock, CheckCircle2 } from "lucide-react"
+import { ShieldAlert, UserPlus, Trash2, History, RefreshCw, Eye, X, Flame, Database, AlertOctagon, RotateCcw, LogOut, Download, Edit, Plus, Calendar, HardDrive, Clock, CheckCircle2, Users } from "lucide-react"
 
 interface SuperAdminPanelProps {
   currentOperator: { username: string; displayName: string; systemRole: string }
@@ -65,7 +65,7 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
   const [auditSearchQuery, setAuditSearchQuery] = useState("")
 
   const [resetConfirmInput, setResetConfirmInput] = useState("")
-  const [showResetModal, setShowResetModal] = useState<"inventory" | "sales" | "audit" | "all" | null>(null)
+  const [showResetModal, setShowResetModal] = useState<"inventory" | "sales" | "audit" | "attendance" | "named_persons" | "all" | null>(null)
   
   const restoreFileInputRef = useRef<HTMLInputElement>(null)
   const [isRestoring, setIsRestoring] = useState(false)
@@ -560,7 +560,7 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
     }
   }
 
-  const executeDataReset = async (type: "inventory" | "sales" | "audit" | "all") => {
+  const executeDataReset = async (type: "inventory" | "sales" | "audit" | "attendance" | "named_persons" | "all") => {
     if (isLoading || isOperationRunning.current) return
     if (resetConfirmInput.trim() !== "RESET DATA") {
       alert('Confirmation string does not match. Please type "RESET DATA" to execute reset.')
@@ -579,11 +579,17 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
       steps.push("Removing sale line items...")
       steps.push("Purging sales transaction records...")
     }
-    if (type === "inventory" || type === "sales" || type === "all") {
-      steps.push("Resetting database ID sequences...")
+    if (type === "attendance" || type === "all") {
+      steps.push("Purging staff attendance shifts and verification photos...")
+    }
+    if (type === "named_persons" || type === "all") {
+      steps.push("Purging named person customer registry...")
     }
     if (type === "audit" || type === "all") {
       steps.push("Clearing system audit log entries...")
+    }
+    if (type === "inventory" || type === "sales" || type === "attendance" || type === "named_persons" || type === "all") {
+      steps.push("Resetting database ID sequences...")
     }
     steps.push("Logging reset action & syncing data...")
 
@@ -638,10 +644,58 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
         await supabase.from("sales").delete().neq("id", 0)
         advance()
 
+        try {
+          localStorage.removeItem("pinv_proof_photo_map")
+          localStorage.setItem("pinv_proof_photo_map", JSON.stringify({}))
+          localStorage.removeItem("pinv_ref_number_map")
+          localStorage.setItem("pinv_ref_number_map", JSON.stringify({}))
+          localStorage.removeItem("pinv_online_channel_map")
+          localStorage.setItem("pinv_online_channel_map", JSON.stringify({}))
+        } catch (e) {}
+
         setResetProgress(prev => ({ ...prev, step: "Resetting database ID sequences..." }))
         try {
           await supabase.rpc("reset_sales_sequence")
           await supabase.rpc("reset_all_database_sequences")
+        } catch (e) {}
+        advance()
+      }
+
+      if (type === "attendance" || type === "all") {
+        setResetProgress(prev => ({ ...prev, step: "Purging staff attendance shift records..." }))
+        try {
+          await supabase.from("staff_attendance").delete().not("id", "is", null)
+          await supabase.from("staff_attendance").delete().neq("id", 0)
+        } catch (e) {}
+
+        try {
+          localStorage.removeItem("pinv_staff_attendance")
+          localStorage.setItem("pinv_staff_attendance", JSON.stringify([]))
+          localStorage.removeItem("pinv_attendance_photo_map")
+          localStorage.setItem("pinv_attendance_photo_map", JSON.stringify({}))
+          localStorage.removeItem("pinv_invalidated_attendance_ids")
+          localStorage.setItem("pinv_invalidated_attendance_ids", JSON.stringify([]))
+          window.dispatchEvent(new Event("pinv_attendance_updated"))
+          window.dispatchEvent(new Event("pinv_attendance_invalidated"))
+        } catch (e) {}
+        advance()
+      }
+
+      if (type === "named_persons" || type === "all") {
+        setResetProgress(prev => ({ ...prev, step: "Purging customer registry and named persons..." }))
+        try {
+          await supabase.from("named_persons").delete().neq("id", 0)
+          await supabase.from("named_persons").delete().neq("name", "")
+          try {
+            await supabase.rpc("reset_named_persons_sequence")
+          } catch (e) {}
+        } catch (e) {}
+
+        try {
+          localStorage.removeItem("pinv_named_persons_registry")
+          localStorage.setItem("pinv_named_persons_registry", JSON.stringify([]))
+          localStorage.setItem("pinv_customer_sales_map", JSON.stringify({}))
+          window.dispatchEvent(new Event("pinv_registry_updated"))
         } catch (e) {}
         advance()
       }
@@ -662,35 +716,6 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
           await supabase.rpc("reset_all_database_sequences")
         } catch (e) {}
         advance()
-      }
-
-      if (type === "all") {
-        setResetProgress(prev => ({ ...prev, step: "Purging named person registry & staff attendance..." }))
-        try {
-          await supabase.from("named_persons").delete().neq("id", 0)
-          await supabase.from("named_persons").delete().neq("name", "")
-          try {
-            await supabase.rpc("reset_named_persons_sequence")
-          } catch (e) {}
-          try {
-            await supabase.rpc("reset_all_database_sequences")
-          } catch (e) {}
-        } catch (e) {}
-
-        try {
-          await supabase.from("staff_attendance").delete().not("id", "is", null)
-          await supabase.from("staff_attendance").delete().neq("id", 0)
-        } catch (e) {}
-
-        try {
-          localStorage.removeItem("pinv_named_persons_registry")
-          localStorage.setItem("pinv_named_persons_registry", JSON.stringify([]))
-          localStorage.setItem("pinv_customer_sales_map", JSON.stringify({}))
-          localStorage.removeItem("pinv_staff_attendance")
-          localStorage.setItem("pinv_staff_attendance", JSON.stringify([]))
-          window.dispatchEvent(new Event("pinv_registry_updated"))
-          window.dispatchEvent(new Event("pinv_attendance_updated"))
-        } catch (e) {}
       }
 
       // Final step: log & sync
@@ -1045,10 +1070,15 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
       return
     }
 
+    // If password was changed, immediately terminate any active session for that account
+    if (pin) {
+      await triggerForceLogout(editingProfile.username, currentOperator.username)
+    }
+
     await onLogAction(
       "UPDATE_ACCOUNT_PROFILE",
       "SUPER_ADMIN",
-      `Updated profile @${editingProfile.username} (Display Name: ${dName}, Role: ${role.toUpperCase()})`
+      `Updated profile @${editingProfile.username} (Display Name: ${dName}, Role: ${role.toUpperCase()}${pin ? ", Password Changed -> Active Sessions Logged Out" : ""})`
     )
 
     alert(`Account profile "@${editingProfile.username}" updated successfully!`)
@@ -1556,6 +1586,30 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
 
               <button
                 type="button"
+                onClick={() => { setResetConfirmInput(""); setShowResetModal("attendance"); }}
+                className="w-full py-2 px-3 bg-white dark:bg-slate-800 hover:bg-red-50 dark:hover:bg-slate-700 text-red-700 dark:text-red-400 font-bold rounded-lg border border-red-200 dark:border-red-900/40 text-left flex items-center justify-between shadow-2xs transition-colors"
+              >
+                <span className="flex items-center gap-2">
+                  <Clock className="w-3.5 h-3.5 text-red-500" />
+                  Reset Staff Attendance & Time-In Photos
+                </span>
+                <Trash2 className="w-3.5 h-3.5 text-red-400" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => { setResetConfirmInput(""); setShowResetModal("named_persons"); }}
+                className="w-full py-2 px-3 bg-white dark:bg-slate-800 hover:bg-red-50 dark:hover:bg-slate-700 text-red-700 dark:text-red-400 font-bold rounded-lg border border-red-200 dark:border-red-900/40 text-left flex items-center justify-between shadow-2xs transition-colors"
+              >
+                <span className="flex items-center gap-2">
+                  <Users className="w-3.5 h-3.5 text-red-500" />
+                  Reset Customer Registry & Profiles
+                </span>
+                <Trash2 className="w-3.5 h-3.5 text-red-400" />
+              </button>
+
+              <button
+                type="button"
                 onClick={() => { setResetConfirmInput(""); setShowResetModal("audit"); }}
                 className="w-full py-2 px-3 bg-white dark:bg-slate-800 hover:bg-red-50 dark:hover:bg-slate-700 text-red-700 dark:text-red-400 font-bold rounded-lg border border-red-200 dark:border-red-900/40 text-left flex items-center justify-between shadow-2xs transition-colors"
               >
@@ -1763,7 +1817,14 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
             <div className="p-3 bg-red-50 dark:bg-red-950/40 rounded-xl border border-red-200 dark:border-red-900/50 text-xs text-red-800 dark:text-red-300 space-y-2">
               <p className="font-bold">⚠️ Warning: Data purge is permanent.</p>
               <p className="text-[11px] leading-relaxed">
-                All saved data rows in <strong>{showResetModal.toUpperCase()}</strong> will be removed. All database tables and columns will remain completely intact and ready for fresh entries.
+                {showResetModal === "attendance"
+                  ? "All staff attendance shifts, clock-in/out history, and camera verification photos will be permanently wiped. Operator accounts and credentials are completely untouched."
+                  : showResetModal === "named_persons"
+                  ? "All customer profiles, credit records, and accounts in the customer registry will be permanently wiped."
+                  : showResetModal === "all"
+                  ? "All inventory items, batches, sales transactions, receipts, customer records, staff attendance records, verification photos, and audit trail logs will be wiped clean. Only operator accounts remain."
+                  : `All saved data rows in ${showResetModal.toUpperCase()} will be removed. All database tables and columns will remain completely intact and ready for fresh entries.`
+                }
               </p>
             </div>
 

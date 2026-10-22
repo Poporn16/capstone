@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import type { Sale, InventoryItem, Operator } from "../types";
 import { downloadExcelWithAutoFit, downloadMultiSheetSalesWorkbook, type SalesExportData } from "../utils/excelUtils";
-import { Search, RotateCcw, FileText, Download, User, Printer, X } from "lucide-react";
+import { Search, RotateCcw, FileText, Download, User, Printer, X, Eye, Image as ImageIcon } from "lucide-react";
 import { supabase } from "../utils/apiClient";
 
 interface SalesHistoryProps {
@@ -23,6 +23,7 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [statusCondition, setStatusCondition] = useState<StatusCondition>("all");
+  const [viewPhotoModal, setViewPhotoModal] = useState<string | null>(null);
   const [paymentRoute, setPaymentRoute] = useState<PaymentRoute>("all");
   const [customerFilter, setCustomerFilter] = useState<"all" | "named" | "walkin" | "all_discounts" | "senior" | "pwd" | "soloparent" | "naac" | "custom">("all");
   const [selectedInvoice, setSelectedInvoice] = useState<Sale | null>(null);
@@ -640,6 +641,16 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
                           Ref: {sale.referenceNumber}
                         </span>
                       )}
+                      {sale.paymentProofPhoto && (
+                        <button
+                          type="button"
+                          onClick={() => setViewPhotoModal(sale.paymentProofPhoto || null)}
+                          className="mt-0.5 flex items-center gap-1 text-[8px] font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                          title="View payment receipt screenshot"
+                        >
+                          <ImageIcon className="w-2.5 h-2.5" /> Photo Attached
+                        </button>
+                      )}
                     </td>
                     <td className="p-4">
                       <span className={`px-2.5 py-0.5 rounded-full font-bold text-[9px] ${sale.isRefunded ? 'bg-red-100 dark:bg-red-900/60 text-red-600 dark:text-red-300' : 'bg-green-100 dark:bg-green-900/60 text-green-600 dark:text-green-300'}`}>
@@ -892,6 +903,19 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
                     <span className="font-mono font-bold text-gray-900 dark:text-white">{selectedInvoice.referenceNumber}</span>
                   </div>
                 )}
+                {selectedInvoice.paymentMethod === "other" && selectedInvoice.paymentProofPhoto && (
+                  <div className="flex justify-between items-center text-[10px] pt-1 border-t border-dashed border-gray-200 dark:border-slate-700">
+                    <span className="font-semibold text-gray-600 dark:text-slate-300">Payment Screenshot:</span>
+                    <button
+                      type="button"
+                      onClick={() => setViewPhotoModal(selectedInvoice.paymentProofPhoto || null)}
+                      className="inline-flex items-center gap-1 font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      View {selectedInvoice.onlineChannel || "GCash"} Proof
+                    </button>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span>Amount Tendered:</span>
                   <span className="font-mono font-bold tabular-nums">
@@ -938,6 +962,45 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
                 className="flex-1 py-2 bg-gray-900 dark:bg-slate-700 text-white hover:bg-gray-800 dark:hover:bg-slate-600 font-bold rounded-xl tracking-wide shadow-xs text-xs transition-colors cursor-pointer"
               >
                 Close Receipt
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Proof Photo Lightbox Modal */}
+      {viewPhotoModal && (
+        <div 
+          onClick={() => setViewPhotoModal(null)}
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
+        >
+          <div 
+            onClick={e => e.stopPropagation()}
+            className="bg-white dark:bg-slate-900 rounded-2xl max-w-lg w-full p-4 space-y-3 border border-slate-200 dark:border-slate-700 shadow-2xl"
+          >
+            <div className="flex justify-between items-center border-b dark:border-slate-700 pb-2">
+              <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <ImageIcon className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                Online Payment Receipt / GCash Screenshot
+              </h4>
+              <button
+                type="button"
+                onClick={() => setViewPhotoModal(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="max-h-[70vh] overflow-auto flex items-center justify-center bg-slate-950/20 rounded-xl p-2">
+              <img src={viewPhotoModal} alt="Payment Proof Full" className="max-h-[65vh] object-contain rounded-lg shadow-md" />
+            </div>
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                onClick={() => setViewPhotoModal(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-xl cursor-pointer"
+              >
+                Close Preview
               </button>
             </div>
           </div>

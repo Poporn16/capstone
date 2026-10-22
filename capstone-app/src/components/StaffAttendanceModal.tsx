@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react"
-import { Clock, LogIn, LogOut, X, CheckCircle2, Calendar } from "lucide-react"
+import { useState, useEffect, useRef } from "react"
+import { Clock, LogIn, LogOut, X, CheckCircle2, Calendar, Camera, Upload, Eye, Image as ImageIcon, AlertCircle } from "lucide-react"
 import { supabase } from "../utils/apiClient"
 import type { AttendanceRecord, Operator } from "../types"
 
@@ -15,6 +15,45 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
   const [records, setRecords] = useState<AttendanceRecord[]>([])
   const [activeSession, setActiveSession] = useState<AttendanceRecord | null>(null)
   const [notification, setNotification] = useState<string | null>(null)
+
+  // Photo verification states for Time In
+  const [timeInPhoto, setTimeInPhoto] = useState<string | null>(null)
+  const [viewPhotoModal, setViewPhotoModal] = useState<string | null>(null)
+  const cameraInputRef = useRef<HTMLInputElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    // Ensure it is strictly a picture, NOT a video
+    if (!file.type.startsWith("image/") || file.type.startsWith("video/")) {
+      alert("Only picture files are allowed (not videos). Please select a valid photo.")
+      if (e.target) e.target.value = ""
+      return
+    }
+
+    // Limit to 5MB
+    const MAX_SIZE = 5 * 1024 * 1024 // 5MB
+    if (file.size > MAX_SIZE) {
+      alert(`The selected picture exceeds the 5MB limit (${(file.size / (1024 * 1024)).toFixed(1)}MB). Please choose a photo under 5MB.`)
+      if (e.target) e.target.value = ""
+      return
+    }
+
+    // Read raw picture directly as base64 Data URL (no imageUtil, no canvas downsampling)
+    const reader = new FileReader()
+    reader.onerror = () => {
+      alert("Failed to read image file.")
+    }
+    reader.onload = () => {
+      const rawDataUrl = reader.result as string
+      setTimeInPhoto(rawDataUrl)
+    }
+    reader.readAsDataURL(file)
+
+    if (e.target) e.target.value = ""
+  }
 
   const fetchAttendanceFromDb = async () => {
     try {
@@ -34,6 +73,11 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
           }
         })
       }
+
+      let localPhotoMap: Record<string, string> = {}
+      try {
+        localPhotoMap = JSON.parse(localStorage.getItem("pinv_attendance_photo_map") || "{}")
+      } catch (e) {}
 
       if (attRes.data) {
         const MAX_SHIFT_MINUTES = 12 * 60
@@ -96,6 +140,8 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
           const actualRole = matched?.role || d.system_role || (userKey.includes("superadmin") ? "superadmin" : "staff")
           const actualDisplayName = d.display_name || matched?.name || d.username || "Operator"
           const safeDuration = d.duration_minutes ? Math.min(d.duration_minutes, MAX_SHIFT_MINUTES) : undefined
+          const resolvedPhoto = d.time_in_photo || d.timeInPhoto || localPhotoMap[String(d.id)] || localPhotoMap[`${userKey}_${d.time_in}`] || undefined
+
           return {
             id: String(d.id),
             username: d.username || "",
@@ -103,7 +149,8 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
             systemRole: actualRole,
             timeIn: d.time_in,
             timeOut: d.time_out || undefined,
-            durationMinutes: safeDuration
+            durationMinutes: safeDuration,
+            timeInPhoto: resolvedPhoto
           }
         })
         const sorted = formatted.sort((a, b) => {
@@ -141,33 +188,66 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
 
   const handleTimeIn = async () => {
     if (activeSession) return
+    if (!timeInPhoto) {
+      alert("Verification photo is strictly required to Time In. Please take a selfie or upload a photo.")
+      return
+    }
+
     const nowIso = new Date().toISOString()
-    const { error } = await supabase.from("staff_attendance").insert([{
+    const payload: any = {
       username: currentOperator.username,
       display_name: currentOperator.displayName,
       system_role: currentOperator.systemRole,
-      time_in: nowIso
-    }])
+      time_in: nowIso,
+      time_in_photo: timeInPhoto
+    }
 
-    if (error) console.error("Time in DB error:", error)
+    let { data: inserted, error } = await supabase
+      .from("staff_attendance")
+      .insert([payload])
+      .select("id")
+      .single()
 
+    if (error) {
+      console.warn("Time in DB error (fallback without column):", error.message)
+      delete payload.time_in_photo
+      const retryResult = await supabase
+        .from("staff_attendance")
+        .insert([payload])
+        .select("id")
+        .single()
+      inserted = retryResult.data
+    }
+
+    try {
+      const photoMap = JSON.parse(localStorage.getItem("pinv_attendance_photo_map") || "{}")
+      if (inserted?.id) {
+        photoMap[String(inserted.id)] = timeInPhoto
+      }
+      const userKey = currentOperator.username.toLowerCase().trim()
+      photoMap[`${userKey}_${nowIso}`] = timeInPhoto
+      localStorage.setItem("pinv_attendance_photo_map", JSON.stringify(photoMap))
+    } catch (e) {}
+
+    setTimeInPhoto(null)
+    stopCamera()
     await fetchAttendanceFromDb()
     window.dispatchEvent(new Event("pinv_attendance_updated"))
 
     const formattedTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    setNotification(`Successfully Timed In at ${formattedTime}!`)
+    setNotification(`Successfully Timed In with Photo Verification at ${formattedTime}!`)
 
     if (onLogAction) {
       try {
         await onLogAction(
           "STAFF_TIME_IN",
           "ATTENDANCE_STATION",
-          `Staff @${currentOperator.username} (${currentOperator.displayName}) recorded TIME IN at ${formattedTime}`
+          `Staff @${currentOperator.username} (${currentOperator.displayName}) recorded TIME IN with photo verification at ${formattedTime}`
         )
       } catch (e) {}
     }
 
-    setTimeout(() => setNotification(null), 3000)
+    setTimeout(() => setNotification(null), 3500)
   }
 
   const handleTimeOut = async () => {
@@ -254,9 +334,19 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
         {/* Current Operator Card */}
         <div className="bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 p-4 rounded-xl flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-sm shadow-xs uppercase">
-              {currentOperator.displayName.substring(0, 2)}
-            </div>
+            {activeSession?.timeInPhoto ? (
+              <img
+                src={activeSession.timeInPhoto}
+                alt="Active Shift Photo"
+                onClick={() => setViewPhotoModal(activeSession.timeInPhoto || null)}
+                className="w-10 h-10 rounded-full object-cover border-2 border-emerald-500 shadow-xs cursor-pointer hover:opacity-90"
+                title="Click to view full time-in verification photo"
+              />
+            ) : (
+              <div className="w-10 h-10 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-sm shadow-xs uppercase">
+                {currentOperator.displayName.substring(0, 2)}
+              </div>
+            )}
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-bold text-sm text-gray-900 dark:text-white">{currentOperator.displayName}</span>
@@ -292,16 +382,108 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
           </div>
         )}
 
+        {/* Photo Verification Required Card */}
+        {!activeSession && (
+          <div className="p-3 bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-xl space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-amber-900 dark:text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
+                <Camera className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                Required: Capture Selfie Photo <span className="text-red-500">*</span>
+              </span>
+              <span className="text-[9px] text-amber-700 dark:text-amber-400 font-bold">Required to Time In</span>
+            </div>
+
+            <input
+              type="file"
+              ref={cameraInputRef}
+              onChange={handlePhotoSelect}
+              accept="image/*"
+              capture="user"
+              className="hidden"
+            />
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handlePhotoSelect}
+              accept="image/*"
+              className="hidden"
+            />
+
+            {timeInPhoto ? (
+              <div className="p-2.5 bg-white dark:bg-slate-800 rounded-xl border border-emerald-300 dark:border-emerald-700 flex items-center justify-between gap-3 shadow-2xs">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <img
+                    src={timeInPhoto}
+                    alt="Selfie"
+                    onClick={() => setViewPhotoModal(timeInPhoto)}
+                    className="w-12 h-12 rounded-xl object-cover border-2 border-emerald-500 shrink-0 cursor-pointer hover:opacity-90 transition-opacity"
+                    title="Click to view full photo"
+                  />
+                  <div className="min-w-0">
+                    <span className="text-xs font-bold text-emerald-800 dark:text-emerald-200 block truncate flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 inline" />
+                      Selfie Photo Verified
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setViewPhotoModal(timeInPhoto)}
+                      className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline font-semibold"
+                    >
+                      Click to preview photo
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg text-[10px] font-bold cursor-pointer"
+                  >
+                    Retake
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTimeInPhoto(null)}
+                    className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 cursor-pointer"
+                    title="Remove"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => cameraInputRef.current?.click()}
+                  className="py-2.5 px-3 bg-white dark:bg-slate-800 hover:bg-amber-50 dark:hover:bg-slate-700 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs transition-colors"
+                >
+                  <Camera className="w-4 h-4 text-amber-600" />
+                  Take Selfie Photo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="py-2.5 px-3 bg-white dark:bg-slate-800 hover:bg-amber-50 dark:hover:bg-slate-700 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs transition-colors"
+                >
+                  <Upload className="w-4 h-4 text-amber-600" />
+                  Upload Photo
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Time In / Time Out Action Buttons */}
         <div className="grid grid-cols-2 gap-3 pt-1">
           <button
             type="button"
-            disabled={!!activeSession}
+            disabled={!!activeSession || !timeInPhoto}
             onClick={handleTimeIn}
             className={`py-3 px-4 rounded-xl font-bold text-xs uppercase tracking-wide flex items-center justify-center gap-2 shadow-xs transition-all ${
-              activeSession
+              activeSession || !timeInPhoto
                 ? "bg-gray-100 dark:bg-slate-700 text-gray-400 dark:text-slate-500 cursor-not-allowed border border-gray-200 dark:border-slate-600"
-                : "bg-emerald-600 hover:bg-emerald-700 text-white active:scale-[0.98] shadow-emerald-600/20"
+                : "bg-emerald-600 hover:bg-emerald-700 text-white active:scale-[0.98] shadow-emerald-600/20 cursor-pointer"
             }`}
           >
             <LogIn className="w-4 h-4" />
@@ -315,7 +497,7 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
             className={`py-3 px-4 rounded-xl font-bold text-xs uppercase tracking-wide flex items-center justify-center gap-2 shadow-xs transition-all ${
               !activeSession
                 ? "bg-gray-100 dark:bg-slate-700 text-gray-400 dark:text-slate-500 cursor-not-allowed border border-gray-200 dark:border-slate-600"
-                : "bg-rose-600 hover:bg-rose-700 text-white active:scale-[0.98] shadow-rose-600/20"
+                : "bg-rose-600 hover:bg-rose-700 text-white active:scale-[0.98] shadow-rose-600/20 cursor-pointer"
             }`}
           >
             <LogOut className="w-4 h-4" />
@@ -347,17 +529,32 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
 
                 return (
                   <div key={r.id} className="p-2.5 bg-gray-50 dark:bg-slate-900 border dark:border-slate-700/80 rounded-xl flex items-center justify-between text-xs">
-                    <div className="space-y-0.5">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-gray-900 dark:text-white">{inStr}</span>
-                        <span className="text-gray-400">→</span>
-                        <span className={`font-semibold ${r.timeOut ? "text-gray-700 dark:text-slate-300" : "text-emerald-600 font-bold animate-pulse"}`}>
-                          {outStr}
-                        </span>
+                    <div className="flex items-center gap-2.5">
+                      {r.timeInPhoto ? (
+                        <img
+                          src={r.timeInPhoto}
+                          alt="Photo"
+                          onClick={() => setViewPhotoModal(r.timeInPhoto || null)}
+                          className="w-8 h-8 rounded-lg object-cover border border-slate-300 dark:border-slate-600 shrink-0 cursor-pointer hover:opacity-90"
+                          title="Click to view time-in photo"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded-lg bg-gray-200 dark:bg-slate-700 text-gray-400 flex items-center justify-center shrink-0">
+                          <User className="w-4 h-4" />
+                        </div>
+                      )}
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-gray-900 dark:text-white">{inStr}</span>
+                          <span className="text-gray-400">→</span>
+                          <span className={`font-semibold ${r.timeOut ? "text-gray-700 dark:text-slate-300" : "text-emerald-600 font-bold animate-pulse"}`}>
+                            {outStr}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-gray-400 dark:text-slate-500">
+                          Recorded for @{r.username}
+                        </p>
                       </div>
-                      <p className="text-[10px] text-gray-400 dark:text-slate-500">
-                        Recorded for @{r.username}
-                      </p>
                     </div>
                     {durationDisplay && (
                       <span className="px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 font-mono text-[10px] font-bold">
@@ -376,12 +573,51 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-300 dark:hover:bg-slate-600 rounded-xl text-xs font-bold transition-colors"
+            className="px-4 py-2 bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-300 dark:hover:bg-slate-600 rounded-xl text-xs font-bold transition-colors cursor-pointer"
           >
             Close Window
           </button>
         </div>
       </div>
+
+      {/* Time In Photo Lightbox Modal */}
+      {viewPhotoModal && (
+        <div 
+          onClick={() => setViewPhotoModal(null)}
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150 font-sans"
+        >
+          <div 
+            onClick={e => e.stopPropagation()}
+            className="bg-white dark:bg-slate-900 rounded-2xl max-w-sm w-full p-4 space-y-3 border border-slate-200 dark:border-slate-700 shadow-2xl"
+          >
+            <div className="flex justify-between items-center border-b dark:border-slate-700 pb-2">
+              <h4 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5 uppercase tracking-wide">
+                <Camera className="w-4 h-4 text-emerald-500" />
+                Staff Time-In Verification Photo
+              </h4>
+              <button
+                type="button"
+                onClick={() => setViewPhotoModal(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="max-h-[60vh] overflow-auto flex items-center justify-center bg-slate-950/20 rounded-xl p-1">
+              <img src={viewPhotoModal} alt="Time In Full" className="max-h-[55vh] object-contain rounded-lg shadow-md" />
+            </div>
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                onClick={() => setViewPhotoModal(null)}
+                className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-xl cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

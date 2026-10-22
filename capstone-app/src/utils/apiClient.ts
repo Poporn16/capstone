@@ -55,6 +55,14 @@ export function triggerForceLogout(targetUsername: string, initiatedBy?: string)
         broadcastChannel.postMessage(payload)
       } catch (e) {}
     }
+    try {
+      supabase.from("system_audit_logs").insert({
+        operator_username: target,
+        action_type: "TARGET_SESSION_TERMINATED",
+        module_target: "AUTHENTICATION",
+        details_summary: target
+      }).then(() => {})
+    } catch (e) {}
   }
 }
 

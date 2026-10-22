@@ -71,6 +71,7 @@ export interface Sale {
   paymentMethod: "cash" | "other"
   onlineChannel?: string
   referenceNumber?: string
+  paymentProofPhoto?: string
   discountLabel: string
   customerName?: string
   processedBy: string
@@ -159,4 +160,5 @@ export interface AttendanceRecord {
   timeIn: string
   timeOut?: string
   durationMinutes?: number
+  timeInPhoto?: string
 }

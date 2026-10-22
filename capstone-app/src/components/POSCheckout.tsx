@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import type { InventoryItem, InventoryBatch, Sale, NamedPerson, CartItem, DiscountType, OnlineChannel, Operator } from "../types"
 import { supabase } from "../utils/apiClient"
 import { getCategoryStyles } from "../utils/categoryColors"
 import { findMatchingInventoryOptions, getItemManufacturerOptions, useBarcodeScanner, type ScanOption } from "../utils/barcodeScanner"
-import { ArrowLeft, Printer, CreditCard, X, Users, Search, Check, Sparkles, Scan, Barcode, CheckCircle2, AlertCircle, AlertTriangle, Building2, User } from "lucide-react"
+import { ArrowLeft, Printer, CreditCard, X, Users, Search, Check, Sparkles, Scan, Barcode, CheckCircle2, AlertCircle, AlertTriangle, Building2, User, Camera, Upload, Image as ImageIcon, Eye } from "lucide-react"
 
 export type { NamedPerson, ScanOption, CartItem, DiscountType, OnlineChannel }
 
@@ -22,6 +22,45 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "other">("cash")
   const [onlineChannel, setOnlineChannel] = useState<OnlineChannel>("GCash")
   const [referenceNumber, setReferenceNumber] = useState<string>("")
+  const [paymentProofPhoto, setPaymentProofPhoto] = useState<string | null>(null)
+  const [viewPhotoModal, setViewPhotoModal] = useState<string | null>(null)
+  const cameraInputRef = useRef<HTMLInputElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    // Limit to only pictures, not video
+    if (!file.type.startsWith("image/") || file.type.startsWith("video/")) {
+      alert("Only picture files are allowed (not videos). Please select a valid photo.")
+      if (e.target) e.target.value = ""
+      return
+    }
+
+    // Limit to 5MB
+    const MAX_SIZE = 5 * 1024 * 1024 // 5MB
+    if (file.size > MAX_SIZE) {
+      alert(`The selected picture exceeds the 5MB limit (${(file.size / (1024 * 1024)).toFixed(1)}MB). Please choose a photo under 5MB.`)
+      if (e.target) e.target.value = ""
+      return
+    }
+
+    // Read raw picture directly without imageUtil
+    const reader = new FileReader()
+    reader.onerror = () => {
+      alert("Failed to read image file.")
+    }
+    reader.onload = () => {
+      const rawDataUrl = reader.result as string
+      setPaymentProofPhoto(rawDataUrl)
+      if (checkoutError) setCheckoutError(null)
+    }
+    reader.readAsDataURL(file)
+
+    if (e.target) e.target.value = ""
+  }
+
   const [showReceipt, setShowReceipt] = useState(false)
   const [showOthersModal, setShowOthersModal] = useState(false)
   const [lastSale, setLastSale] = useState<any>(null)
@@ -93,13 +132,35 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
     setDisplayLimit(20)
   }
 
-  const getGenericGroupName = (name: string) => {
+  const getGenericGroupName = (name: string): string => {
     const uppercaseName = (name || "").toUpperCase().trim()
-    if (uppercaseName.includes("AMLODIPINE") || uppercaseName.includes("AMLO")) return "AMLODIPINE"
-    if (uppercaseName.includes("PARACETAMOL") || uppercaseName.includes("BIOGESIC") || uppercaseName.includes("CALPOL")) return "PARACETAMOL"
-    if (uppercaseName.includes("MEFENAMIC") || uppercaseName.includes("DOLFENAL")) return "MEFENAMIC ACID"
-    const rootName = uppercaseName.split(/[\s\(\[-]/)[0]
-    return rootName || uppercaseName
+    if (!uppercaseName) return ""
+
+    // 1. Separate base formulation from dosage/form if separated by slash (e.g. "AMLODIPINE / TAB 10MG" -> "AMLODIPINE")
+    let base = uppercaseName.includes("/") ? uppercaseName.split("/")[0].trim() : uppercaseName
+
+    // 2. Normalize branded parentheticals after generic name (e.g. "AMLODIPINE (AMVASC)" -> "AMLODIPINE", "PARACETAMOL (BIOGESIC)" -> "PARACETAMOL")
+    if (base.includes("(") && !base.startsWith("(")) {
+      const beforeParen = base.split("(")[0].trim()
+      if (beforeParen.length >= 3) {
+        base = beforeParen
+      }
+    }
+
+    // 3. If there wasn't a slash, strip trailing dosage/strength (e.g. "PARACETAMOL 500MG" -> "PARACETAMOL")
+    if (!uppercaseName.includes("/")) {
+      base = base.replace(/\s+\d+(\.\d+)?\s*(MG|G|MCG|ML|IU|%|S|PCS|CAPSULE|CAP|TAB|TABLET|SYRUP|SYR|DROPS)\b.*$/i, "").trim()
+    }
+
+    // 4. Normalize spaces and combination + separators consistently (e.g. "LOSARTAN+AMLODIPINE" -> "LOSARTAN + AMLODIPINE")
+    base = base.replace(/\s*\+\s*/g, " + ").replace(/\s+/g, " ").trim()
+
+    // 5. Normalize specific equivalent generic formulations without merging different active ingredients
+    if (base === "MEFENAMIC" || base === "MEFENAMIC ACID") {
+      return "MEFENAMIC ACID"
+    }
+
+    return base || uppercaseName
   }
 
   const filteredItems = inventory.filter(i => {
@@ -346,23 +407,30 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
     }
   }
 
-  const subtotal = cart.reduce((s, ci) => s + getCartItemLineTotal(ci), 0)
+  const subtotal = Math.round(cart.reduce((s, ci) => s + getCartItemLineTotal(ci), 0) * 100) / 100
   const isStatutoryDiscount = ["senior", "pwd", "soloparent", "naac"].includes(discountType)
   let computedDiscount = 0, vat = 0, total = subtotal
 
   if (isStatutoryDiscount) {
-    const base = subtotal / 1.12
-    computedDiscount = base * (discountType === "soloparent" ? 0.10 : 0.20)
-    total = base - computedDiscount
+    const base = Math.round((subtotal / 1.12) * 100) / 100
+    const rate = discountType === "soloparent" ? 0.10 : 0.20
+    computedDiscount = Math.round(base * rate * 100) / 100
+    total = Math.round((base - computedDiscount) * 100) / 100
+    vat = 0
   } else {
     let rate = 0
     if (discountType === "custom") rate = (Number(customDiscountPercent) || 0) / 100
 
-    computedDiscount = subtotal * rate
-    const net = subtotal - computedDiscount
-    vat = (net / 1.12) * 0.12
+    computedDiscount = Math.round(subtotal * rate * 100) / 100
+    const net = Math.round((subtotal - computedDiscount) * 100) / 100
+    vat = Math.round(((net / 1.12) * 0.12) * 100) / 100
     total = net
   }
+
+  const numericCash = Math.round((parseFloat(cashReceived) || 0) * 100) / 100
+  const roundedTotal = Math.round(total * 100) / 100
+  const cashDiff = Math.round((numericCash - roundedTotal) * 100) / 100
+  const isCashShort = paymentMethod === "cash" && cashDiff < 0
 
   const getDiscountLabel = () => {
     if (discountType === "custom") return `CUSTOM (${customDiscountPercent || 0}%)`
@@ -474,6 +542,21 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
     })
   }
 
+  const handleResetSale = () => {
+    setShowReceipt(false)
+    setCart([])
+    setCashReceived("")
+    setReferenceNumber("")
+    setPaymentProofPhoto(null)
+    setDiscountType("none")
+    setCustomDiscountPercent(0)
+    setCustomerName("")
+    setCustomerIdNumber("")
+    setShowCustomerSuggestions(false)
+    setSelectedGenericGroup(null)
+    setCheckoutError(null)
+  }
+
   const completeSale = async () => {
     const numericCash = parseFloat(cashReceived) || 0
     const trimmedCustomer = customerName.trim()
@@ -514,15 +597,15 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
       }
     }
 
-    // Validation Error: Online Payment Reference Number is strictly required before checkout
-    if (paymentMethod === "other" && !referenceNumber.trim()) {
-      const errMsg = "Please enter the Reference Number for the online payment before proceeding to checkout."
+    // Validation Error: Online Payment requires Reference Number OR Payment Proof Photo
+    if (paymentMethod === "other" && !referenceNumber.trim() && !paymentProofPhoto) {
+      const errMsg = `Please enter the Reference Number or attach a Payment Screenshot (e.g., ${onlineChannel} receipt) before proceeding to checkout.`
       setCheckoutError(errMsg)
       triggerScanToast(errMsg, "warning")
       return
     }
 
-    if (!cart.length || (paymentMethod === "cash" && numericCash < total)) return
+    if (!cart.length || (paymentMethod === "cash" && isCashShort)) return
 
     setCheckoutError(null)
 
@@ -561,24 +644,31 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
       grossTotal: subtotal,
       subtotal: subtotal,
       discount: computedDiscount,
-      taxableBase: total / 1.12,
+      taxableBase: isStatutoryDiscount ? total : Math.round((total / 1.12) * 100) / 100,
       vat,
       total,
       cashReceived: paymentMethod === "cash" ? numericCash : total,
-      change: paymentMethod === "cash" ? Math.max(0, numericCash - total) : 0,
+      change: paymentMethod === "cash" ? Math.max(0, cashDiff) : 0,
       paymentMethod,
       onlineChannel: paymentMethod === "other" ? onlineChannel : null,
-      referenceNumber: paymentMethod === "other" ? referenceNumber.trim() : undefined,
+      referenceNumber: paymentMethod === "other" ? (referenceNumber.trim() || undefined) : undefined,
+      paymentProofPhoto: paymentMethod === "other" ? (paymentProofPhoto || undefined) : undefined,
       discountLabel: getDiscountLabel(),
       customerName: fullCustomerName || undefined,
       processedBy: currentOperator?.displayName || currentOperator?.username || "Cashier"
     }
 
-    onCompleteSale(saleRecord as any)
+    try {
+      onCompleteSale(saleRecord as any)
+    } catch (err) {
+      console.error("onCompleteSale error:", err)
+    }
+
     setLastSale(saleRecord)
     setCart([])
     setCashReceived("")
     setReferenceNumber("")
+    setPaymentProofPhoto(null)
     setDiscountType("none")
     setCustomDiscountPercent(0)
     setCustomerName("")
@@ -817,6 +907,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
                   const hasManufacturerOptions = !hasVariants && primaryItem && getItemManufacturerOptions(primaryItem).hasDifferentManufacturers
                   const displayUnitPrice = primaryItem ? getItemBatchAwarePrice(primaryItem, 1) : 0
                   const catStyle = getCategoryStyles(primaryItem?.category || "")
+                  const displayName = hasVariants ? groupName : (primaryItem?.name || groupName)
 
                   return (
                     <button 
@@ -857,7 +948,9 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
                           {totalStock === 0 ? "Out of Stock" : `${totalStock} left`}
                         </span>
                       </div>
-                      <div className="font-bold text-gray-900 dark:text-white text-xs leading-snug mt-1.5 truncate-2-lines">{groupName}</div>
+                      <div className="font-bold text-gray-900 dark:text-white text-xs leading-snug mt-1.5 line-clamp-2 break-words" title={displayName}>
+                        {displayName}
+                      </div>
                       <div className="mt-2 flex items-center justify-between text-[10px] pt-1.5 border-t border-gray-200/60 dark:border-slate-700/60">
                         {hasVariants ? (
                           <span className="text-[9px] text-[#1b5e59] dark:text-[#2dd4bf] font-bold">{itemsInGroup.length} variants</span>
@@ -1069,11 +1162,11 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
                   )}
                 </div>
 
-                {parseFloat(cashReceived) > 0 && (
+                {numericCash > 0 && (
                   <div className="flex justify-between items-center text-[10px] pt-1.5 border-t border-emerald-100 dark:border-emerald-900">
                     <span className="text-slate-600 dark:text-slate-300">Change Return:</span>
-                    <span className={`font-bold font-mono tabular-nums text-xs ${parseFloat(cashReceived) - total < 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
-                      {parseFloat(cashReceived) - total < 0 ? `Short: ₱${Math.abs(parseFloat(cashReceived) - total).toFixed(2)}` : `₱${(parseFloat(cashReceived) - total).toFixed(2)}`}
+                    <span className={`font-bold font-mono tabular-nums text-xs ${isCashShort ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                      {isCashShort ? `Short: ₱${Math.abs(cashDiff).toFixed(2)}` : `₱${cashDiff.toFixed(2)}`}
                     </span>
                   </div>
                 )}
@@ -1278,7 +1371,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
               </div>
 
               {paymentMethod === "other" && (
-                <div className="p-2.5 bg-emerald-50/50 dark:bg-emerald-950/30 rounded-xl border border-emerald-200 dark:border-emerald-900/50 space-y-2">
+                <div className="p-2.5 bg-emerald-50/50 dark:bg-emerald-950/30 rounded-xl border border-emerald-200 dark:border-emerald-900/50 space-y-2.5">
                   <span className="block text-[9px] font-bold text-[#154b47] dark:text-[#2dd4bf] uppercase tracking-wider">Select Online Payment Provider:</span>
                   <div className="grid grid-cols-3 gap-1">
                     {(["GCash", "PayMaya", "BDO", "BPI", "Bank Transfer", "Card"] as const).map(ch => (
@@ -1293,11 +1386,16 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
                     ))}
                   </div>
 
-                  {/* Reference Number Entry */}
-                  <div className="pt-2 border-t border-emerald-200/60 dark:border-emerald-900/40 space-y-1">
+                  {/* Verification Requirement Note */}
+                  <div className="bg-emerald-100/60 dark:bg-emerald-900/30 p-2 rounded-lg border border-emerald-200 dark:border-emerald-800 text-[10px] text-emerald-800 dark:text-emerald-200">
+                    <span className="font-bold">Verification:</span> Provide the <span className="underline font-bold">Reference Number</span> OR attach a <span className="underline font-bold">Picture / Screenshot</span> of the {onlineChannel} receipt.
+                  </div>
+
+                  {/* 1. Reference Number Entry */}
+                  <div className="space-y-1">
                     <label className="flex items-center justify-between text-[9px] font-bold text-[#154b47] dark:text-[#2dd4bf] uppercase tracking-wider">
-                      <span>Reference Number <span className="text-red-500">*</span>:</span>
-                      <span className="text-[8px] text-gray-500 font-normal">Required before checkout</span>
+                      <span>Option A: Reference Number</span>
+                      <span className="text-[8px] text-gray-500 font-normal">Optional if photo attached</span>
                     </label>
                     <input
                       type="text"
@@ -1306,6 +1404,96 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
                       onChange={e => setReferenceNumber(e.target.value)}
                       className="w-full px-2.5 py-1.5 text-xs font-mono font-bold bg-white dark:bg-slate-800 border border-emerald-300 dark:border-emerald-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1b5e59] dark:focus:ring-[#2dd4bf] text-gray-800 dark:text-slate-100 placeholder-gray-400 dark:placeholder-slate-500 shadow-2xs"
                     />
+                  </div>
+
+                  {/* 2. Photo / Screenshot of GCash Receipt */}
+                  <div className="pt-2 border-t border-emerald-200/60 dark:border-emerald-900/40 space-y-1.5">
+                    <div className="flex items-center justify-between text-[9px] font-bold text-[#154b47] dark:text-[#2dd4bf] uppercase tracking-wider">
+                      <span>Option B: {onlineChannel} Receipt Picture</span>
+                      <span className="text-[8px] text-gray-500 font-normal">Optional if ref # entered</span>
+                    </div>
+
+                    <input
+                      type="file"
+                      ref={cameraInputRef}
+                      onChange={handlePhotoSelect}
+                      accept="image/*"
+                      capture="environment"
+                      className="hidden"
+                    />
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      onChange={handlePhotoSelect}
+                      accept="image/*"
+                      className="hidden"
+                    />
+
+                    {paymentProofPhoto ? (
+                      /* Thumbnail of Attached Receipt */
+                      <div className="flex items-center justify-between p-2 bg-white dark:bg-slate-800 rounded-xl border border-emerald-300 dark:border-emerald-700 shadow-2xs">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <img
+                            src={paymentProofPhoto}
+                            alt="Receipt"
+                            onClick={() => setViewPhotoModal(paymentProofPhoto)}
+                            className="w-10 h-10 object-cover rounded-lg border border-emerald-400 shrink-0 cursor-pointer hover:opacity-90 transition-opacity"
+                            title="Click to view full image"
+                          />
+                          <div className="min-w-0">
+                            <span className="text-[10px] font-bold text-emerald-800 dark:text-emerald-200 block truncate flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-500 inline" />
+                              {onlineChannel} Proof Attached
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setViewPhotoModal(paymentProofPhoto)}
+                              className="text-[9px] text-blue-600 dark:text-blue-400 hover:underline font-semibold block"
+                            >
+                              Click to preview image
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setViewPhotoModal(paymentProofPhoto)}
+                            className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 cursor-pointer"
+                            title="View receipt"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPaymentProofPhoto(null)}
+                            className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900 text-rose-600 dark:text-rose-400 cursor-pointer"
+                            title="Remove photo"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Upload / Camera Action Buttons */
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => cameraInputRef.current?.click()}
+                          className="py-1.5 px-2 bg-white dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-slate-700 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                        >
+                          <Camera className="w-3 h-3" />
+                          Take Photo (Camera)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="py-1.5 px-2 bg-white dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-slate-700 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                        >
+                          <Upload className="w-3 h-3" />
+                          Upload Picture
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1337,8 +1525,8 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
               onClick={completeSale} 
               disabled={
                 cart.length === 0 || 
-                (paymentMethod === "cash" && (parseFloat(cashReceived) || 0) < total) ||
-                (paymentMethod === "other" && !referenceNumber.trim())
+                (paymentMethod === "cash" && isCashShort) ||
+                (paymentMethod === "other" && !referenceNumber.trim() && !paymentProofPhoto)
               } 
               className="w-full py-3 bg-[#1b5e59] hover:bg-[#154b47] active:bg-[#103b38] dark:bg-[#2dd4bf] dark:hover:bg-[#14b8a6] dark:text-[#042f2e] text-white rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 text-xs tracking-wider uppercase shrink-0 flex items-center justify-center gap-2 cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
             >
@@ -1435,7 +1623,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
             {/* Top Right Close Button */}
             <button
               type="button"
-              onClick={() => setShowReceipt(false)}
+              onClick={handleResetSale}
               className="pos-receipt-no-print absolute top-3 right-3 p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-full transition-colors z-10 cursor-pointer"
               title="Close Receipt"
               aria-label="Close Receipt"
@@ -1535,6 +1723,19 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
                     <span className="font-mono font-bold text-slate-900 dark:text-white">{lastSale.referenceNumber}</span>
                   </div>
                 )}
+                {lastSale.paymentMethod === "other" && lastSale.paymentProofPhoto && (
+                  <div className="flex justify-between items-center text-[10px] pt-0.5">
+                    <span>Payment Proof:</span>
+                    <button
+                      type="button"
+                      onClick={() => setViewPhotoModal(lastSale.paymentProofPhoto)}
+                      className="inline-flex items-center gap-1 font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                    >
+                      <Eye className="w-3 h-3" />
+                      View Receipt Photo
+                    </button>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span>Amount Tendered:</span>
                   <span className="font-mono font-bold tabular-nums">
@@ -1571,7 +1772,7 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
               </button>
               <button 
                 type="button" 
-                onClick={() => setShowReceipt(false)} 
+                onClick={handleResetSale} 
                 className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600 active:scale-[0.98] text-white font-bold rounded-xl tracking-wide shadow-xs text-xs transition-all cursor-pointer focus-visible:ring-2 focus-visible:ring-slate-400"
               >
                 Done / Reset
@@ -1689,6 +1890,45 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
                 className="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-xl font-bold transition-colors text-xs cursor-pointer"
               >
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Proof Photo Lightbox Modal */}
+      {viewPhotoModal && (
+        <div 
+          onClick={() => setViewPhotoModal(null)}
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
+        >
+          <div 
+            onClick={e => e.stopPropagation()}
+            className="bg-white dark:bg-slate-900 rounded-2xl max-w-lg w-full p-4 space-y-3 border border-slate-200 dark:border-slate-700 shadow-2xl"
+          >
+            <div className="flex justify-between items-center border-b dark:border-slate-700 pb-2">
+              <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <ImageIcon className="w-4 h-4 text-emerald-600" />
+                Online Payment Receipt / GCash Screenshot
+              </h4>
+              <button
+                type="button"
+                onClick={() => setViewPhotoModal(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="max-h-[70vh] overflow-auto flex items-center justify-center bg-slate-950/20 rounded-xl p-2">
+              <img src={viewPhotoModal} alt="Payment Proof Full" className="max-h-[65vh] object-contain rounded-lg shadow-md" />
+            </div>
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                onClick={() => setViewPhotoModal(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-xl cursor-pointer"
+              >
+                Close Preview
               </button>
             </div>
           </div>

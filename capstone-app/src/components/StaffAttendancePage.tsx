@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react"
-import { Clock, Search, Download, Calendar, UserCheck, RefreshCw, Trash2, AlertTriangle, CheckCircle2, XCircle, ShieldAlert } from "lucide-react"
+import { Clock, Search, Download, Calendar, UserCheck, RefreshCw, Trash2, AlertTriangle, CheckCircle2, XCircle, ShieldAlert, Camera, Eye, Image as ImageIcon, X } from "lucide-react"
 import { downloadExcelWithAutoFit } from "../utils/excelUtils"
 import { supabase } from "../utils/apiClient"
 import type { AttendanceRecord, Operator } from "../types"
@@ -28,6 +28,7 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
   const [recordToFlagFake, setRecordToFlagFake] = useState<AttendanceRecord | null>(null)
   const [recordToDelete, setRecordToDelete] = useState<AttendanceRecord | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [viewPhotoModal, setViewPhotoModal] = useState<string | null>(null)
   const [notification, setNotification] = useState<string | null>(null)
 
   const [invalidatedIds, setInvalidatedIds] = useState<Set<string>>(() => {
@@ -124,12 +125,19 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
           }
         }
 
+        let localPhotoMap: Record<string, string> = {}
+        try {
+          localPhotoMap = JSON.parse(localStorage.getItem("pinv_attendance_photo_map") || "{}")
+        } catch (e) {}
+
         const formatted: AttendanceRecord[] = attRes.data.map((d: any) => {
           const userKey = (d.username || "").toLowerCase().trim()
           const matched = profMap.get(userKey)
           const actualRole = matched?.role || d.system_role || (userKey.includes("superadmin") ? "superadmin" : "staff")
           const actualDisplayName = d.display_name || matched?.name || d.username || "Operator"
           const safeDuration = d.duration_minutes ? Math.min(d.duration_minutes, MAX_SHIFT_MINUTES) : undefined
+          const resolvedPhoto = d.time_in_photo || d.timeInPhoto || localPhotoMap[String(d.id)] || localPhotoMap[`${userKey}_${d.time_in}`] || undefined
+
           return {
             id: String(d.id),
             username: d.username || "",
@@ -137,7 +145,8 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
             systemRole: actualRole,
             timeIn: d.time_in,
             timeOut: d.time_out || undefined,
-            durationMinutes: safeDuration
+            durationMinutes: safeDuration,
+            timeInPhoto: resolvedPhoto
           }
         })
         const sortedFormatted = formatted.sort((a, b) => {
@@ -584,6 +593,7 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
           <table className="w-full text-left border-collapse text-xs">
             <thead className="bg-gray-50 dark:bg-slate-900 border-b border-gray-100 dark:border-slate-700 sticky top-0 z-10">
               <tr className="text-gray-500 dark:text-slate-400 font-bold">
+                <th className="p-4 w-14">Photo</th>
                 <th className="p-4">Staff Member</th>
                 <th className="p-4">Role</th>
                 <th className="p-4">Time In</th>
@@ -596,7 +606,7 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
             <tbody className="divide-y divide-gray-100 dark:divide-slate-700/60">
               {filteredRecords.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-gray-400 dark:text-slate-500 font-medium">
+                  <td colSpan={8} className="p-8 text-center text-gray-400 dark:text-slate-500 font-medium">
                     No staff attendance records match your filter query.
                   </td>
                 </tr>
@@ -636,6 +646,21 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
                               : "hover:bg-gray-50/60 dark:hover:bg-slate-700/60"
                       }`}
                     >
+                      <td className="p-4">
+                        {r.timeInPhoto ? (
+                          <img
+                            src={r.timeInPhoto}
+                            alt="Selfie"
+                            onClick={() => setViewPhotoModal(r.timeInPhoto || null)}
+                            className="w-10 h-10 rounded-xl object-cover border border-emerald-400 dark:border-emerald-700 shadow-2xs cursor-pointer hover:opacity-90 transition-opacity"
+                            title="Click to view verification photo"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-xl bg-gray-100 dark:bg-slate-700/60 text-gray-400 dark:text-slate-500 flex items-center justify-center text-[9px] font-bold border border-gray-200 dark:border-slate-700">
+                            No Photo
+                          </div>
+                        )}
+                      </td>
                       <td className="p-4">
                         <div className="flex items-center gap-1.5">
                           <span className={`font-bold ${isInv ? "line-through text-gray-400 dark:text-slate-500" : "text-gray-900 dark:text-white"}`}>
@@ -878,6 +903,45 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
                 className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-600/20 flex items-center gap-2 transition-all disabled:opacity-50"
               >
                 {isDeleting ? "Deleting..." : "Permanently Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Photo Lightbox Modal */}
+      {viewPhotoModal && (
+        <div 
+          onClick={() => setViewPhotoModal(null)}
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150 font-sans"
+        >
+          <div 
+            onClick={e => e.stopPropagation()}
+            className="bg-white dark:bg-slate-900 rounded-2xl max-w-sm w-full p-4 space-y-3 border border-slate-200 dark:border-slate-700 shadow-2xl"
+          >
+            <div className="flex justify-between items-center border-b dark:border-slate-700 pb-2">
+              <h4 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5 uppercase tracking-wide">
+                <Camera className="w-4 h-4 text-emerald-500" />
+                Staff Time-In Verification Photo
+              </h4>
+              <button
+                type="button"
+                onClick={() => setViewPhotoModal(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="max-h-[60vh] overflow-auto flex items-center justify-center bg-slate-950/20 rounded-xl p-1">
+              <img src={viewPhotoModal} alt="Time In Full" className="max-h-[55vh] object-contain rounded-lg shadow-md" />
+            </div>
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                onClick={() => setViewPhotoModal(null)}
+                className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-xl cursor-pointer"
+              >
+                Close
               </button>
             </div>
           </div>
