@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { supabase, triggerForceLogout } from "../utils/apiClient"
+import { supabase, clearUserHeartbeats } from "../utils/apiClient"
 import { verifyAndMigratePassword } from "../utils/passwordUtils"
 import { Lock, User, KeyRound, Eye, EyeOff, ShieldCheck } from "lucide-react"
 import type { Operator } from "../types"
@@ -53,8 +53,8 @@ export function LoginScreen({ onAuthSuccess, theme }: LoginScreenProps) {
       return
     }
 
-    // Terminate any previous/lingering active heartbeat for this account
-    triggerForceLogout(cleanUsername, cleanUsername)
+    // Clean up any stale local tab heartbeats for this operator without broadcasting a force-logout signal
+    clearUserHeartbeats(cleanUsername)
 
     // Save actual operator object to sessionStorage
     const sessionData = {

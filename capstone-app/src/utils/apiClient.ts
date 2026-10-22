@@ -23,22 +23,28 @@ export function triggerGlobalSync() {
   }
 }
 
+export function clearUserHeartbeats(targetUsername: string) {
+  if (typeof window === 'undefined' || !targetUsername) return
+  const target = targetUsername.toLowerCase().trim()
+  try {
+    const keysToRemove: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (key && key.startsWith("pinv_active_heartbeat_")) {
+        const u = key.replace("pinv_active_heartbeat_", "").split("_tab_")[0].trim().toLowerCase()
+        if (u === target) {
+          keysToRemove.push(key)
+        }
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k))
+  } catch (e) {}
+}
+
 export function triggerForceLogout(targetUsername: string, initiatedBy?: string) {
   if (typeof window !== 'undefined') {
     const target = targetUsername.toLowerCase().trim()
-    try {
-      const keysToRemove: string[] = []
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i)
-        if (key && key.startsWith("pinv_active_heartbeat_")) {
-          const u = key.replace("pinv_active_heartbeat_", "").split("_tab_")[0].trim().toLowerCase()
-          if (u === target) {
-            keysToRemove.push(key)
-          }
-        }
-      }
-      keysToRemove.forEach(k => localStorage.removeItem(k))
-    } catch (e) {}
+    clearUserHeartbeats(target)
 
     const payload = JSON.stringify({
       type: 'FORCE_LOGOUT',
