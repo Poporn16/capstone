@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react"
+import { createPortal } from "react-dom"
 import { supabase, triggerForceLogout, fetchAllSupabaseRows } from "../utils/apiClient"
 import { downloadExcelWithAutoFit, downloadMultiSheetStockAdditionsWorkbook } from "../utils/excelUtils"
 import { hashPassword } from "../utils/passwordUtils"
@@ -22,7 +23,41 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
   const [namedPersons, setNamedPersons] = useState<NamedPerson[]>([])
   const [activeUsernames, setActiveUsernames] = useState<string[]>([])
   const [isLoading, setIsLoading] = useState(false)
-  const [openActionProfileId, setOpenActionProfileId] = useState<number | null>(null)
+  const [actionMenuAnchor, setActionMenuAnchor] = useState<{
+    profile: AccountProfile
+    top: number
+    left: number
+    openUpward: boolean
+  } | null>(null)
+
+  useEffect(() => {
+    if (!actionMenuAnchor) return
+    const handleDismiss = () => setActionMenuAnchor(null)
+    window.addEventListener("scroll", handleDismiss, true)
+    window.addEventListener("resize", handleDismiss)
+    return () => {
+      window.removeEventListener("scroll", handleDismiss, true)
+      window.removeEventListener("resize", handleDismiss)
+    }
+  }, [actionMenuAnchor])
+
+  const handleOpenActionMenu = (e: React.MouseEvent<HTMLButtonElement>, profile: AccountProfile) => {
+    e.stopPropagation()
+    if (actionMenuAnchor?.profile.id === profile.id) {
+      setActionMenuAnchor(null)
+      return
+    }
+    const rect = e.currentTarget.getBoundingClientRect()
+    const spaceBelow = window.innerHeight - rect.bottom
+    const openUpward = spaceBelow < 170
+
+    setActionMenuAnchor({
+      profile,
+      top: openUpward ? rect.top - 6 : rect.bottom + 6,
+      left: Math.max(12, rect.right - 192),
+      openUpward
+    })
+  }
 
   const [opProgress, setOpProgress] = useState<{
     isOpen: boolean
@@ -951,7 +986,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     setActiveUsernames(prev => prev.filter(u => u !== normUser))
     await onLogAction("FORCE_LOGOUT", "ADMIN_PANEL", `Forcibly terminated session for operator @${username}`)
     triggerForceLogout(username, currentOperator?.username || "admin")
-    setOpenActionProfileId(null)
+    setActionMenuAnchor(null)
     alert(`Active session for @${username} has been logged out!`)
     await fetchAdminLogs()
   }
@@ -1001,7 +1036,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
 
     alert(`Account profile "@${editingProfile.username}" updated successfully!`)
     setEditingProfile(null)
-    setOpenActionProfileId(null)
+    setActionMenuAnchor(null)
     await fetchProfiles()
   }
 
@@ -1011,7 +1046,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     await supabase.from("operator_profiles").delete().eq("id", profileId)
     await onLogAction("DELETE_OPERATOR", "ADMIN_PANEL", `Removed profile @${username}`)
     triggerForceLogout(username, "admin")
-    setOpenActionProfileId(null)
+    setActionMenuAnchor(null)
     await fetchProfiles()
   }
 
@@ -1588,11 +1623,11 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
               <span className="text-[10px] text-gray-400 font-mono">{displayProfiles.length} Accounts</span>
             </div>
 
-            <div className={`space-y-2 max-h-72 ${openActionProfileId !== null ? 'overflow-visible' : 'overflow-y-auto'} pr-1 pb-2`}>
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1 pb-2">
               {displayProfiles.length === 0 ? (
                 <p className="text-gray-400 text-center py-4 text-[11px]">No operator accounts created.</p>
               ) : (
-                displayProfiles.map((p, pIdx) => {
+                displayProfiles.map((p) => {
                   const profileUsername = String(p.username || "").trim().toLowerCase()
                   const isActiveUser = activeUsernames.includes(profileUsername)
 
@@ -1622,52 +1657,77 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                       <div className="relative">
                         <button
                           type="button"
-                          onClick={() => setOpenActionProfileId(prev => prev === p.id ? null : p.id)}
-                          className="px-3 py-1 bg-white dark:bg-slate-800 hover:bg-gray-100 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-gray-200 font-bold rounded-lg text-xs flex items-center gap-1 shadow-2xs transition-colors"
+                          onClick={(e) => handleOpenActionMenu(e, p)}
+                          className="px-3 py-1 bg-white dark:bg-slate-800 hover:bg-gray-100 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-gray-200 font-bold rounded-lg text-xs flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
                         >
                           Action ▾
                         </button>
-
-                        {openActionProfileId === p.id && (
-                          <div className={`absolute right-0 ${pIdx === 0 && displayProfiles.length > 1 ? 'top-full mt-1' : 'bottom-full mb-1'} w-48 bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-gray-200 dark:border-slate-700 p-1.5 z-50 space-y-1 text-xs font-sans`}>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingProfile(p)
-                                setEditDisplayName(p.display_name)
-                                setEditPin("")
-                                setEditRole(p.system_role)
-                                setOpenActionProfileId(null)
-                              }}
-                              className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-medium flex items-center gap-2 transition-colors border-t border-gray-100 dark:border-slate-700"
-                            >
-                              <Edit className="w-3.5 h-3.5 text-blue-500" />
-                              Edit Account Profile
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleForceLogoutProfile(p.username)}
-                              className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/40 text-amber-700 dark:text-amber-300 font-medium flex items-center gap-2 transition-colors border-t border-gray-100 dark:border-slate-700"
-                            >
-                              <LogOut className="w-3.5 h-3.5 text-amber-600" />
-                              Logout Session
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteProfile(p.id, p.username)}
-                              className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 text-red-600 dark:text-red-400 font-medium flex items-center gap-2 transition-colors border-t border-gray-100 dark:border-slate-700"
-                            >
-                              <Trash2 className="w-3.5 h-3.5 text-red-500" />
-                              Delete Account
-                            </button>
-                          </div>
-                        )}
                       </div>
                     </div>
                   )
                 })
               )}
             </div>
+
+            {actionMenuAnchor && typeof document !== "undefined" && createPortal(
+              <div className="fixed inset-0 z-50 overflow-hidden pointer-events-auto">
+                <div
+                  className="fixed inset-0 z-40 bg-transparent"
+                  onClick={() => setActionMenuAnchor(null)}
+                />
+                <div
+                  style={{
+                    position: "fixed",
+                    top: actionMenuAnchor.openUpward ? undefined : actionMenuAnchor.top,
+                    bottom: actionMenuAnchor.openUpward ? (window.innerHeight - actionMenuAnchor.top) : undefined,
+                    left: actionMenuAnchor.left,
+                    zIndex: 50
+                  }}
+                  className="w-48 bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-gray-200 dark:border-slate-700 p-1.5 space-y-1 text-xs font-sans animate-in fade-in zoom-in-95 duration-100"
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const p = actionMenuAnchor.profile
+                      setEditingProfile(p)
+                      setEditDisplayName(p.display_name)
+                      setEditPin("")
+                      setEditRole(p.system_role)
+                      setActionMenuAnchor(null)
+                    }}
+                    className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-medium flex items-center gap-2 transition-colors cursor-pointer"
+                  >
+                    <Edit className="w-3.5 h-3.5 text-blue-500" />
+                    Edit Account Profile
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const u = actionMenuAnchor.profile.username
+                      setActionMenuAnchor(null)
+                      handleForceLogoutProfile(u)
+                    }}
+                    className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/40 text-amber-700 dark:text-amber-300 font-medium flex items-center gap-2 transition-colors border-t border-gray-100 dark:border-slate-700 cursor-pointer"
+                  >
+                    <LogOut className="w-3.5 h-3.5 text-amber-600" />
+                    Logout Session
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const p = actionMenuAnchor.profile
+                      setActionMenuAnchor(null)
+                      handleDeleteProfile(p.id, p.username)
+                    }}
+                    className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 text-red-600 dark:text-red-400 font-medium flex items-center gap-2 transition-colors border-t border-gray-100 dark:border-slate-700 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                    Delete Account
+                  </button>
+                </div>
+              </div>,
+              document.body
+            )}
           </div>
 
         </div>
