@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react"
-import { Clock, LogIn, LogOut, X, CheckCircle2, Calendar, Camera, Upload, Eye, Image as ImageIcon, AlertCircle } from "lucide-react"
+import { Clock, LogIn, LogOut, X, CheckCircle2, Calendar, Camera, Upload, Eye, Image as ImageIcon, AlertCircle, User } from "lucide-react"
 import { supabase } from "../utils/apiClient"
 import type { AttendanceRecord, Operator } from "../types"
 
@@ -230,7 +230,8 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
     } catch (e) {}
 
     setTimeInPhoto(null)
-    stopCamera()
+    if (cameraInputRef.current) cameraInputRef.current.value = ""
+    if (fileInputRef.current) fileInputRef.current.value = ""
     await fetchAttendanceFromDb()
     window.dispatchEvent(new Event("pinv_attendance_updated"))
 
