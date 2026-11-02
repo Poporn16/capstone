@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import type { Sale, InventoryItem, Operator } from "../types";
 import { downloadExcelWithAutoFit, downloadMultiSheetSalesWorkbook, type SalesExportData } from "../utils/excelUtils";
-import { Search, RotateCcw, FileText, Download, User, Printer, X, Eye, Image as ImageIcon } from "lucide-react";
+import { Search, RotateCcw, FileText, Download, User, Printer, X, Eye, Image as ImageIcon, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { supabase } from "../utils/apiClient";
 
 interface SalesHistoryProps {
@@ -16,9 +16,24 @@ type StatusCondition = "all" | "completed" | "voided";
 type PaymentRoute = "all" | "cash" | "other" | "gcash" | "paymaya" | "bdo" | "bpi" | "card" | "bank transfer";
 
 const ONLINE_CHANNELS = ["gcash", "paymaya", "bdo", "bpi", "card", "bank transfer"] as const
+const ITEMS_PER_PAGE = 50
+
+const formatReceiptDate = (d: Date | string) => {
+  const dateObj = new Date(d);
+  if (isNaN(dateObj.getTime())) return String(d);
+  return dateObj.toLocaleDateString("en-US", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric"
+  }) + ", " + dateObj.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+};
 
 export function SalesHistory({ currentOperator, sales, inventory = [], onToggleRefund }: SalesHistoryProps) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
   const [dateFrame, setDateFrame] = useState<DateFrame>("all");
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
@@ -29,6 +44,10 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
   const [selectedInvoice, setSelectedInvoice] = useState<Sale | null>(null);
   const [showOnlineFilter, setShowOnlineFilter] = useState(false);
   const [showDiscountFilter, setShowDiscountFilter] = useState(false);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, dateFrame, startDate, endDate, statusCondition, paymentRoute, customerFilter]);
 
   useEffect(() => {
     const salesChannel = supabase
@@ -83,7 +102,23 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
         const matchOperator = (sale.processedBy || "").toLowerCase().includes(q);
         const matchCustomer = (sale.customerName || "").toLowerCase().includes(q);
         const matchDisc = (sale.discountLabel || "").toLowerCase().includes(q);
-        return matchId || matchItems || matchOperator || matchCustomer || matchDisc;
+        const matchDate = (() => {
+          try {
+            const d = new Date(sale.date);
+            if (isNaN(d.getTime())) return false;
+            const formatted = formatReceiptDate(d).toLowerCase();
+            const iso = d.toISOString().toLowerCase();
+            const dateOnly = iso.split("T")[0]; // YYYY-MM-DD
+            const localeStr = d.toLocaleDateString().toLowerCase();
+            const usShort = d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }).toLowerCase();
+            const usLong = d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }).toLowerCase();
+            const rawStr = String(sale.date).toLowerCase();
+            return formatted.includes(q) || iso.includes(q) || dateOnly.includes(q) || localeStr.includes(q) || usShort.includes(q) || usLong.includes(q) || rawStr.includes(q);
+          } catch {
+            return false;
+          }
+        })();
+        return matchId || matchItems || matchOperator || matchCustomer || matchDisc || matchDate;
       });
     }
 
@@ -179,6 +214,9 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
   };
 
   const filteredSales = getFilteredSales();
+  const totalPages = Math.max(1, Math.ceil(filteredSales.length / ITEMS_PER_PAGE));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+  const paginatedSales = filteredSales.slice((safeCurrentPage - 1) * ITEMS_PER_PAGE, safeCurrentPage * ITEMS_PER_PAGE);
   const activeSales = filteredSales.filter(s => !s.isRefunded);
   const matrixRevenue = activeSales.reduce((sum, s) => sum + s.total, 0);
   const activeTransactionsCount = activeSales.length;
@@ -274,16 +312,6 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
     downloadMultiSheetSalesWorkbook("sales_history_report", exportData);
   };
 
-  const formatReceiptDate = (d: Date) => {
-    return new Date(d).toLocaleDateString("en-US", {
-      month: "short",
-      day: "2-digit",
-      year: "numeric"
-    }) + ", " + new Date(d).toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit"
-    });
-  };
 
   const isAdmin = !currentOperator || currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin";
 
@@ -307,7 +335,7 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-gray-400" />
           <input 
             type="text" 
-            placeholder="Search by customer name (e.g. Juan Cruz), transaction ID, item, or operator..." 
+            placeholder="Search by transaction date (e.g. 2026-11-02, Nov 2), customer name, ID, item, or operator..." 
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             className="w-full pl-10 pr-4 py-2.5 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-xl font-medium text-gray-800 dark:text-white text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -592,7 +620,7 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
                   </td>
                 </tr>
               ) : (
-                filteredSales.map(sale => (
+                paginatedSales.map(sale => (
                   <tr key={sale.id} className={`border-b border-gray-50 dark:border-slate-700/60 last:border-0 hover:bg-gray-50/60 dark:hover:bg-slate-700/60 transition-colors items-center ${sale.isRefunded ? 'bg-red-50/20 dark:bg-red-950/20 text-gray-400 dark:text-gray-500' : 'bg-white dark:bg-slate-800'}`}>
                     <td className="p-4 font-mono font-bold text-gray-700 dark:text-slate-200">#{sale.id}</td>
                     <td className="p-4 text-gray-600 dark:text-slate-300 font-medium whitespace-nowrap">{formatReceiptDate(sale.date)}</td>
@@ -697,6 +725,107 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Bar (50 items per page) */}
+        {filteredSales.length > 0 && (
+          <div className="p-3.5 border-t border-gray-100 dark:border-slate-700 bg-gray-50/70 dark:bg-slate-900/60 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+            <div className="text-gray-500 dark:text-gray-400 font-medium">
+              Showing <span className="font-bold text-gray-800 dark:text-white">{(safeCurrentPage - 1) * ITEMS_PER_PAGE + 1}</span> to{" "}
+              <span className="font-bold text-gray-800 dark:text-white">{Math.min(safeCurrentPage * ITEMS_PER_PAGE, filteredSales.length)}</span> of{" "}
+              <span className="font-bold text-gray-800 dark:text-white">{filteredSales.length}</span> transactions
+              {totalPages > 1 && (
+                <span className="ml-2 px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-bold text-[10px]">
+                  Page {safeCurrentPage} of {totalPages}
+                </span>
+              )}
+            </div>
+
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(1)}
+                  disabled={safeCurrentPage === 1}
+                  className="p-1.5 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  title="First Page"
+                >
+                  <ChevronsLeft className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={safeCurrentPage === 1}
+                  className="px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 font-bold transition-colors cursor-pointer"
+                  title="Previous Page"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  <span className="hidden sm:inline">Prev</span>
+                </button>
+
+                {/* Page numbers */}
+                {(() => {
+                  const pages: (number | string)[] = [];
+                  const maxButtons = 5;
+                  if (totalPages <= maxButtons) {
+                    for (let i = 1; i <= totalPages; i++) pages.push(i);
+                  } else {
+                    pages.push(1);
+                    if (safeCurrentPage > 3) pages.push("...");
+                    const start = Math.max(2, safeCurrentPage - 1);
+                    const end = Math.min(totalPages - 1, safeCurrentPage + 1);
+                    for (let i = start; i <= end; i++) {
+                      if (!pages.includes(i)) pages.push(i);
+                    }
+                    if (safeCurrentPage < totalPages - 2) pages.push("...");
+                    if (!pages.includes(totalPages)) pages.push(totalPages);
+                  }
+
+                  return pages.map((p, idx) => {
+                    if (p === "...") {
+                      return <span key={`dots-${idx}`} className="px-1.5 text-gray-400">...</span>;
+                    }
+                    const num = Number(p);
+                    const isActive = num === safeCurrentPage;
+                    return (
+                      <button
+                        key={num}
+                        type="button"
+                        onClick={() => setCurrentPage(num)}
+                        className={`w-7 h-7 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          isActive
+                            ? "bg-blue-600 text-white shadow-xs"
+                            : "bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700"
+                        }`}
+                      >
+                        {num}
+                      </button>
+                    );
+                  });
+                })()}
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={safeCurrentPage === totalPages}
+                  className="px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 font-bold transition-colors cursor-pointer"
+                  title="Next Page"
+                >
+                  <span className="hidden sm:inline">Next</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(totalPages)}
+                  disabled={safeCurrentPage === totalPages}
+                  className="p-1.5 rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  title="Last Page"
+                >
+                  <ChevronsRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {voidConfirmSale && (
@@ -801,6 +930,9 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
             <div className="text-center space-y-0.5 pr-6 sm:pr-0">
               <h3 className="font-black text-sm text-gray-900 dark:text-white uppercase tracking-tight">Malabon Pharmacy and Clinic</h3>
               <p className="text-gray-500 dark:text-gray-400 text-[10px]">Official Receipt / Cash Voucher</p>
+              <p className="text-[10px] font-mono font-bold text-gray-700 dark:text-slate-300">
+                VAT Reg. TIN: {localStorage.getItem("pinv_business_tin") || "246-810-121-000"}
+              </p>
               <div className="text-[10px] text-gray-500 dark:text-gray-400 pt-0.5 space-y-0.5">
                 <div>Invoice #: <span className="font-bold text-gray-800 dark:text-white font-mono">#{selectedInvoice.id}</span></div>
                 <div>Date: {formatReceiptDate(selectedInvoice.date)}</div>

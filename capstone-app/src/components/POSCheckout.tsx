@@ -3,7 +3,7 @@ import type { InventoryItem, InventoryBatch, Sale, NamedPerson, CartItem, Discou
 import { supabase } from "../utils/apiClient"
 import { getCategoryStyles } from "../utils/categoryColors"
 import { findMatchingInventoryOptions, getItemManufacturerOptions, useBarcodeScanner, type ScanOption } from "../utils/barcodeScanner"
-import { ArrowLeft, Printer, CreditCard, X, Users, Search, Check, Sparkles, Scan, Barcode, CheckCircle2, AlertCircle, AlertTriangle, Building2, User, Camera, Upload, Image as ImageIcon, Eye } from "lucide-react"
+import { ArrowLeft, Printer, CreditCard, X, Users, Search, Check, Sparkles, Scan, Barcode, CheckCircle2, AlertCircle, AlertTriangle, Building2, User, Camera, Upload, Image as ImageIcon, Eye, ShieldAlert, Lock } from "lucide-react"
 
 export type { NamedPerson, ScanOption, CartItem, DiscountType, OnlineChannel }
 
@@ -13,9 +13,19 @@ interface POSCheckoutProps {
   categoriesList: string[]
   onCompleteSale: (sale: Sale) => void
   currentOperator?: Operator | null
+  hasActiveShift?: boolean
+  onOpenAttendanceModal?: () => void
 }
 
-export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, currentOperator }: POSCheckoutProps) {
+export function POSCheckout({ 
+  inventory, 
+  sales, 
+  categoriesList, 
+  onCompleteSale, 
+  currentOperator,
+  hasActiveShift = false,
+  onOpenAttendanceModal
+}: POSCheckoutProps) {
   const [cart, setCart] = useState<CartItem[]>([])
   const [query, setQuery] = useState("")
   const [activeCategoryTab, setActiveCategoryTab] = useState<string>("all")
@@ -225,6 +235,12 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
   }
 
   const addToCart = (item: InventoryItem, selectedBatch?: InventoryBatch) => {
+    if (!hasActiveShift) {
+      triggerScanToast("POS Locked: You must Time In with photo verification first.", "error")
+      if (onOpenAttendanceModal) onOpenAttendanceModal()
+      return
+    }
+
     setCart(prev => {
       const matchFn = (ci: CartItem) => {
         if (selectedBatch) {
@@ -250,6 +266,12 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
 
   // Barcode Scanner Core Processor (only prompts if there are 2+ different manufacturers)
   const processScannedBarcode = (rawCode: string): boolean => {
+    if (!hasActiveShift) {
+      triggerScanToast("POS Locked: You must Time In with photo verification first.", "error")
+      if (onOpenAttendanceModal) onOpenAttendanceModal()
+      return false
+    }
+
     const cleanCode = (rawCode || "").trim()
     if (!cleanCode) return false
 
@@ -558,6 +580,15 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
   }
 
   const completeSale = async () => {
+    // Security Enforcement: Operator must have an active shift (timed in)
+    if (!hasActiveShift) {
+      const errMsg = "Access Denied: You must Time In with photo verification first before completing checkout."
+      setCheckoutError(errMsg)
+      triggerScanToast(errMsg, "error")
+      if (onOpenAttendanceModal) onOpenAttendanceModal()
+      return
+    }
+
     const numericCash = parseFloat(cashReceived) || 0
     const trimmedCustomer = customerName.trim()
     const trimmedIdNumber = customerIdNumber.trim()
@@ -703,13 +734,54 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
         </div>
       )}
 
+      {/* POS Terminal Lock Security Overlay */}
+      {!hasActiveShift && (
+        <div className="fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-[#131F1E] border-2 border-rose-500/60 dark:border-rose-500/40 rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl text-center space-y-5">
+            <div className="w-16 h-16 rounded-2xl bg-rose-100 dark:bg-rose-950/80 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto border border-rose-200 dark:border-rose-900 shadow-inner">
+              <Lock className="w-8 h-8 text-rose-600 dark:text-rose-400" />
+            </div>
+
+            <div className="space-y-2">
+              <span className="px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-widest bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800 inline-block">
+                Security Policy Required
+              </span>
+              <h2 className="text-xl font-black text-gray-900 dark:text-white">
+                POS Terminal Locked
+              </h2>
+              <p className="text-xs text-gray-600 dark:text-slate-300 leading-relaxed">
+                Operator <strong className="text-slate-900 dark:text-white">@{currentOperator?.username}</strong> ({currentOperator?.displayName}) has either timed out or not yet timed in. All users (including Administrators and Staff) are required to <strong>Time In</strong> before operating the POS terminal.
+              </p>
+            </div>
+
+            <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-200 dark:border-amber-800/60 text-xs text-amber-800 dark:text-amber-300 flex items-center gap-2.5 text-left">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
+              <span className="text-[11px]">
+                Product scanning, item additions, and checkout processing are restricted until your shift is active.
+              </span>
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={onOpenAttendanceModal}
+                className="w-full px-5 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-xs rounded-xl shadow-lg shadow-blue-500/25 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Camera className="w-4 h-4" />
+                Time In with Photo Verification
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 text-xs font-medium">
         <div className="lg:col-span-2 space-y-3 flex flex-col">
           {/* Top Search Bar & Category Pills */}
           <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xs border border-slate-200/80 dark:border-slate-700 p-4 space-y-3 shrink-0 transition-colors">
             
             {currentOperator && (
-              <div className="flex items-center justify-between pb-2.5 border-b border-slate-100 dark:border-slate-700/60 text-[11px]">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-100 dark:border-slate-700/60 text-[11px]">
                 <div className="flex items-center gap-2">
                   <div className="w-6 h-6 rounded-lg bg-[#1b5e59] text-white flex items-center justify-center font-bold text-[10px] shadow-xs">
                     <User className="w-3.5 h-3.5" />
@@ -720,7 +792,23 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
                     {currentOperator.systemRole}
                   </span>
                 </div>
-                <span className="font-mono text-slate-400 text-[10px]">@{currentOperator.username}</span>
+                
+                <div className="flex items-center gap-2">
+                  {hasActiveShift ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 font-bold text-[9px] border border-emerald-300 dark:border-emerald-800">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Shift Active
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={onOpenAttendanceModal}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 font-bold text-[9px] border border-rose-300 dark:border-rose-800 hover:bg-rose-200 cursor-pointer"
+                    >
+                      <ShieldAlert className="w-3 h-3 text-rose-600" /> Time In Required
+                    </button>
+                  )}
+                  <span className="font-mono text-slate-400 text-[10px]">@{currentOperator.username}</span>
+                </div>
               </div>
             )}
 
@@ -1637,6 +1725,9 @@ export function POSCheckout({ inventory, sales, categoriesList, onCompleteSale, 
                 Malabon Pharmacy and Clinic
               </h3>
               <p className="text-slate-500 dark:text-slate-400 text-[10px]">Official Receipt / Cash Voucher</p>
+              <p className="text-[10px] font-mono font-bold text-slate-700 dark:text-slate-300">
+                VAT Reg. TIN: {localStorage.getItem("pinv_business_tin") || "246-810-121-000"}
+              </p>
               <div className="text-[10px] text-slate-500 dark:text-slate-400 pt-0.5 space-y-0.5">
                 <div>Invoice #: <span className="font-bold text-slate-800 dark:text-white font-mono">#{lastSale.id}</span></div>
                 <div>Date: {formatReceiptDate(lastSale.date)}</div>

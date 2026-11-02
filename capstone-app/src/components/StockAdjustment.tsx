@@ -3,7 +3,7 @@ import type { InventoryItem, Operator } from "../types"
 import { supabase } from "../utils/apiClient"
 import { downloadExcelWithAutoFit, parseSpreadsheetFile } from "../utils/excelUtils"
 import { useBarcodeScanner, matchBarcodeToItem } from "../utils/barcodeScanner"
-import { Plus, Minus, Layers, AlertCircle, Trash2, Calendar, Download, Upload, FileSpreadsheet, Clock, CheckCircle2, X, Edit2, Search, Building2, Sparkles, Scan, Check, Barcode, Package } from "lucide-react"
+import { Plus, Minus, Layers, AlertCircle, Trash2, Calendar, Download, Upload, FileSpreadsheet, Clock, CheckCircle2, X, Edit2, Search, Building2, Sparkles, Scan, Check, Barcode, Package, ChevronDown, ChevronUp } from "lucide-react"
 import { BarcodePrintModal } from "./BarcodePrintModal"
 
 interface StockAdjustmentProps {
@@ -19,6 +19,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
   const [catFilter, setCatFilter] = useState("all")
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null)
   const [showBarcodeModal, setShowBarcodeModal] = useState(false)
+  const [isBulkCollapsed, setIsBulkCollapsed] = useState(true)
   
   const [batchLabel, setBatchLabel] = useState("")
   const [batchQty, setBatchQty] = useState<string>("")
@@ -801,66 +802,6 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
         </div>
       )}
 
-      {/* Bulk CSV Stock Bar */}
-      <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-4 flex flex-wrap items-center justify-between gap-4 shadow-xs">
-        <div className="flex items-center gap-2">
-          <FileSpreadsheet className="w-5 h-5 text-green-600" />
-          <div>
-            <h3 className="font-bold text-gray-800 dark:text-white text-sm">Bulk Stock Management</h3>
-            <p className="text-[10px] text-gray-500 dark:text-slate-400">Download Excel template pre-filled with product names, or upload Excel (.xlsx, .xls, .csv) files to update stock quantities.</p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setShowBarcodeModal(true)}
-            className="px-3.5 py-2 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 font-bold rounded-lg flex items-center gap-1.5 border border-blue-200 dark:border-blue-800 transition-colors cursor-pointer"
-            title="Generate & Print Scannable Barcode Labels or Export to Excel"
-          >
-            <Barcode className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            Print / Export Barcodes
-          </button>
-
-          <button
-            type="button"
-            onClick={handleDownloadStockTemplate}
-            className="px-3.5 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 font-bold rounded-lg flex items-center gap-1.5 border dark:border-slate-600 transition-colors"
-          >
-            <Download className="w-4 h-4 text-gray-500" />
-            Download Stock Template
-          </button>
-
-          <input 
-            type="file" 
-            ref={fileInputRef} 
-            onChange={handleFileUpload} 
-            accept=".csv, .xlsx, .xls, .xlsm, .xlsb, .tsv, .ods, .xml" 
-            className="hidden" 
-          />
-
-          <button
-            type="button"
-            disabled={!isAdmin || isBulkUploading || importProgress.active}
-            onClick={() => {
-              if (!isAdmin) {
-                alert("Admin Access Required: Only Administrators can bulk import stock.")
-                return
-              }
-              fileInputRef.current?.click()
-            }}
-            className={`px-3.5 py-2 font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors ${
-              isAdmin 
-                ? "bg-green-600 hover:bg-green-700 text-white" 
-                : "bg-gray-300 dark:bg-slate-700 text-gray-500 cursor-not-allowed"
-            }`}
-            title={!isAdmin ? "Only Admin can upload stock files" : undefined}
-          >
-            <Upload className="w-4 h-4" />
-            {isBulkUploading || importProgress.active ? "Processing Import..." : "Upload Stock Excel / CSV"}
-          </button>
-        </div>
-      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 text-xs font-medium">
         
@@ -1438,6 +1379,97 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
           </div>
         </div>
       )}
+
+      {/* Collapsible Bulk Stock Management Section (Placed at bottom) */}
+      <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 shadow-xs overflow-hidden transition-all">
+        <button
+          type="button"
+          onClick={() => setIsBulkCollapsed(prev => !prev)}
+          className="w-full p-4 flex items-center justify-between hover:bg-gray-50/70 dark:hover:bg-slate-700/40 transition-colors text-left cursor-pointer"
+        >
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-green-50 dark:bg-green-950/60 text-green-600 dark:text-green-400 rounded-lg border border-green-200 dark:border-green-800">
+              <FileSpreadsheet className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-gray-800 dark:text-white text-sm">Bulk Stock Management</h3>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300 font-bold uppercase">
+                  {isBulkCollapsed ? "Collapsible Section" : "Expanded"}
+                </span>
+              </div>
+              <p className="text-[10px] text-gray-500 dark:text-slate-400 mt-0.5">
+                Download Excel template pre-filled with product names, or upload Excel (.xlsx, .xls, .csv) files to update stock quantities.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 hidden sm:inline">
+              {isBulkCollapsed ? "Click to Expand" : "Click to Collapse"}
+            </span>
+            <div className="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-200">
+              {isBulkCollapsed ? <ChevronDown className="w-5 h-5" /> : <ChevronUp className="w-5 h-5" />}
+            </div>
+          </div>
+        </button>
+
+        {!isBulkCollapsed && (
+          <div className="border-t border-gray-100 dark:border-slate-700 p-4 bg-gray-50/50 dark:bg-slate-900/40 flex flex-wrap items-center justify-between gap-4 animate-in fade-in duration-150">
+            <p className="text-xs text-gray-600 dark:text-slate-300">
+              Use these tools for bulk stock updates, inventory template downloading, and mass barcode printing:
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowBarcodeModal(true)}
+                className="px-3.5 py-2 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 font-bold rounded-lg flex items-center gap-1.5 border border-blue-200 dark:border-blue-800 transition-colors cursor-pointer text-xs"
+                title="Generate & Print Scannable Barcode Labels or Export to Excel"
+              >
+                <Barcode className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                Print / Export Barcodes
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadStockTemplate}
+                className="px-3.5 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 font-bold rounded-lg flex items-center gap-1.5 border dark:border-slate-600 transition-colors text-xs cursor-pointer"
+              >
+                <Download className="w-4 h-4 text-gray-500" />
+                Download Stock Template
+              </button>
+
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                onChange={handleFileUpload} 
+                accept=".csv, .xlsx, .xls, .xlsm, .xlsb, .tsv, .ods, .xml" 
+                className="hidden" 
+              />
+
+              <button
+                type="button"
+                disabled={!isAdmin || isBulkUploading || importProgress.active}
+                onClick={() => {
+                  if (!isAdmin) {
+                    alert("Admin Access Required: Only Administrators can bulk import stock.")
+                    return
+                  }
+                  fileInputRef.current?.click()
+                }}
+                className={`px-3.5 py-2 font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors text-xs cursor-pointer ${
+                  isAdmin 
+                    ? "bg-green-600 hover:bg-green-700 text-white" 
+                    : "bg-gray-300 dark:bg-slate-700 text-gray-500 cursor-not-allowed"
+                }`}
+                title={!isAdmin ? "Only Admin can upload stock files" : undefined}
+              >
+                <Upload className="w-4 h-4" />
+                {isBulkUploading || importProgress.active ? "Processing Import..." : "Upload Stock Excel / CSV"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Scannable Barcode Labels Print & Export Modal */}
       <BarcodePrintModal

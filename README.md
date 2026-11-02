@@ -20,6 +20,7 @@ A modern, full-featured **Point of Sale (POS)**, **Inventory**, and **Batch Mana
 ### 📦 Inventory & Batch Management
 - **Per-Batch Manufacturer Isolation**: Each inventory batch independently tracks its own manufacturer brand, procurement cost, retail price, stock level, and expiration date.
 - **Manufacturer Brand Auto-Suggest**: Real-time auto-suggest dropdown as you type, pulling from existing inventory records and supplier lists.
+- **Direct Category Assignment**: Interactive category selection dropdown directly within the catalogue table for instant categorization.
 - **Category Color System**: Persistent, vibrant category-coded borders and subtle background tints (`categoryColors.ts`) for instant visual distinction across the catalogue.
 - **Low Stock & Expiry Alerts**: Live automated notifications for items below minimum safety levels or batches approaching expiry.
 
@@ -30,6 +31,7 @@ A modern, full-featured **Point of Sale (POS)**, **Inventory**, and **Batch Mana
 
 ### ⏱️ Staff Attendance & Time Clock
 - **Time In / Time Out Modal**: Quick staff attendance clock-in/out modal with live shift status detection and mandatory selfie photo verification to prevent buddy punching.
+- **Global Shift Access Lock**: System-wide security enforcement requiring all active operators to record their Time In with photo verification before unlocking the POS terminal, inventory, and system modules.
 - **Attendance Directory & Analytics**: Dedicated attendance history log with photo inspection, role badges, shift duration calculations, suspicious shift flagging (<5 min), and 12-hour auto-capping.
 - **Shift Validation & Deletion Controls**: Admin tools to flag/re-approve questionable records and permanently delete erroneous logs.
 - **Excel Audit Export**: Full-fidelity export of staff attendance logs to `.xlsx` spreadsheets for payroll and compliance reporting.

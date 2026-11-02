@@ -1158,7 +1158,7 @@ export function SuperAdminPanel({ currentOperator, onLogAction, refreshAllData }
   const handleForceLogoutProfile = async (username: string) => {
     const targetUser = username.trim().toLowerCase()
     if (targetUser === currentOperator.username.toLowerCase()) {
-      alert("Notice: To logout your current session, use the 'Log Out Session' button on the sidebar.")
+      alert("Notice: To logout your current session, use the 'Log Out' button on the sidebar.")
       return
     }
 

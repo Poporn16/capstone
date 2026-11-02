@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react"
-import { Home, ShoppingCart, Package, Clock, ShieldAlert, LogOut, ClipboardList, Menu, X, Bell, AlertTriangle, Sun, Moon, ChevronLeft, ChevronRight, Flame, UserCheck, TrendingUp, CheckCircle2 } from "lucide-react"
+import { Home, ShoppingCart, Package, Clock, ShieldAlert, LogOut, ClipboardList, Menu, X, Bell, AlertTriangle, Sun, Moon, ChevronLeft, ChevronRight, Flame, UserCheck, TrendingUp, CheckCircle2, Lock, Camera } from "lucide-react"
 import { Dashboard } from "./components/Dashboard"
 import { POSCheckout } from "./components/POSCheckout"
 import { InventoryManager } from "./components/InventoryManager"
@@ -23,6 +23,7 @@ export const clearSessionData = () => {
     sessionStorage.removeItem("pinv_session")
     sessionStorage.removeItem("current_terminal_operator")
     sessionStorage.removeItem("pinv_active_tab")
+    sessionStorage.removeItem("pinv_active_shift_verified")
     localStorage.removeItem("pinv_session")
     localStorage.removeItem("current_terminal_operator")
   } catch (e) {}
@@ -327,8 +328,8 @@ export default function App() {
         }
       }
 
-      // If staff has no valid active shift from within the last 12 hours, prompt attendance terminal for photo verification
-      if (!hasValidActiveShift && operator.systemRole === "staff") {
+      // Prompt attendance terminal for photo verification if operator has no valid active shift
+      if (!hasValidActiveShift) {
         setShowAttendanceModal(true)
       }
       window.dispatchEvent(new Event("pinv_attendance_updated"))
@@ -339,11 +340,72 @@ export default function App() {
     }
   }
 
+  const [hasActiveShift, setHasActiveShift] = useState<boolean>(() => {
+    return sessionStorage.getItem("pinv_active_shift_verified") === "true"
+  })
+  const [isVerifyingShift, setIsVerifyingShift] = useState<boolean>(true)
+
+  const checkActiveShift = async () => {
+    if (!currentOperator) {
+      setHasActiveShift(false)
+      setIsVerifyingShift(false)
+      sessionStorage.removeItem("pinv_active_shift_verified")
+      return
+    }
+
+    try {
+      setIsVerifyingShift(true)
+      const uName = String(currentOperator.username).trim().toLowerCase()
+      const { data } = await supabase
+        .from("staff_attendance")
+        .select("id, time_in")
+        .ilike("username", uName)
+        .is("time_out", null)
+        .order("id", { ascending: false })
+        .limit(1)
+
+      const nowMs = Date.now()
+      if (data && data.length > 0) {
+        const inTime = new Date(data[0].time_in).getTime()
+        if (!isNaN(inTime) && (nowMs - inTime <= MAX_SHIFT_MS)) {
+          setHasActiveShift(true)
+          sessionStorage.setItem("pinv_active_shift_verified", "true")
+          setIsVerifyingShift(false)
+          return
+        }
+      }
+      // No active open shift found: system must be locked! Both Admin and Staff require Time In!
+      setHasActiveShift(false)
+      sessionStorage.removeItem("pinv_active_shift_verified")
+      setShowAttendanceModal(true)
+    } catch (e) {
+      console.error("Error verifying active shift status:", e)
+    } finally {
+      setIsVerifyingShift(false)
+    }
+  }
+
   useEffect(() => {
     if (currentOperator?.username) {
       autoTimeInUser(currentOperator)
+      checkActiveShift()
+    } else {
+      setHasActiveShift(false)
+      setIsVerifyingShift(false)
     }
-  }, [currentOperator?.username])
+  }, [currentOperator?.username, currentOperator?.systemRole])
+
+  useEffect(() => {
+    const handleShiftSync = () => {
+      checkActiveShift()
+    }
+    window.addEventListener("pinv_attendance_updated", handleShiftSync)
+    window.addEventListener("pinv_attendance_invalidated", handleShiftSync)
+    return () => {
+      window.removeEventListener("pinv_attendance_updated", handleShiftSync)
+      window.removeEventListener("pinv_attendance_invalidated", handleShiftSync)
+    }
+  }, [currentOperator?.username, currentOperator?.systemRole])
 
   const clearAllUserHeartbeats = (uName: string) => {
     if (!uName) return
@@ -1680,10 +1742,10 @@ export default function App() {
             onClick={handleLogoutClick} 
             disabled={isCheckingLogout}
             className="w-full flex items-center justify-center gap-2 py-2 px-3 font-bold rounded-xl transition-all text-xs cursor-pointer bg-red-600 hover:bg-red-700 active:scale-95 text-white shadow-xs disabled:opacity-60"
-            title="Log Out Session"
+            title="Log Out"
           >
             <LogOut className="w-4 h-4 shrink-0" />
-            {!isSidebarCollapsed && <span>{isCheckingLogout ? "Checking Shift..." : "Log Out Session"}</span>}
+            {!isSidebarCollapsed && <span>{isCheckingLogout ? "Checking Shift..." : "Log Out"}</span>}
           </button>
         </div>
       </aside>
@@ -1802,7 +1864,17 @@ export default function App() {
         </header>
         <main className="flex-1 px-4 sm:px-6 py-5 overflow-y-auto isolate">
           {activeTab === "dashboard" && <Dashboard inventory={inventory} sales={sales} isAdminUser={isAdminUser} onSelectProduct={handleSelectStockProduct} onSelectSale={handleSelectSale} />}
-          {activeTab === "pos" && <POSCheckout currentOperator={currentOperator} inventory={inventory} sales={sales} categoriesList={categoriesList} onCompleteSale={addSale} />}
+          {activeTab === "pos" && (
+            <POSCheckout 
+              currentOperator={currentOperator} 
+              inventory={inventory} 
+              sales={sales} 
+              categoriesList={categoriesList} 
+              onCompleteSale={addSale} 
+              hasActiveShift={hasActiveShift}
+              onOpenAttendanceModal={() => setShowAttendanceModal(true)}
+            />
+          )}
           {activeTab === "inventory" && <InventoryManager currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} refreshCategories={fetchCategories} refreshInventory={fetchInventory} onUpdateInventory={updateInventoryItem} onDeleteProduct={deleteInventoryItem} onLogAction={logSystemAction} />}
           {activeTab === "stock_adjust" && <StockAdjustment currentOperator={currentOperator} inventory={inventory} categoriesList={categoriesList} fetchInventory={fetchInventory} onLogAction={logSystemAction} />}
           {activeTab === "history" && <SalesHistory inventory={inventory} currentOperator={currentOperator} sales={sales} onToggleRefund={handleToggleRefund} />}
@@ -1829,6 +1901,55 @@ export default function App() {
             />
           )}
         </main>
+
+        {/* Global Website Security Lock Overlay: Required for all operators (including Admin and Staff) */}
+        {!hasActiveShift && !isVerifyingShift && currentOperator && (
+          <div className="fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200 font-sans">
+            <div className="bg-white dark:bg-[#131F1E] border-2 border-rose-500/70 dark:border-rose-500/50 rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl text-center space-y-5">
+              <div className="w-16 h-16 rounded-2xl bg-rose-100 dark:bg-rose-950/80 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto border border-rose-200 dark:border-rose-900 shadow-inner">
+                <Lock className="w-8 h-8 text-rose-600 dark:text-rose-400 animate-pulse" />
+              </div>
+
+              <div className="space-y-2">
+                <span className="px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-widest bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800 inline-block">
+                  Website Access Locked
+                </span>
+                <h2 className="text-xl font-black text-gray-900 dark:text-white">
+                  Time In Required to Use Website
+                </h2>
+                <p className="text-xs text-gray-600 dark:text-slate-300 leading-relaxed">
+                  Operator <strong className="text-slate-900 dark:text-white">@{currentOperator.username}</strong> ({currentOperator.displayName}) [{currentOperator.systemRole?.toUpperCase()}] has either timed out or not yet timed in. All users (including Administrators and Staff) are required to record their <strong>Time In</strong> with photo verification before accessing the POS terminal, inventory, and website modules.
+                </p>
+              </div>
+
+              <div className="p-3.5 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-200 dark:border-amber-800/60 text-xs text-amber-800 dark:text-amber-300 flex items-center gap-2.5 text-left">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
+                <span className="text-[11px] leading-snug">
+                  All website operations, sales checkouts, inventory management, and reports remain locked until you record your Time In.
+                </span>
+              </div>
+
+              <div className="pt-2 flex flex-col sm:flex-row gap-2.5 justify-center">
+                <button
+                  type="button"
+                  onClick={() => setShowAttendanceModal(true)}
+                  className="flex-1 px-5 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-blue-500/25 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Camera className="w-4 h-4" />
+                  Time In with Photo Verification
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleLogout(true)}
+                  className="px-4 py-3 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-200 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  Log Out
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {showAttendanceModal && (
           <StaffAttendanceModal

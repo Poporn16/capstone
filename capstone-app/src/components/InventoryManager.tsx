@@ -4,7 +4,7 @@ import { supabase, triggerGlobalSync, fetchAllSupabaseRows } from "../utils/apiC
 import { downloadExcelWithAutoFit, parseSpreadsheetFile } from "../utils/excelUtils"
 import { getCategoryStyles } from "../utils/categoryColors"
 import { useBarcodeScanner, matchBarcodeToItem } from "../utils/barcodeScanner"
-import { Search, FolderPlus, Download, Upload, FileSpreadsheet, X, Trash2, Edit2, Clock, CheckCircle2, Scan, Barcode } from "lucide-react"
+import { Search, FolderPlus, Download, Upload, FileSpreadsheet, X, Trash2, Edit2, Clock, CheckCircle2, Scan, Barcode, Package, ChevronDown, ChevronUp, Tag, Check } from "lucide-react"
 import { BarcodePrintModal } from "./BarcodePrintModal"
 
 interface InventoryManagerProps {
@@ -37,6 +37,9 @@ export function InventoryManager({
   const [deleteConfirmItem, setDeleteConfirmItem] = useState<InventoryItem | null>(null)
   const [newCatInput, setNewCatInput] = useState("")
   const [isBulkUploading, setIsBulkUploading] = useState(false)
+  const [isBulkCollapsed, setIsBulkCollapsed] = useState(true)
+  const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set())
+  const [quickCategoryPopoverItemId, setQuickCategoryPopoverItemId] = useState<string | null>(null)
   const [scanToast, setScanToast] = useState<{ message: string; type: "success" | "warning"; id: number } | null>(null)
   const [importProgress, setImportProgress] = useState<{
     active: boolean
@@ -577,6 +580,43 @@ export function InventoryManager({
     setEditingItem(null)
   }
 
+  const handleAssignCategory = async (itemId: string, newCategory: string) => {
+    const item = inventory.find(i => String(i.id) === String(itemId))
+    if (!item) return
+    const updated = { ...item, category: newCategory }
+    onUpdateInventory(updated)
+    setQuickCategoryPopoverItemId(null)
+    try {
+      await supabase.from("inventory").update({ category: newCategory }).eq("id", Number(itemId))
+      if (onLogAction) {
+        await onLogAction("UPDATE_ITEM_CATEGORY", "ITEM_SPECIFICATIONS", `Assigned category "${newCategory}" to product "${item.name}"`)
+      }
+    } catch (e) {
+      console.error("Failed to update item category:", e)
+    }
+  }
+
+  const handleBatchAssignCategory = async (targetCategory: string) => {
+    if (selectedProductIds.size === 0) return
+    const ids = Array.from(selectedProductIds)
+    const itemsToUpdate = inventory.filter(i => ids.includes(String(i.id)))
+    itemsToUpdate.forEach(item => {
+      onUpdateInventory({ ...item, category: targetCategory })
+    })
+    try {
+      const numIds = ids.map(id => Number(id)).filter(id => !isNaN(id))
+      if (numIds.length > 0) {
+        await supabase.from("inventory").update({ category: targetCategory }).in("id", numIds)
+      }
+      if (onLogAction) {
+        await onLogAction("BATCH_UPDATE_CATEGORY", "ITEM_SPECIFICATIONS", `Batch assigned category "${targetCategory}" to ${ids.length} products`)
+      }
+    } catch (e) {
+      console.error("Failed to batch update categories:", e)
+    }
+    setSelectedProductIds(new Set())
+  }
+
   const addNewItem = () => {
     if (!newItem.name || !newItem.name.trim()) return
     const item: any = {
@@ -679,67 +719,6 @@ export function InventoryManager({
         </div>
       )}
 
-      {/* Excel Data Imports Header */}
-      <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-4 flex flex-wrap items-center justify-between gap-4 shadow-xs">
-        <div className="flex items-center gap-2">
-          <FileSpreadsheet className="w-5 h-5 text-green-600" />
-          <div>
-            <h3 className="font-bold text-gray-800 dark:text-white text-sm">Bulk Data Management</h3>
-            <p className="text-[10px] text-gray-500 dark:text-gray-400">Download blank template or upload Excel (.xlsx, .xls, .csv) files.</p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setShowBarcodeModal(true)}
-            className="px-3 py-2 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 font-bold rounded-lg flex items-center gap-1.5 border border-blue-200 dark:border-blue-800 transition-colors cursor-pointer"
-            title="Generate & Print Scannable Barcode Labels or Export to Excel"
-          >
-            <Barcode className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            Print / Export Barcodes
-          </button>
-
-          <button
-            type="button"
-            onClick={handleDownloadTemplate}
-            className="px-3 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-gray-700 dark:text-gray-200 font-bold rounded-lg flex items-center gap-1.5 border dark:border-slate-600 transition-colors"
-          >
-            <Download className="w-4 h-4 text-gray-500" />
-            Download Blank Template
-          </button>
-
-          <input 
-            type="file" 
-            ref={fileInputRef} 
-            onChange={handleFileUpload} 
-            accept=".csv, .xlsx, .xls, .xlsm, .xlsb, .tsv, .ods, .xml" 
-            className="hidden" 
-          />
-
-          <button
-            type="button"
-            disabled={!isAdmin || isBulkUploading || importProgress.active}
-            onClick={() => {
-              if (!isAdmin) {
-                alert("Admin Access Required: Only Administrators can upload files.")
-                return
-              }
-              fileInputRef.current?.click()
-            }}
-            className={`px-3 py-2 font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors ${
-              isAdmin 
-                ? "bg-green-600 hover:bg-green-700 text-white" 
-                : "bg-gray-300 dark:bg-slate-700 text-gray-500 cursor-not-allowed"
-            }`}
-            title={!isAdmin ? "Only Admin can upload files" : undefined}
-          >
-            <Upload className="w-4 h-4" />
-            {isBulkUploading || importProgress.active ? "Processing..." : "Upload Excel / CSV"}
-          </button>
-        </div>
-      </div>
-
       {/* Categories Controls */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-4 space-y-3">
         <h3 className="font-bold text-gray-800 dark:text-slate-200 text-sm flex items-center gap-1"><FolderPlus className="w-4 h-4 text-blue-600"/>Manage Categories</h3>
@@ -777,6 +756,25 @@ export function InventoryManager({
           </div>
         </div>
       </div>
+
+      {/* Manage Products Section */}
+      <div className="space-y-4 pt-1">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b dark:border-slate-700 pb-2">
+          <div>
+            <h2 className="text-base font-bold text-gray-900 dark:text-white flex items-center gap-2">
+              <Package className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+              Manage Products
+            </h2>
+            <p className="text-xs text-gray-500 dark:text-slate-400">
+              Configure product specifications, barcode identities, and assign item categories using checkboxes.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs px-2.5 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold border border-blue-200 dark:border-blue-800">
+              {filtered.length} {filtered.length === 1 ? "Product" : "Products"}
+            </span>
+          </div>
+        </div>
 
       {/* Search Header Bar */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-4 shadow-xs">
@@ -892,16 +890,50 @@ export function InventoryManager({
               </div>
 
               {/* Category Group */}
-              <div className="space-y-1">
-                <label className="block text-gray-700 dark:text-slate-300 font-bold text-[11px]">Category Group</label>
-                <select 
-                  value={newItem.category || "unmarked category"} 
-                  onChange={e=>setNewItem({...newItem, category: e.target.value})} 
-                  className="w-full border border-gray-200 dark:border-slate-700 p-2 rounded-lg uppercase font-semibold bg-gray-50/50 dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                >
-                  <option value="unmarked category">UNMARKED CATEGORY</option>
-                  {dynamicCategories.map(cat => (<option key={cat} value={cat}>{cat.toUpperCase()}</option>))}
-                </select>
+              <div className="space-y-1.5 md:col-span-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-gray-700 dark:text-slate-300 font-bold text-[11px]">
+                    Assign Category (Checkbox Selection)
+                  </label>
+                  <span className="text-[10px] text-gray-500 dark:text-slate-400 font-medium">
+                    Current: <strong className="uppercase text-blue-600 dark:text-blue-400">{newItem.category || "unmarked category"}</strong>
+                  </span>
+                </div>
+                <div className="max-h-36 overflow-y-auto p-2 bg-gray-50/70 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl space-y-1">
+                  <label className="flex items-center gap-2.5 p-1.5 rounded-lg hover:bg-white dark:hover:bg-slate-800 cursor-pointer transition-colors">
+                    <input 
+                      type="checkbox"
+                      checked={(newItem.category || "unmarked category").toLowerCase() === "unmarked category"}
+                      onChange={() => setNewItem({...newItem, category: "unmarked category"})}
+                      className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
+                    />
+                    <span className="text-xs font-semibold text-gray-700 dark:text-slate-200 uppercase">
+                      UNMARKED CATEGORY
+                    </span>
+                  </label>
+                  {dynamicCategories.map(cat => {
+                    const isChecked = (newItem.category || "").toLowerCase() === cat.toLowerCase()
+                    const catStyle = getCategoryStyles(cat)
+                    return (
+                      <label key={cat} className="flex items-center justify-between gap-2.5 p-1.5 rounded-lg hover:bg-white dark:hover:bg-slate-800 cursor-pointer transition-colors border-t border-gray-100 dark:border-slate-800/60">
+                        <div className="flex items-center gap-2.5">
+                          <input 
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => setNewItem({...newItem, category: isChecked ? "unmarked category" : cat})}
+                            className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
+                          />
+                          <span className="text-xs font-semibold text-gray-800 dark:text-slate-100 uppercase">
+                            {cat}
+                          </span>
+                        </div>
+                        <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase ${catStyle.badge}`}>
+                          {cat}
+                        </span>
+                      </label>
+                    )
+                  })}
+                </div>
               </div>
             </div>
 
@@ -971,16 +1003,50 @@ export function InventoryManager({
               </div>
 
               {/* Category Group */}
-              <div className="space-y-1">
-                <label className="block text-gray-700 dark:text-slate-300 font-bold text-[11px]">Category Group</label>
-                <select 
-                  value={editForm.category || "unmarked category"} 
-                  onChange={e=>setEditForm({...editForm, category: e.target.value})} 
-                  className="w-full border border-gray-200 dark:border-slate-700 p-2 rounded-lg uppercase font-semibold bg-gray-50/50 dark:bg-slate-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                >
-                  <option value="unmarked category">UNMARKED CATEGORY</option>
-                  {dynamicCategories.map(cat => (<option key={cat} value={cat}>{cat.toUpperCase()}</option>))}
-                </select>
+              <div className="space-y-1.5 md:col-span-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-gray-700 dark:text-slate-300 font-bold text-[11px]">
+                    Assign Category (Checkbox Selection)
+                  </label>
+                  <span className="text-[10px] text-gray-500 dark:text-slate-400 font-medium">
+                    Current: <strong className="uppercase text-blue-600 dark:text-blue-400">{editForm.category || "unmarked category"}</strong>
+                  </span>
+                </div>
+                <div className="max-h-36 overflow-y-auto p-2 bg-gray-50/70 dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-xl space-y-1">
+                  <label className="flex items-center gap-2.5 p-1.5 rounded-lg hover:bg-white dark:hover:bg-slate-800 cursor-pointer transition-colors">
+                    <input 
+                      type="checkbox"
+                      checked={(editForm.category || "unmarked category").toLowerCase() === "unmarked category"}
+                      onChange={() => setEditForm({...editForm, category: "unmarked category"})}
+                      className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
+                    />
+                    <span className="text-xs font-semibold text-gray-700 dark:text-slate-200 uppercase">
+                      UNMARKED CATEGORY
+                    </span>
+                  </label>
+                  {dynamicCategories.map(cat => {
+                    const isChecked = (editForm.category || "").toLowerCase() === cat.toLowerCase()
+                    const catStyle = getCategoryStyles(cat)
+                    return (
+                      <label key={cat} className="flex items-center justify-between gap-2.5 p-1.5 rounded-lg hover:bg-white dark:hover:bg-slate-800 cursor-pointer transition-colors border-t border-gray-100 dark:border-slate-800/60">
+                        <div className="flex items-center gap-2.5">
+                          <input 
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => setEditForm({...editForm, category: isChecked ? "unmarked category" : cat})}
+                            className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
+                          />
+                          <span className="text-xs font-semibold text-gray-800 dark:text-slate-100 uppercase">
+                            {cat}
+                          </span>
+                        </div>
+                        <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase ${catStyle.badge}`}>
+                          {cat}
+                        </span>
+                      </label>
+                    )
+                  })}
+                </div>
               </div>
             </div>
 
@@ -1052,11 +1118,69 @@ export function InventoryManager({
         </div>
       )}
 
+      {/* Batch Category Assignment Bar */}
+      {selectedProductIds.size > 0 && (
+        <div className="bg-blue-50 dark:bg-blue-950/70 border border-blue-200 dark:border-blue-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 animate-in fade-in duration-150">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-blue-900 dark:text-blue-100">
+              {selectedProductIds.size} {selectedProductIds.size === 1 ? "Product" : "Products"} Selected
+            </span>
+            <button 
+              type="button" 
+              onClick={() => setSelectedProductIds(new Set())}
+              className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline font-semibold ml-2 cursor-pointer"
+            >
+              Deselect All
+            </button>
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold text-blue-800 dark:text-blue-200">
+              Batch Assign Category:
+            </span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => handleBatchAssignCategory("unmarked category")}
+                className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border border-gray-300 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer shadow-2xs"
+              >
+                UNMARKED
+              </button>
+              {dynamicCategories.map(cat => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => handleBatchAssignCategory(cat)}
+                  className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white uppercase cursor-pointer shadow-2xs transition-colors"
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Directory Table */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 overflow-hidden max-h-[580px] overflow-y-auto">
         <table className="w-full text-left border-collapse">
           <thead className="bg-gray-50 dark:bg-slate-900 border-b dark:border-slate-700 sticky top-0 z-10 backdrop-blur-xs">
             <tr>
+              <th className="py-3 px-3 w-10 text-center">
+                <input 
+                  type="checkbox"
+                  aria-label="Select all products"
+                  checked={filtered.length > 0 && selectedProductIds.size === filtered.length}
+                  onChange={() => {
+                    if (selectedProductIds.size === filtered.length) {
+                      setSelectedProductIds(new Set())
+                    } else {
+                      setSelectedProductIds(new Set(filtered.map(i => String(i.id))))
+                    }
+                  }}
+                  className="w-4 h-4 text-blue-600 rounded border-gray-300 dark:border-slate-600 dark:bg-slate-800 focus:ring-blue-500 cursor-pointer"
+                />
+              </th>
               <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold">Product Profile Name</th>
               <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold">Category</th>
               <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold text-center">Min Stock</th>
@@ -1066,16 +1190,90 @@ export function InventoryManager({
           <tbody className="divide-y divide-gray-100 dark:divide-slate-700">
             {filtered.map(item => {
               const catStyle = getCategoryStyles(item.category)
+              const isSelected = selectedProductIds.has(String(item.id))
+              const isPopoverOpen = quickCategoryPopoverItemId === String(item.id)
+
               return (
-                <tr key={item.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors">
+                <tr key={item.id} className={`hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors ${isSelected ? "bg-blue-50/50 dark:bg-blue-950/30" : ""}`}>
+                  <td className="py-3 px-3 text-center">
+                    <input 
+                      type="checkbox"
+                      aria-label={`Select ${item.name}`}
+                      checked={isSelected}
+                      onChange={() => {
+                        const next = new Set(selectedProductIds)
+                        const id = String(item.id)
+                        if (next.has(id)) next.delete(id)
+                        else next.add(id)
+                        setSelectedProductIds(next)
+                      }}
+                      className="w-4 h-4 text-blue-600 rounded border-gray-300 dark:border-slate-600 dark:bg-slate-800 focus:ring-blue-500 cursor-pointer"
+                    />
+                  </td>
                   <td className="py-3 px-4">
                     <p className="text-sm font-medium text-gray-900 dark:text-white">{item.name}</p>
                     <p className="text-[10px] text-gray-500 dark:text-gray-400 font-mono mt-0.5">{item.barcode}</p>
                   </td>
-                  <td className="py-3 px-4">
-                    <span className={`text-[9px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider ${catStyle.badge}`}>
-                      {item.category}
-                    </span>
+                  <td className="py-3 px-4 relative">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`text-[9px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider ${catStyle.badge}`}>
+                        {item.category}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setQuickCategoryPopoverItemId(isPopoverOpen ? null : String(item.id))}
+                        className="p-1 rounded-md text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                        title="Quick assign category with checkboxes"
+                      >
+                        <Tag className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {/* Quick Category Assignment Checkbox Popover */}
+                    {isPopoverOpen && (
+                      <div className="absolute z-30 left-4 top-10 w-60 p-2.5 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-gray-200 dark:border-slate-700 text-left animate-in fade-in duration-150">
+                        <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b dark:border-slate-700">
+                          <span className="text-[10px] font-bold text-gray-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-1">
+                            <Tag className="w-3 h-3 text-blue-500" /> Assign Category
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setQuickCategoryPopoverItemId(null)}
+                            className="text-gray-400 hover:text-gray-600 dark:hover:text-white p-0.5 rounded cursor-pointer"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                        <div className="max-h-48 overflow-y-auto space-y-1">
+                          <label className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={(item.category || "unmarked category").toLowerCase() === "unmarked category"}
+                              onChange={() => handleAssignCategory(String(item.id), "unmarked category")}
+                              className="w-3.5 h-3.5 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
+                            />
+                            <span className="text-xs text-gray-700 dark:text-slate-300 font-semibold uppercase">
+                              UNMARKED CATEGORY
+                            </span>
+                          </label>
+                          {dynamicCategories.map(cat => (
+                            <label key={cat} className="flex items-center justify-between gap-2 p-1.5 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer border-t border-gray-100 dark:border-slate-800">
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={(item.category || "").toLowerCase() === cat.toLowerCase()}
+                                  onChange={() => handleAssignCategory(String(item.id), cat)}
+                                  className="w-3.5 h-3.5 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
+                                />
+                                <span className="text-xs text-gray-800 dark:text-slate-200 font-semibold uppercase">
+                                  {cat}
+                                </span>
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </td>
                   <td className="py-3 px-4 text-gray-700 dark:text-slate-300 font-mono font-bold text-center">{item.minStock}</td>
                   <td className="py-3 px-4 text-center">
@@ -1083,7 +1281,7 @@ export function InventoryManager({
                     <button 
                       type="button"
                       onClick={() => openEditModal(item)} 
-                      className="px-3 py-1.5 bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-lg font-bold hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors inline-flex items-center gap-1 text-xs"
+                      className="px-3 py-1.5 bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-lg font-bold hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors inline-flex items-center gap-1 text-xs cursor-pointer"
                     >
                       <Edit2 className="w-3.5 h-3.5" />
                       Edit Specs
@@ -1102,6 +1300,98 @@ export function InventoryManager({
             )})}
           </tbody>
         </table>
+      </div>
+      </div>
+
+      {/* Collapsible Bulk Data Management Section (Moved to Bottom) */}
+      <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 overflow-hidden shadow-xs">
+        <button
+          type="button"
+          onClick={() => setIsBulkCollapsed(!isBulkCollapsed)}
+          className="w-full p-4 flex items-center justify-between text-left hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors cursor-pointer"
+        >
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 rounded-lg border border-blue-200 dark:border-blue-800">
+              <FileSpreadsheet className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-gray-800 dark:text-white text-sm">Bulk Data Management</h3>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300 font-bold uppercase">
+                  {isBulkCollapsed ? "Collapsible Section" : "Expanded"}
+                </span>
+              </div>
+              <p className="text-[10px] text-gray-500 dark:text-slate-400 mt-0.5">
+                Download spreadsheet templates, upload bulk products & categories, or export and print barcode labels.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 hidden sm:inline">
+              {isBulkCollapsed ? "Click to Expand" : "Click to Collapse"}
+            </span>
+            <div className="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-slate-200">
+              {isBulkCollapsed ? <ChevronDown className="w-5 h-5" /> : <ChevronUp className="w-5 h-5" />}
+            </div>
+          </div>
+        </button>
+
+        {!isBulkCollapsed && (
+          <div className="border-t border-gray-100 dark:border-slate-700 p-4 bg-gray-50/50 dark:bg-slate-900/40 flex flex-wrap items-center justify-between gap-4 animate-in fade-in duration-150">
+            <p className="text-xs text-gray-600 dark:text-slate-300">
+              Export products to Excel, download bulk templates, or upload product spreadsheets:
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowBarcodeModal(true)}
+                className="px-3.5 py-2 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 font-bold rounded-lg flex items-center gap-1.5 border border-blue-200 dark:border-blue-800 transition-colors cursor-pointer text-xs"
+                title="Generate & Print Scannable Barcode Labels or Export to Excel"
+              >
+                <Barcode className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                Print / Export Barcodes
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadTemplate}
+                className="px-3.5 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 font-bold rounded-lg flex items-center gap-1.5 border dark:border-slate-600 transition-colors text-xs cursor-pointer"
+              >
+                <Download className="w-4 h-4 text-gray-500" />
+                Download Template
+              </button>
+
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                onChange={handleFileUpload} 
+                accept=".csv, .xlsx, .xls, .xlsm, .xlsb, .tsv, .ods, .xml" 
+                className="hidden" 
+              />
+
+              <button
+                type="button"
+                disabled={!isAdmin || isBulkUploading || importProgress.active}
+                onClick={() => {
+                  if (!isAdmin) {
+                    alert("Admin Access Required: Only Administrators can bulk import items.")
+                    return
+                  }
+                  fileInputRef.current?.click()
+                }}
+                className={`px-3.5 py-2 font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors text-xs cursor-pointer ${
+                  isAdmin 
+                    ? "bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer active:scale-95" 
+                    : "bg-gray-200 dark:bg-slate-700 text-gray-400 dark:text-slate-500 cursor-not-allowed"
+                }`}
+                title={!isAdmin ? "Admin permissions required for bulk upload" : undefined}
+              >
+                <Upload className="w-4 h-4" />
+                {isBulkUploading ? "Importing Data..." : "Bulk Data Upload (.xlsx, .csv)"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* CSV Import Progress Modal with Time Left */}
