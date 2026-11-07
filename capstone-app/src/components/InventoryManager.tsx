@@ -69,7 +69,7 @@ export function InventoryManager({
   })
 
   const dynamicCategories = categoriesList.filter(c => c !== "unmarked category")
-  const isAdmin = !currentOperator || currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin"
+  const isAdmin = !currentOperator || currentOperator.systemRole === "admin"
 
   // Auto-dismiss scan toast
   useEffect(() => {

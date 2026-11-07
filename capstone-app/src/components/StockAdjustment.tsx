@@ -59,7 +59,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const dynamicCategories = categoriesList.filter(c => c !== "unmarked category")
-  const isAdmin = !currentOperator || currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin"
+  const isAdmin = !currentOperator || currentOperator.systemRole === "admin"
   const safeInventory = Array.isArray(inventory) ? inventory : []
 
   // Collect all distinct known manufacturer brands across database + standard suppliers

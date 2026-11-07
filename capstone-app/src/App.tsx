@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react"
-import { Home, ShoppingCart, Package, Clock, ShieldAlert, LogOut, ClipboardList, Menu, X, Bell, AlertTriangle, Sun, Moon, ChevronLeft, ChevronRight, Flame, UserCheck, TrendingUp, CheckCircle2, Lock, Camera } from "lucide-react"
+import { Home, ShoppingCart, Package, Clock, ShieldAlert, LogOut, ClipboardList, Menu, X, Bell, AlertTriangle, Sun, Moon, ChevronLeft, ChevronRight, UserCheck, TrendingUp, CheckCircle2, Lock, Camera } from "lucide-react"
 import { Dashboard } from "./components/Dashboard"
 import { POSCheckout } from "./components/POSCheckout"
 import { InventoryManager } from "./components/InventoryManager"
@@ -7,7 +7,6 @@ import { StockAdjustment } from "./components/StockAdjustment"
 import { SalesHistory } from "./components/SalesHistory"
 import { SalesReport } from "./components/SalesReport"
 import { AdminPanel } from "./components/AdminPanel"
-import { SuperAdminPanel } from "./components/SuperAdminPanel"
 import { LoginScreen } from "./components/LoginScreen"
 import { StaffAttendanceModal } from "./components/StaffAttendanceModal"
 import { StaffAttendancePage } from "./components/StaffAttendancePage"
@@ -666,16 +665,6 @@ export default function App() {
             setActiveTab("dashboard")
             alert("Your account password has been changed or session terminated. Please log in again.")
           }
-        } else if (data.type === 'FORCE_LOGOUT_BELOW_SUPER_ADMIN') {
-          if (String(currentOperator.systemRole).toLowerCase() !== 'superadmin') {
-            const curr = String(currentOperator.username).trim().toLowerCase()
-            clockOutUserOnLogout(curr)
-            clearAllUserHeartbeats(curr)
-            clearSessionData()
-            setCurrentOperator(null)
-            setActiveTab("dashboard")
-            alert("System master data was reset by Super Admin. Your session has been terminated.")
-          }
         }
       } catch (e) {}
     }
@@ -686,8 +675,6 @@ export default function App() {
       if (e.key === "pinv_last_sync_signal") {
         handleRealtimeRefresh()
       } else if (e.key === "pinv_logout_signal" && e.newValue) {
-        checkForceLogoutPayload(e.newValue)
-      } else if (e.key === "pinv_logout_below_superadmin_signal" && e.newValue) {
         checkForceLogoutPayload(e.newValue)
       }
     }
@@ -704,21 +691,6 @@ export default function App() {
     }
     window.addEventListener("force_user_logout", handleForceUserLogoutEvent)
 
-    const handleForceLogoutBelowSAEvent = () => {
-      if (currentOperator && String(currentOperator.systemRole).toLowerCase() !== 'superadmin') {
-        const curr = String(currentOperator.username || "").trim().toLowerCase()
-        if (curr) {
-          clockOutUserOnLogout(curr)
-          clearAllUserHeartbeats(curr)
-        }
-        clearSessionData()
-        setCurrentOperator(null)
-        setActiveTab("dashboard")
-        alert("System master data was reset by Super Admin. Your session has been terminated.")
-      }
-    }
-    window.addEventListener("force_logout_below_superadmin", handleForceLogoutBelowSAEvent)
-
     if (broadcastChannel) {
       broadcastChannel.onmessage = (msgEvent) => {
         handleRealtimeRefresh()
@@ -731,7 +703,6 @@ export default function App() {
       window.removeEventListener("refresh_sales_data", handleRealtimeRefresh)
       window.removeEventListener("storage", handleStorageChange)
       window.removeEventListener("force_user_logout", handleForceUserLogoutEvent)
-      window.removeEventListener("force_logout_below_superadmin", handleForceLogoutBelowSAEvent)
       if (broadcastChannel) {
         broadcastChannel.onmessage = null
       }
@@ -1575,9 +1546,7 @@ export default function App() {
           try {
             await logSystemAction("SESSION_LOGIN", "AUTHENTICATION Portal", `Authorized station session for @${operator.username}`, operator.username)
           } catch (e) {}
-          if (operator.systemRole === "superadmin") {
-            setActiveTab("super_admin")
-          } else if (operator.systemRole === "admin") {
+          if (operator.systemRole === "admin") {
             setActiveTab("admin_control")
           } else {
             setActiveTab("dashboard")
@@ -1587,7 +1556,7 @@ export default function App() {
     )
   }
 
-  const isAdminUser = currentOperator?.systemRole === "admin" || currentOperator?.systemRole === "superadmin"
+  const isAdminUser = currentOperator?.systemRole === "admin"
 
   const navigationTabs = [
     { id: "dashboard", label: "Dashboard", icon: Home },
@@ -1603,9 +1572,6 @@ export default function App() {
     navigationTabs.push({ id: "reports", label: "Sales Report", icon: TrendingUp })
     navigationTabs.push({ id: "attendance", label: "Staff Attendance", icon: UserCheck })
     navigationTabs.push({ id: "admin_control", label: "Admin Panel", icon: ShieldAlert })
-  }
-  if (currentOperator?.systemRole === "superadmin") {
-    navigationTabs.push({ id: "super_admin", label: "Super Admin", icon: Flame })
   }
 
   const handleSelectStockProduct = (productName: string, productId?: string) => {
@@ -1727,9 +1693,7 @@ export default function App() {
                 {currentOperator?.displayName}
               </span>
               <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded shadow-2xs shrink-0 ${
-                currentOperator?.systemRole === "superadmin"
-                  ? "bg-purple-600 text-white"
-                  : currentOperator?.systemRole === "admin"
+                currentOperator?.systemRole === "admin"
                   ? "bg-blue-600 text-white"
                   : "bg-[#1b5e59] text-white"
               }`}>
@@ -1765,7 +1729,6 @@ export default function App() {
                 {activeTab === "reports" && "Sales Report"}
                 {activeTab === "attendance" && "Staff Attendance"}
                 {activeTab === "admin_control" && "Admin Panel"}
-                {activeTab === "super_admin" && "Super Admin"}
               </h1>
             </div>
           </div>
@@ -1880,18 +1843,8 @@ export default function App() {
           {activeTab === "history" && <SalesHistory inventory={inventory} currentOperator={currentOperator} sales={sales} onToggleRefund={handleToggleRefund} />}
           {activeTab === "reports" && isAdminUser && <SalesReport sales={sales} inventory={inventory} categoriesList={categoriesList} />}
           {activeTab === "attendance" && isAdminUser && currentOperator && <StaffAttendancePage currentOperator={currentOperator} onLogAction={logSystemAction} />}
-          {activeTab === "admin_control" && (currentOperator?.systemRole === "admin" || currentOperator?.systemRole === "superadmin") && currentOperator && (
+          {activeTab === "admin_control" && currentOperator?.systemRole === "admin" && currentOperator && (
             <AdminPanel
-              currentOperator={currentOperator}
-              onLogAction={logSystemAction}
-              refreshAllData={async () => {
-                await fetchInventory()
-                await fetchSales()
-              }}
-            />
-          )}
-          {activeTab === "super_admin" && currentOperator?.systemRole === "superadmin" && currentOperator && (
-            <SuperAdminPanel
               currentOperator={currentOperator}
               onLogAction={logSystemAction}
               refreshAllData={async () => {
@@ -1918,7 +1871,7 @@ export default function App() {
                   Time In Required to Use Website
                 </h2>
                 <p className="text-xs text-gray-600 dark:text-slate-300 leading-relaxed">
-                  Operator <strong className="text-slate-900 dark:text-white">@{currentOperator.username}</strong> ({currentOperator.displayName}) [{currentOperator.systemRole?.toUpperCase()}] has either timed out or not yet timed in. All users (including Administrators and Staff) are required to record their <strong>Time In</strong> with photo verification before accessing the POS terminal, inventory, and website modules.
+                  Operator <strong className="text-slate-900 dark:text-white">@{currentOperator.username}</strong> ({currentOperator.displayName}) [{currentOperator.systemRole?.toUpperCase()}] has either timed out or not yet timed in. All users (including Administrators and Staff) are required to record their <strong>Time In</strong>{isAdminUser ? "" : " with selfie photo verification"} before accessing the POS terminal, inventory, and website modules.
                 </p>
               </div>
 
@@ -1935,8 +1888,8 @@ export default function App() {
                   onClick={() => setShowAttendanceModal(true)}
                   className="flex-1 px-5 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-blue-500/25 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  <Camera className="w-4 h-4" />
-                  Time In with Photo Verification
+                  <Clock className="w-4 h-4" />
+                  Time In to Unlock
                 </button>
                 <button
                   type="button"

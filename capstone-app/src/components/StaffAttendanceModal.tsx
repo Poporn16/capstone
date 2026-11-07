@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react"
-import { Clock, LogIn, LogOut, X, CheckCircle2, Calendar, Camera, Upload, Eye, Image as ImageIcon, AlertCircle, User, Lock, ShieldAlert } from "lucide-react"
+import { Clock, LogIn, LogOut, X, CheckCircle2, Calendar, Camera, Eye, Image as ImageIcon, AlertCircle, User, Lock, ShieldAlert } from "lucide-react"
 import { supabase } from "../utils/apiClient"
 import type { AttendanceRecord, Operator } from "../types"
 
@@ -12,17 +12,17 @@ interface StaffAttendanceModalProps {
 }
 
 export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: StaffAttendanceModalProps) {
+  const isAdmin = currentOperator.systemRole === "admin"
   const [records, setRecords] = useState<AttendanceRecord[]>([])
   const [activeSession, setActiveSession] = useState<AttendanceRecord | null>(null)
   const [notification, setNotification] = useState<string | null>(null)
   const [selectedRecordForFullView, setSelectedRecordForFullView] = useState<AttendanceRecord | null>(null)
   const [showAllHistory, setShowAllHistory] = useState(false)
 
-  // Photo verification states for Time In
+  // Photo verification states for Time In (Staff only)
   const [timeInPhoto, setTimeInPhoto] = useState<string | null>(null)
   const [viewPhotoModal, setViewPhotoModal] = useState<string | null>(null)
   const cameraInputRef = useRef<HTMLInputElement | null>(null)
-  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -139,7 +139,7 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
         const formatted: AttendanceRecord[] = validData.map((d: any) => {
           const userKey = (d.username || "").toLowerCase().trim()
           const matched = profMap.get(userKey)
-          const actualRole = matched?.role || d.system_role || (userKey.includes("superadmin") ? "superadmin" : "staff")
+          const actualRole = matched?.role || d.system_role || "staff"
           const actualDisplayName = d.display_name || matched?.name || d.username || "Operator"
           const safeDuration = d.duration_minutes ? Math.min(d.duration_minutes, MAX_SHIFT_MINUTES) : undefined
           const resolvedPhoto = d.time_in_photo || d.timeInPhoto || localPhotoMap[String(d.id)] || localPhotoMap[`${userKey}_${d.time_in}`] || undefined
@@ -190,8 +190,8 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
 
   const handleTimeIn = async () => {
     if (activeSession) return
-    if (!timeInPhoto) {
-      alert("Verification photo is strictly required to Time In. Please take a selfie or upload a photo.")
+    if (!isAdmin && !timeInPhoto) {
+      alert("Verification selfie is strictly required to Time In. Please take a selfie photo.")
       return
     }
 
@@ -201,7 +201,7 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
       display_name: currentOperator.displayName,
       system_role: currentOperator.systemRole,
       time_in: nowIso,
-      time_in_photo: timeInPhoto
+      time_in_photo: timeInPhoto || null
     }
 
     let { data: inserted, error } = await supabase
@@ -221,31 +221,38 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
       inserted = retryResult.data
     }
 
-    try {
-      const photoMap = JSON.parse(localStorage.getItem("pinv_attendance_photo_map") || "{}")
-      if (inserted?.id) {
-        photoMap[String(inserted.id)] = timeInPhoto
-      }
-      const userKey = currentOperator.username.toLowerCase().trim()
-      photoMap[`${userKey}_${nowIso}`] = timeInPhoto
-      localStorage.setItem("pinv_attendance_photo_map", JSON.stringify(photoMap))
-    } catch (e) {}
+    if (timeInPhoto) {
+      try {
+        const photoMap = JSON.parse(localStorage.getItem("pinv_attendance_photo_map") || "{}")
+        if (inserted?.id) {
+          photoMap[String(inserted.id)] = timeInPhoto
+        }
+        const userKey = currentOperator.username.toLowerCase().trim()
+        photoMap[`${userKey}_${nowIso}`] = timeInPhoto
+        localStorage.setItem("pinv_attendance_photo_map", JSON.stringify(photoMap))
+      } catch (e) {}
+    }
 
     setTimeInPhoto(null)
     if (cameraInputRef.current) cameraInputRef.current.value = ""
-    if (fileInputRef.current) fileInputRef.current.value = ""
     await fetchAttendanceFromDb()
     window.dispatchEvent(new Event("pinv_attendance_updated"))
 
     const formattedTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    setNotification(`Successfully Timed In with Photo Verification at ${formattedTime}!`)
+    setNotification(
+      timeInPhoto
+        ? `Successfully Timed In with Photo Verification at ${formattedTime}!`
+        : `Successfully Timed In at ${formattedTime}!`
+    )
 
     if (onLogAction) {
       try {
         await onLogAction(
           "STAFF_TIME_IN",
           "ATTENDANCE_STATION",
-          `Staff @${currentOperator.username} (${currentOperator.displayName}) recorded TIME IN with photo verification at ${formattedTime}`
+          isAdmin
+            ? `Admin @${currentOperator.username} (${currentOperator.displayName}) recorded TIME IN at ${formattedTime}`
+            : `Staff @${currentOperator.username} (${currentOperator.displayName}) recorded TIME IN with photo verification at ${formattedTime}`
         )
       } catch (e) {}
     }
@@ -334,7 +341,7 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
           </button>
         </div>
 
-        {/* Current Operator Card */}
+        {/* Current Operator Card */} 
         <div className="bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 p-4 rounded-xl flex items-center justify-between">
           <div className="flex items-center gap-3">
             {activeSession?.timeInPhoto ? (
@@ -373,7 +380,7 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
                 <span className="w-2 h-2 rounded-full bg-amber-500"></span>
                 TIMED OUT
               </span>
-            )}
+            )} 
           </div>
         </div>
 
@@ -385,8 +392,8 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
           </div>
         )}
 
-        {/* Photo Verification Required Card */}
-        {!activeSession && (
+        {/* Photo Verification Required Card (Staff Only) */}
+        {!activeSession && !isAdmin && (
           <div className="p-3 bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/40 rounded-xl space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold text-amber-900 dark:text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
@@ -402,13 +409,6 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
               onChange={handlePhotoSelect}
               accept="image/*"
               capture="user"
-              className="hidden"
-            />
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handlePhotoSelect}
-              accept="image/*"
               className="hidden"
             />
 
@@ -455,24 +455,14 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => cameraInputRef.current?.click()}
-                  className="py-2.5 px-3 bg-white dark:bg-slate-800 hover:bg-amber-50 dark:hover:bg-slate-700 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs transition-colors"
-                >
-                  <Camera className="w-4 h-4 text-amber-600" />
-                  Take Selfie Photo
-                </button>
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="py-2.5 px-3 bg-white dark:bg-slate-800 hover:bg-amber-50 dark:hover:bg-slate-700 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs transition-colors"
-                >
-                  <Upload className="w-4 h-4 text-amber-600" />
-                  Upload Photo
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => cameraInputRef.current?.click()}
+                className="w-full py-2.5 px-3 bg-white dark:bg-slate-800 hover:bg-amber-50 dark:hover:bg-slate-700 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shadow-2xs transition-colors"
+              >
+                <Camera className="w-4 h-4 text-amber-600" />
+                Take Selfie Photo
+              </button>
             )}
           </div>
         )}
@@ -481,10 +471,10 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
         <div className="grid grid-cols-2 gap-3 pt-1">
           <button
             type="button"
-            disabled={!!activeSession || !timeInPhoto}
+            disabled={!!activeSession || (!isAdmin && !timeInPhoto)}
             onClick={handleTimeIn}
             className={`py-3 px-4 rounded-xl font-bold text-xs uppercase tracking-wide flex items-center justify-center gap-2 shadow-xs transition-all ${
-              activeSession || !timeInPhoto
+              activeSession || (!isAdmin && !timeInPhoto)
                 ? "bg-gray-100 dark:bg-slate-700 text-gray-400 dark:text-slate-500 cursor-not-allowed border border-gray-200 dark:border-slate-600"
                 : "bg-emerald-600 hover:bg-emerald-700 text-white active:scale-[0.98] shadow-emerald-600/20 cursor-pointer"
             }`}

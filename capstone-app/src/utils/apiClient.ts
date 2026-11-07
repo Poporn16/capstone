@@ -72,39 +72,6 @@ export function triggerForceLogout(targetUsername: string, initiatedBy?: string)
   }
 }
 
-export function triggerForceLogoutBelowSuperAdmin(initiatedBy?: string) {
-  if (typeof window !== 'undefined') {
-    const superUser = (initiatedBy || '').toLowerCase().trim()
-    try {
-      const keysToRemove: string[] = []
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i)
-        if (key && key.startsWith("pinv_active_heartbeat_")) {
-          const u = key.replace("pinv_active_heartbeat_", "").split("_tab_")[0].trim().toLowerCase()
-          if (u !== superUser) {
-            keysToRemove.push(key)
-          }
-        }
-      }
-      keysToRemove.forEach(k => localStorage.removeItem(k))
-    } catch (e) {}
-
-    const payload = JSON.stringify({
-      type: 'FORCE_LOGOUT_BELOW_SUPER_ADMIN',
-      initiatedBy: superUser,
-      time: Date.now()
-    })
-    window.dispatchEvent(new CustomEvent('force_logout_below_superadmin', { detail: { initiatedBy } }))
-    try {
-      localStorage.setItem('pinv_logout_below_superadmin_signal', payload)
-    } catch (e) {}
-    if (broadcastChannel) {
-      try {
-        broadcastChannel.postMessage(payload)
-      } catch (e) {}
-    }
-  }
-}
 
 export async function fetchAllSupabaseRows<T = any>(
   tableName: string,

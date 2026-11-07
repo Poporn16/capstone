@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import type { InventoryItem, InventoryBatch, Sale, NamedPerson, CartItem, DiscountType, OnlineChannel, Operator } from "../types"
 import { supabase } from "../utils/apiClient"
 import { getCategoryStyles } from "../utils/categoryColors"
@@ -132,14 +132,12 @@ export function POSCheckout({
 
   const [cashReceived, setCashReceived] = useState<string>("")
   const [selectedGenericGroup, setSelectedGenericGroup] = useState<string | null>(null)
-  const [displayLimit, setDisplayLimit] = useState<number>(20)
 
   const dynamicCategories = categoriesList.filter(c => c !== "unmarked category")
 
   const handleCategoryTabChange = (cat: string) => {
     setActiveCategoryTab(cat)
     setSelectedGenericGroup(null)
-    setDisplayLimit(20)
   }
 
   const getGenericGroupName = (name: string): string => {
@@ -173,31 +171,62 @@ export function POSCheckout({
     return base || uppercaseName
   }
 
-  const filteredItems = inventory.filter(i => {
-    const matchSearch = i.name.toLowerCase().includes(query.toLowerCase()) || String(i.barcode).includes(query)
-    const matchTab = activeCategoryTab === "all" || i.category === activeCategoryTab
-    return matchSearch && matchTab
-  })
+  const filteredItems = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return inventory.filter(i => {
+      const matchSearch = !q || i.name.toLowerCase().includes(q) || String(i.barcode || "").includes(q)
+      const matchTab = activeCategoryTab === "all" || i.category === activeCategoryTab
+      return matchSearch && matchTab
+    })
+  }, [inventory, query, activeCategoryTab])
 
-  const uniqueGroups = Array.from(new Set(filteredItems.map(i => getGenericGroupName(i.name))))
-  const visibleGroups = uniqueGroups
+  const salesCountMap = useMemo(() => {
+    const counts: Record<string, number> = {}
+    sales?.forEach(sale => {
+      if (sale.isRefunded) return
+      sale.items?.forEach(si => {
+        if (!si?.item) return
+        const idKey = si.item.id ? String(si.item.id) : ""
+        const nameKey = (si.item.name || "").toLowerCase()
+        const qty = Number(si.quantity) || 0
+        if (idKey) counts[idKey] = (counts[idKey] || 0) + qty
+        if (nameKey) counts[nameKey] = (counts[nameKey] || 0) + qty
+      })
+    })
+    return counts
+  }, [sales])
 
-  const getItemsInGroup = (groupName: string) => {
-    return filteredItems.filter(i => getGenericGroupName(i.name) === groupName)
-  }
+  const { uniqueGroups, groupItemsMap, groupStockMap } = useMemo(() => {
+    const itemsMap: Record<string, InventoryItem[]> = {}
+    const soldMap: Record<string, number> = {}
+    const stockMap: Record<string, number> = {}
 
-  const getGroupTotalStock = (groupName: string) => {
-    return getItemsInGroup(groupName).reduce((sum, item) => sum + item.stock, 0)
-  }
-
-  const handleCatalogueScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget
-    if (scrollHeight - scrollTop <= clientHeight + 60) {
-      if (displayLimit < uniqueGroups.length) {
-        setDisplayLimit(prev => prev + 20)
+    for (const item of filteredItems) {
+      const gName = getGenericGroupName(item.name)
+      if (!itemsMap[gName]) {
+        itemsMap[gName] = []
+        soldMap[gName] = 0
+        stockMap[gName] = 0
       }
+      itemsMap[gName].push(item)
+      stockMap[gName] += item.stock || 0
+      const sold = (item.id ? salesCountMap[String(item.id)] : 0) || (item.name ? salesCountMap[item.name.toLowerCase()] : 0) || 0
+      soldMap[gName] += sold
     }
-  }
+
+    const sortedGroups = Object.keys(itemsMap).sort((a, b) => {
+      const diff = (soldMap[b] || 0) - (soldMap[a] || 0)
+      if (diff !== 0) return diff
+      return (stockMap[b] || 0) - (stockMap[a] || 0)
+    })
+
+    return { uniqueGroups: sortedGroups, groupItemsMap: itemsMap, groupStockMap: stockMap }
+  }, [filteredItems, salesCountMap])
+
+  const getItemsInGroup = (groupName: string) => groupItemsMap[groupName] || []
+  const getGroupTotalStock = (groupName: string) => groupStockMap[groupName] || 0
+
+  const visibleGroups = uniqueGroups
 
   const getItemBatchAwarePrice = (item: InventoryItem, quantity: number): number => {
     if (!item.batches || item.batches.length === 0) return (item.price || 0) * quantity
@@ -316,14 +345,12 @@ export function POSCheckout({
           addToCart(singleOpt.item, singleOpt.batch)
           triggerScanToast(`✓ Scanned: ${singleOpt.productName} • ₱${singleOpt.price.toFixed(2)} added to cart`, "success")
           setQuery("")
-          setDisplayLimit(20)
           return
         }
       }
     }
 
     setQuery(val)
-    setDisplayLimit(20)
   }
 
   const handleQuickScanChange = (val: string) => {
@@ -836,7 +863,6 @@ export function POSCheckout({
                           addToCart(singleOpt.item, singleOpt.batch)
                           triggerScanToast(`✓ Scanned: ${singleOpt.productName} • ₱${singleOpt.price.toFixed(2)} added to cart`, "success")
                           setQuery("")
-                          setDisplayLimit(20)
                           e.preventDefault()
                         }
                       }
@@ -911,7 +937,6 @@ export function POSCheckout({
           </div>
 
         <div 
-          onScroll={handleCatalogueScroll}
           className="bg-white dark:bg-slate-800 rounded-xl shadow-xs border dark:border-slate-700 p-4 max-h-[calc(100vh-230px)] overflow-y-auto relative"
         >
           {selectedGenericGroup ? (
@@ -2039,4 +2064,4 @@ function formatReceiptDate(d: Date) {
     minute: "2-digit"
   })
 }
-
+

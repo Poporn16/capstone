@@ -136,7 +136,7 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
         const formatted: AttendanceRecord[] = attRes.data.map((d: any) => {
           const userKey = (d.username || "").toLowerCase().trim()
           const matched = profMap.get(userKey)
-          const actualRole = matched?.role || d.system_role || (userKey.includes("superadmin") ? "superadmin" : "staff")
+          const actualRole = matched?.role || d.system_role || "staff"
           const actualDisplayName = d.display_name || matched?.name || d.username || "Operator"
           const safeDuration = d.duration_minutes ? Math.min(d.duration_minutes, MAX_SHIFT_MINUTES) : undefined
           const resolvedPhoto = d.time_in_photo || d.timeInPhoto || localPhotoMap[String(d.id)] || localPhotoMap[`${userKey}_${d.time_in}`] || undefined
@@ -482,7 +482,6 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
             <option value="all">All Roles</option>
             <option value="staff">STAFF</option>
             <option value="admin">ADMIN</option>
-            <option value="superadmin">SUPERADMIN</option>
           </select>
         </div>
 
@@ -678,11 +677,7 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
                         <span className="text-[10px] text-gray-400 dark:text-slate-400">@{r.username}</span>
                       </td>
                       <td className="p-4">
-                        {String(r.systemRole || "").toLowerCase() === "superadmin" ? (
-                          <span className="px-2.5 py-1 rounded-full bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-mono text-[10px] font-extrabold uppercase tracking-wide border border-purple-200 dark:border-purple-800 shadow-2xs">
-                            SUPERADMIN
-                          </span>
-                        ) : String(r.systemRole || "").toLowerCase() === "admin" ? (
+                        {String(r.systemRole || "").toLowerCase() === "admin" ? (
                           <span className="px-2.5 py-1 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 font-mono text-[10px] font-extrabold uppercase tracking-wide border border-blue-200 dark:border-blue-800 shadow-2xs">
                             ADMIN
                           </span>
@@ -1008,9 +1003,7 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
                       </p>
                     </div>
                     <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wide border shadow-2xs ${
-                      String(selectedRecordForFullView.systemRole || "").toLowerCase() === "superadmin"
-                        ? "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 border-purple-200 dark:border-purple-800"
-                        : String(selectedRecordForFullView.systemRole || "").toLowerCase() === "admin"
+                      String(selectedRecordForFullView.systemRole || "").toLowerCase() === "admin"
                         ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 border-blue-200 dark:border-blue-800"
                         : "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"
                     }`}>

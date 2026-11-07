@@ -78,7 +78,6 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     isComplete: false
   })
 
-  const isRestoreCancelledRef = useRef(false)
 
   const calculateEta = (processed: number, total: number, startTime: number) => {
     if (processed === 0 || total === 0) return "Calculating..."
@@ -93,14 +92,6 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     return `~${minutes}m ${remSec}s remaining`
   }
 
-  const handleCancelRestore = () => {
-    isRestoreCancelledRef.current = true
-    setOpProgress(p => ({
-      ...p,
-      stepMessage: "Cancelling restore operation...",
-      isCancellable: false
-    }))
-  }
 
   const [selectedBatchReceiptSaleId, setSelectedBatchReceiptSaleId] = useState<number | null>(null)
   const [selectedLogSummary, setSelectedLogSummary] = useState<AuditLog | null>(null)
@@ -267,7 +258,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
         const formatted = attRes.data.map((d: any) => {
           const userKey = (d.username || "").toLowerCase().trim()
           const matchedProfile = profMap.get(userKey)
-          const actualRole = matchedProfile?.role || d.system_role || (userKey.includes("superadmin") ? "superadmin" : "staff")
+          const actualRole = matchedProfile?.role || d.system_role || "staff"
           return {
             id: String(d.id),
             username: d.username || "",
@@ -324,359 +315,6 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
   const [resetConfirmInput, setResetConfirmInput] = useState("")
   const [showResetModal, setShowResetModal] = useState<"inventory" | "sales" | "audit" | "all" | null>(null)
   
-  const restoreFileInputRef = useRef<HTMLInputElement>(null)
-  const [isRestoring, setIsRestoring] = useState(false)
-
-  // AES-GCM 256-bit Encryption Helpers
-  const SYSTEM_BACKUP_SECRET = import.meta.env.VITE_SYSTEM_BACKUP_SECRET || "MALABON_PHARMACY_CLINIC_SECURE_BACKUP_KEY_2026_V1"
-
-  const getBackupCryptoKey = async (): Promise<CryptoKey> => {
-    const enc = new TextEncoder()
-    const keyMaterial = await window.crypto.subtle.importKey(
-      "raw",
-      enc.encode(SYSTEM_BACKUP_SECRET),
-      { name: "PBKDF2" },
-      false,
-      ["deriveKey"]
-    )
-    return window.crypto.subtle.deriveKey(
-      {
-        name: "PBKDF2",
-        salt: enc.encode("MALABON_PHARMACY_SALT_2026"),
-        iterations: 100000,
-        hash: "SHA-256"
-      },
-      keyMaterial,
-      { name: "AES-GCM", length: 256 },
-      false,
-      ["encrypt", "decrypt"]
-    )
-  }
-
-  const encryptBackupPayload = async (dataObj: any): Promise<string> => {
-    const key = await getBackupCryptoKey()
-    const iv = window.crypto.getRandomValues(new Uint8Array(12))
-    const enc = new TextEncoder()
-    const encodedData = enc.encode(JSON.stringify(dataObj))
-
-    const ciphertext = await window.crypto.subtle.encrypt(
-      { name: "AES-GCM", iv },
-      key,
-      encodedData
-    )
-
-    const container = {
-      signature: "MALABON_PHARMACY_ENCRYPTED_BACKUP_V1",
-      timestamp: new Date().toISOString(),
-      iv: btoa(String.fromCharCode(...iv)),
-      data: btoa(String.fromCharCode(...new Uint8Array(ciphertext)))
-    }
-
-    return JSON.stringify(container, null, 2)
-  }
-
-  const decryptBackupPayload = async (fileText: string) => {
-    const trimmed = fileText.trim()
-    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-      try {
-        return JSON.parse(trimmed)
-      } catch (e) {}
-    }
-
-    let container: any
-    try {
-      container = JSON.parse(trimmed)
-    } catch (e) {
-      throw new Error("Invalid backup file format.")
-    }
-
-    if (container && (container.inventory || container.sales || container.operator_profiles)) {
-      return container
-    }
-
-    if (!container || !container.iv || !container.data) {
-      throw new Error("Invalid or corrupted encrypted backup file structure.")
-    }
-
-    const key = await getBackupCryptoKey()
-    const iv = Uint8Array.from(atob(container.iv), c => c.charCodeAt(0))
-    const ciphertext = Uint8Array.from(atob(container.data), c => c.charCodeAt(0))
-
-    const decrypted = await window.crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
-      key,
-      ciphertext
-    )
-
-    const dec = new TextDecoder()
-    return JSON.parse(dec.decode(decrypted))
-  }
-
-  const handleDownloadDatabaseBackup = async (tag: string = "manual") => {
-    try {
-      const [
-        { data: profiles },
-        { data: categories },
-        { data: inventory },
-        { data: batches },
-        { data: sales },
-        { data: saleItems },
-        { data: saleItemBatches },
-        { data: auditLogs },
-        { data: namedPersonsData }
-      ] = await Promise.all([
-        supabase.from("operator_profiles").select("*").range(0, 99999),
-        supabase.from("product_categories").select("*").range(0, 99999),
-        supabase.from("inventory").select("*").range(0, 99999),
-        supabase.from("inventory_batches").select("*").range(0, 99999),
-        supabase.from("sales").select("*").range(0, 99999),
-        supabase.from("sale_items").select("*").range(0, 99999),
-        supabase.from("sale_item_batches").select("*").range(0, 99999),
-        supabase.from("system_audit_logs").select("*").range(0, 99999),
-        supabase.from("named_persons").select("*").range(0, 99999)
-      ])
-
-      let attendanceLogsData: any[] = []
-      try {
-        const { data: attData } = await supabase.from("staff_attendance").select("*").range(0, 99999)
-        if (attData) attendanceLogsData = attData
-      } catch (e) {}
-
-      const backupData = {
-        metadata: {
-          system: "Malabon Pharmacy & Clinic POS & Inventory System",
-          backupType: tag,
-          exportedAt: new Date().toISOString(),
-          operator: currentOperator.username,
-          version: "1.0.0"
-        },
-        operator_profiles: profiles || [],
-        product_categories: categories || [],
-        inventory: inventory || [],
-        inventory_batches: batches || [],
-        sales: sales || [],
-        sale_items: saleItems || [],
-        sale_item_batches: saleItemBatches || [],
-        system_audit_logs: auditLogs || [],
-        named_persons: namedPersonsData || [],
-        staff_attendance: attendanceLogsData || []
-      }
-
-      const encryptedContent = await encryptBackupPayload(backupData)
-      const blob = new Blob([encryptedContent], { type: "application/json" })
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement("a")
-      link.href = url
-      const dateTag = new Date().toISOString().split("T")[0]
-      link.download = `pharmacy_backup_${tag}_${dateTag}_${Date.now()}.bak`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-
-      if (tag.includes("monthly")) {
-        const curMonth = new Date().toISOString().slice(0, 7)
-        localStorage.setItem("last_monthly_backup_month", curMonth)
-      }
-
-      await onLogAction(
-        "DATABASE_BACKUP",
-        "SUPER_ADMIN",
-        `Downloaded AES-256 encrypted database backup archive [Tag: ${tag.toUpperCase()}]`
-      )
-    } catch (err: any) {
-      console.error("Backup generation error:", err)
-      alert(`Error generating backup file: ${err.message}`)
-    }
-  }
-
-  const handleRestoreFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    const confirmRestore = window.confirm(`Are you sure you want to restore database from backup file "${file.name}"? Existing records will be restored into the database.`)
-    if (!confirmRestore) {
-      if (restoreFileInputRef.current) restoreFileInputRef.current.value = ""
-      return
-    }
-
-    setIsLoading(true)
-    setIsRestoring(true)
-    isRestoreCancelledRef.current = false
-
-    try {
-      const text = await file.text()
-      const payload = await decryptBackupPayload(text)
-
-      if (!payload || typeof payload !== "object") {
-        throw new Error("Failed to parse decrypted backup contents.")
-      }
-
-      const totalRecords =
-        (Array.isArray(payload.product_categories) ? payload.product_categories.length : 0) +
-        (Array.isArray(payload.inventory) ? payload.inventory.length : 0) +
-        (Array.isArray(payload.inventory_batches) ? payload.inventory_batches.length : 0) +
-        (Array.isArray(payload.sales) ? payload.sales.length : 0) +
-        (Array.isArray(payload.sale_items) ? payload.sale_items.length : 0) +
-        (Array.isArray(payload.sale_item_batches) ? payload.sale_item_batches.length : 0) +
-        (Array.isArray(payload.operator_profiles) ? payload.operator_profiles.length : 0) +
-        (Array.isArray(payload.system_audit_logs) ? payload.system_audit_logs.length : 0) +
-        (Array.isArray(payload.named_persons) ? payload.named_persons.length : 0) +
-        (Array.isArray(payload.staff_attendance) ? payload.staff_attendance.length : 0)
-
-      const startTime = Date.now()
-      let processedCount = 0
-
-      setOpProgress({
-        isOpen: true,
-        title: "Restoring Database Archive",
-        stepMessage: "Reading and decrypting AES-256 backup payload...",
-        percent: 5,
-        isComplete: false,
-        processedRows: 0,
-        totalRows: totalRecords,
-        startTime,
-        isCancellable: true,
-        currentItemName: `Prepared ${totalRecords} records for database sync...`
-      })
-
-      const batchRestoreTable = async (tableName: string, records: any[], chunkSize = 50) => {
-        if (!records || records.length === 0 || isRestoreCancelledRef.current) return
-
-        const count = records.length
-        for (let i = 0; i < count; i += chunkSize) {
-          if (isRestoreCancelledRef.current) break
-
-          const chunk = records.slice(i, i + chunkSize)
-          const currentChunkLength = chunk.length
-
-          setOpProgress(p => ({
-            ...p,
-            currentItemName: `Restoring ${tableName.replace(/_/g, " ")} (${processedCount + currentChunkLength}/${totalRecords})...`,
-            stepMessage: `Syncing ${tableName} batch...`
-          }))
-
-          const { error: upsertErr } = await supabase.from(tableName).upsert(chunk)
-
-          if (upsertErr) {
-            const isIdentityError =
-              upsertErr.message?.toLowerCase().includes("non-default value into column") ||
-              upsertErr.message?.toLowerCase().includes("identity column") ||
-              upsertErr.code === "428C9" ||
-              upsertErr.details?.toLowerCase().includes("identity")
-
-            if (isIdentityError) {
-              const chunkWithoutId = chunk.map(({ id, ...rest }: any) => rest)
-              const { error: insertErr } = await supabase.from(tableName).insert(chunkWithoutId)
-
-              if (insertErr) {
-                console.warn(`Fallback insert for ${tableName} chunk failed:`, insertErr)
-                for (const item of chunkWithoutId) {
-                  if (isRestoreCancelledRef.current) break
-                  try {
-                    await supabase.from(tableName).insert([item])
-                  } catch (e) {
-                    console.error(`Row restore error ${tableName}:`, e)
-                  }
-                }
-              }
-            } else {
-              for (const item of chunk) {
-                if (isRestoreCancelledRef.current) break
-                const { error: singleErr } = await supabase.from(tableName).upsert(item)
-                if (singleErr) {
-                  const { id, ...itemNoId } = item
-                  try {
-                    await supabase.from(tableName).insert([itemNoId])
-                  } catch (e) {}
-                }
-              }
-            }
-          }
-
-          processedCount += currentChunkLength
-          const currentPercent = totalRecords > 0 ? Math.min(99, Math.round((processedCount / totalRecords) * 100)) : 90
-
-          setOpProgress(p => ({
-            ...p,
-            processedRows: processedCount,
-            percent: currentPercent
-          }))
-
-          await new Promise(r => setTimeout(r, 15))
-        }
-      }
-
-      if (Array.isArray(payload.product_categories)) await batchRestoreTable("product_categories", payload.product_categories)
-      if (Array.isArray(payload.inventory)) await batchRestoreTable("inventory", payload.inventory)
-      if (Array.isArray(payload.inventory_batches)) await batchRestoreTable("inventory_batches", payload.inventory_batches)
-      if (Array.isArray(payload.sales)) await batchRestoreTable("sales", payload.sales)
-      if (Array.isArray(payload.sale_items)) await batchRestoreTable("sale_items", payload.sale_items)
-      if (Array.isArray(payload.sale_item_batches)) await batchRestoreTable("sale_item_batches", payload.sale_item_batches)
-      if (Array.isArray(payload.operator_profiles)) await batchRestoreTable("operator_profiles", payload.operator_profiles)
-      if (Array.isArray(payload.system_audit_logs)) await batchRestoreTable("system_audit_logs", payload.system_audit_logs)
-      if (Array.isArray(payload.named_persons)) {
-        await batchRestoreTable("named_persons", payload.named_persons)
-        localStorage.setItem("pinv_named_persons_registry", JSON.stringify(payload.named_persons))
-        window.dispatchEvent(new Event("pinv_registry_updated"))
-      }
-      if (Array.isArray(payload.staff_attendance)) {
-        await batchRestoreTable("staff_attendance", payload.staff_attendance)
-        localStorage.setItem("pinv_staff_attendance", JSON.stringify(payload.staff_attendance))
-        window.dispatchEvent(new Event("pinv_attendance_updated"))
-      }
-
-      if (isRestoreCancelledRef.current) {
-        setOpProgress({
-          isOpen: true,
-          title: "Restore Cancelled",
-          stepMessage: "Database restoration was cancelled by user.",
-          percent: Math.round((processedCount / (totalRecords || 1)) * 100),
-          isComplete: true,
-          processedRows: processedCount,
-          totalRows: totalRecords,
-          isCancellable: false,
-          currentItemName: "Restoration halted."
-        })
-        return
-      }
-
-      await onLogAction(
-        "RESTORE_DATABASE",
-        "ADMIN_PANEL",
-        `Successfully restored database backup file: ${file.name} (${processedCount} records synced)`
-      )
-
-      setOpProgress({
-        isOpen: true,
-        title: "Restoration Complete",
-        stepMessage: `Database successfully restored from "${file.name}"! (${processedCount} records synced)`,
-        percent: 100,
-        isComplete: true,
-        processedRows: processedCount,
-        totalRows: totalRecords,
-        isCancellable: false
-      })
-
-      window.dispatchEvent(new Event("refresh_sales_data"))
-      window.dispatchEvent(new Event("pinv_sale_completed"))
-      if (refreshAllData) await refreshAllData()
-      await fetchAllAdminData()
-    } catch (err: any) {
-      console.error("Backup restoration error:", err)
-      setOpProgress(p => ({
-        ...p,
-        title: "Restoration Failed",
-        stepMessage: `Error: ${err.message}`,
-        isComplete: true,
-        isCancellable: false
-      }))
-    } finally {
-      setIsLoading(false)
-      setIsRestoring(false)
-      if (restoreFileInputRef.current) restoreFileInputRef.current.value = ""
-    }
-  }
-
   const handleExecuteMasterReset = async (type: "inventory" | "sales" | "audit" | "all") => {
     if (resetConfirmInput.trim().toUpperCase() !== "CONFIRM") {
       alert("Please type 'CONFIRM' in uppercase to execute master data reset.")
@@ -687,15 +325,12 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     setOpProgress({
       isOpen: true,
       title: `Master Reset [${type.toUpperCase()}]`,
-      stepMessage: "Creating automatic pre-reset safety backup...",
-      percent: 20,
+      stepMessage: `Purging ${type.toUpperCase()} database tables...`,
+      percent: 30,
       isComplete: false
     })
 
     try {
-      // 0. Automatic Pre-Reset Safety Backup
-      await handleDownloadDatabaseBackup(`pre_reset_${type}`)
-
       setOpProgress(p => ({ ...p, stepMessage: `Purging ${type.toUpperCase()} database tables...`, percent: 55 }))
 
       if (type === "inventory" || type === "all") {
@@ -761,7 +396,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
 
       await onLogAction(
         type === "all" ? "FACTORY_RESET" : "DATA_RESET",
-        "SUPER_ADMIN",
+        "ADMIN_PANEL",
         `Executed master data reset for: ${type.toUpperCase()}. All tables and registries cleared and ready for new data.`
       )
 
@@ -1328,13 +963,6 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
   });
 
   const filteredAuditLogs = logs.filter(log => {
-    // Audit Confidentiality Rule: Always hide superadmin logs from Admin Panel
-    const opUser = (log.operator_username || "").toLowerCase().trim()
-    const summary = (log.details_summary || "").toLowerCase().trim()
-    const isSuperAdminUser = opUser === "superadmin" || opUser.includes("superadmin") || opUser === "super admin" || opUser.includes("super admin")
-    const isSuperAdminModule = (log.module_target || "").toUpperCase() === "SUPER_ADMIN" || summary.includes("superadmin") || summary.includes("super admin")
-    if (isSuperAdminUser || isSuperAdminModule) return false
-
     const matchModule = auditModuleFilter === "ALL" || (log.module_target || "").toUpperCase().includes(auditModuleFilter.toUpperCase());
     const q = auditSearchQuery.toLowerCase().trim();
     const matchQuery = !q || 
@@ -1402,11 +1030,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     }
   };
 
-  const displayProfiles = profiles.filter(p => {
-    const r = String(p.system_role || "").toLowerCase().trim()
-    const u = String(p.username || "").toLowerCase().trim()
-    return r !== "superadmin" && !u.includes("superadmin") && !u.includes("super_admin") && !u.includes("super admin")
-  })
+  const displayProfiles = profiles
 
   return (
     <>
@@ -1613,7 +1237,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
             </div>
           </div>
 
-          {/* Directory Listing (Hides Super Admin Account) */}
+          {/* Directory Listing */}
           <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-5 shadow-xs space-y-3">
             <div className="flex justify-between items-center">
               <h3 className="font-bold text-gray-900 dark:text-white text-sm flex items-center gap-2">
@@ -1776,11 +1400,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                             {r.displayName || r.username} <span className="text-[10px] text-gray-400 font-normal">(@{r.username})</span>
                           </td>
                           <td className="p-2">
-                            {String(r.systemRole || "").toLowerCase() === "superadmin" ? (
-                              <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-mono text-[9px] font-extrabold uppercase border border-purple-200 dark:border-purple-800">
-                                SUPERADMIN
-                              </span>
-                            ) : String(r.systemRole || "").toLowerCase() === "admin" ? (
+                            {String(r.systemRole || "").toLowerCase() === "admin" ? (
                               <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 font-mono text-[9px] font-extrabold uppercase border border-blue-200 dark:border-blue-800">
                                 ADMIN
                               </span>
@@ -2401,7 +2021,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
         </div>
       )}
 
-      {/* Interactive Data Operation Progress Modal (Import / Restore / Reset) */}
+      {/* Interactive Data Operation Progress Modal (Reset) */}
       {opProgress.isOpen && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200 font-sans">
           <div className="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border dark:border-slate-700 font-sans">
@@ -2453,19 +2073,6 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
               </div>
             </div>
 
-            {/* Cancel Button */}
-            {!opProgress.isComplete && opProgress.isCancellable && (
-              <div className="flex justify-end pt-1">
-                <button
-                  type="button"
-                  onClick={handleCancelRestore}
-                  className="px-4 py-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/60 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-xs cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                  Cancel Restore
-                </button>
-              </div>
-            )}
 
             {opProgress.isComplete && (
               <div className="pt-2 border-t dark:border-slate-700 flex justify-end">

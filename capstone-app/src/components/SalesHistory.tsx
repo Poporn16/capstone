@@ -313,7 +313,7 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
   };
 
 
-  const isAdmin = !currentOperator || currentOperator.systemRole === "admin" || currentOperator.systemRole === "superadmin";
+  const isAdmin = !currentOperator || currentOperator.systemRole === "admin";
 
   const uniqueCustomerNames = Array.from(
     new Set(
