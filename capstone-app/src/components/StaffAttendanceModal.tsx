@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react"
-import { Clock, LogIn, LogOut, X, CheckCircle2, Calendar, Camera, Eye, Image as ImageIcon, AlertCircle, User, Lock, ShieldAlert, Upload, RefreshCw } from "lucide-react"
+import { Clock, LogIn, LogOut, X, CheckCircle2, Calendar, Camera, Eye, Image as ImageIcon, AlertCircle, User, Lock, ShieldAlert, RefreshCw } from "lucide-react"
 import { supabase } from "../utils/apiClient"
 import type { AttendanceRecord, Operator } from "../types"
 
@@ -22,7 +22,6 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
   // Photo verification states for Time In (Staff only)
   const [timeInPhoto, setTimeInPhoto] = useState<string | null>(null)
   const [viewPhotoModal, setViewPhotoModal] = useState<string | null>(null)
-  const cameraInputRef = useRef<HTMLInputElement | null>(null)
 
   // Live Webcam States for Laptop & Desktop
   const [isWebcamOpen, setIsWebcamOpen] = useState(false)
@@ -38,7 +37,7 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
     setIsWebcamStarting(true)
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setWebcamError("Camera access is not supported by your browser or connection is not secure (requires HTTPS or localhost). Please upload a photo file instead.")
+      setWebcamError("Camera access is not supported by your browser or connection is not secure (requires HTTPS or localhost).")
       setIsWebcamStarting(false)
       return
     }
@@ -59,13 +58,13 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
       setIsWebcamStarting(false)
       console.error("Webcam access error:", err)
       if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
-        setWebcamError("Camera permission was denied. Please allow camera permissions in your browser address bar/site settings, or upload a photo file.")
+        setWebcamError("Camera permission was denied. Please allow camera permissions in your browser address bar/site settings.")
       } else if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
-        setWebcamError("No camera detected on this laptop/device. Please connect a webcam or upload a photo file.")
+        setWebcamError("No camera detected on this laptop/device. Please connect a webcam.")
       } else if (err.name === "NotReadableError" || err.name === "TrackStartError") {
-        setWebcamError("Camera is currently in use by another application. Please close other camera apps and retry, or upload a photo file.")
+        setWebcamError("Camera is currently in use by another application. Please close other camera apps and retry.")
       } else {
-        setWebcamError(`Unable to access camera (${err.message || "Unknown error"}). Please upload a photo file instead.`)
+        setWebcamError(`Unable to access camera (${err.message || "Unknown error"}).`)
       }
     }
   }
@@ -136,39 +135,6 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
       }
     }
   }, [])
-
-  const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    // Ensure it is strictly a picture, NOT a video
-    if (!file.type.startsWith("image/") || file.type.startsWith("video/")) {
-      alert("Only picture files are allowed (not videos). Please select a valid photo.")
-      if (e.target) e.target.value = ""
-      return
-    }
-
-    // Limit to 5MB
-    const MAX_SIZE = 5 * 1024 * 1024 // 5MB
-    if (file.size > MAX_SIZE) {
-      alert(`The selected picture exceeds the 5MB limit (${(file.size / (1024 * 1024)).toFixed(1)}MB). Please choose a photo under 5MB.`)
-      if (e.target) e.target.value = ""
-      return
-    }
-
-    // Read raw picture directly as base64 Data URL (no imageUtil, no canvas downsampling)
-    const reader = new FileReader()
-    reader.onerror = () => {
-      alert("Failed to read image file.")
-    }
-    reader.onload = () => {
-      const rawDataUrl = reader.result as string
-      setTimeInPhoto(rawDataUrl)
-    }
-    reader.readAsDataURL(file)
-
-    if (e.target) e.target.value = ""
-  }
 
   const fetchAttendanceFromDb = async () => {
     try {
@@ -348,7 +314,6 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
 
     setTimeInPhoto(null)
     closeWebcam()
-    if (cameraInputRef.current) cameraInputRef.current.value = ""
     await fetchAttendanceFromDb()
     window.dispatchEvent(new Event("pinv_attendance_updated"))
 
@@ -520,14 +485,6 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
               <span className="text-[9px] text-amber-700 dark:text-amber-400 font-bold">Required to Time In</span>
             </div>
 
-            <input
-              type="file"
-              ref={cameraInputRef}
-              onChange={handlePhotoSelect}
-              accept="image/*"
-              className="hidden"
-            />
-
             {timeInPhoto ? (
               <div className="p-2.5 bg-white dark:bg-slate-800 rounded-xl border border-emerald-300 dark:border-emerald-700 flex items-center justify-between gap-3 shadow-2xs">
                 <div className="flex items-center gap-2.5 min-w-0">
@@ -591,13 +548,11 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
                       <p className="font-medium">{webcamError}</p>
                       <button
                         type="button"
-                        onClick={() => {
-                          closeWebcam()
-                          cameraInputRef.current?.click()
-                        }}
-                        className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold cursor-pointer"
+                        onClick={openWebcam}
+                        className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold cursor-pointer flex items-center gap-1.5"
                       >
-                        Upload File Instead
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        Retry Camera
                       </button>
                     </div>
                   )}
@@ -626,25 +581,14 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
               </div>
             ) : (
               /* Simple Initial Single Button */
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  onClick={openWebcam}
-                  className="w-full py-2.5 px-3 bg-amber-500 hover:bg-amber-600 active:scale-[0.98] text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shadow-xs transition-all"
-                >
-                  <Camera className="w-4 h-4" />
-                  Take Selfie Photo
-                </button>
-                <div className="text-center">
-                  <button
-                    type="button"
-                    onClick={() => cameraInputRef.current?.click()}
-                    className="text-[11px] text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 underline font-medium cursor-pointer"
-                  >
-                    or choose a file from laptop
-                  </button>
-                </div>
-              </div>
+              <button
+                type="button"
+                onClick={openWebcam}
+                className="w-full py-2.5 px-3 bg-amber-500 hover:bg-amber-600 active:scale-[0.98] text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shadow-xs transition-all"
+              >
+                <Camera className="w-4 h-4" />
+                Take Selfie Photo
+              </button>
             )}
           </div>
         )}
