@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react"
-import { Clock, LogIn, LogOut, X, CheckCircle2, Calendar, Camera, Eye, Image as ImageIcon, AlertCircle, User, Lock, ShieldAlert } from "lucide-react"
+import { Clock, LogIn, LogOut, X, CheckCircle2, Calendar, Camera, Eye, Image as ImageIcon, AlertCircle, User, Lock, ShieldAlert, Upload, RefreshCw } from "lucide-react"
 import { supabase } from "../utils/apiClient"
 import type { AttendanceRecord, Operator } from "../types"
 
@@ -23,6 +23,119 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
   const [timeInPhoto, setTimeInPhoto] = useState<string | null>(null)
   const [viewPhotoModal, setViewPhotoModal] = useState<string | null>(null)
   const cameraInputRef = useRef<HTMLInputElement | null>(null)
+
+  // Live Webcam States for Laptop & Desktop
+  const [isWebcamOpen, setIsWebcamOpen] = useState(false)
+  const [webcamStream, setWebcamStream] = useState<MediaStream | null>(null)
+  const [isWebcamStarting, setIsWebcamStarting] = useState(false)
+  const [webcamError, setWebcamError] = useState<string | null>(null)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const webcamStreamRef = useRef<MediaStream | null>(null)
+
+  const openWebcam = async () => {
+    setIsWebcamOpen(true)
+    setWebcamError(null)
+    setIsWebcamStarting(true)
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setWebcamError("Camera access is not supported by your browser or connection is not secure (requires HTTPS or localhost). Please upload a photo file instead.")
+      setIsWebcamStarting(false)
+      return
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      })
+      webcamStreamRef.current = stream
+      setWebcamStream(stream)
+      setIsWebcamStarting(false)
+    } catch (err: any) {
+      setIsWebcamStarting(false)
+      console.error("Webcam access error:", err)
+      if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+        setWebcamError("Camera permission was denied. Please allow camera permissions in your browser address bar/site settings, or upload a photo file.")
+      } else if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
+        setWebcamError("No camera detected on this laptop/device. Please connect a webcam or upload a photo file.")
+      } else if (err.name === "NotReadableError" || err.name === "TrackStartError") {
+        setWebcamError("Camera is currently in use by another application. Please close other camera apps and retry, or upload a photo file.")
+      } else {
+        setWebcamError(`Unable to access camera (${err.message || "Unknown error"}). Please upload a photo file instead.`)
+      }
+    }
+  }
+
+  const closeWebcam = () => {
+    if (webcamStreamRef.current) {
+      webcamStreamRef.current.getTracks().forEach(track => track.stop())
+      webcamStreamRef.current = null
+    }
+    setWebcamStream(null)
+    setIsWebcamOpen(false)
+    setWebcamError(null)
+    setIsWebcamStarting(false)
+  }
+
+  const captureWebcamPhoto = () => {
+    const video = videoRef.current
+    if (!video || !video.videoWidth) return
+
+    try {
+      const canvas = document.createElement("canvas")
+      const vw = video.videoWidth
+      const vh = video.videoHeight
+      const MAX_DIM = 960
+      let w = vw
+      let h = vh
+      if (w > MAX_DIM || h > MAX_DIM) {
+        if (w > h) {
+          h = Math.round((h * MAX_DIM) / w)
+          w = MAX_DIM
+        } else {
+          w = Math.round((w * MAX_DIM) / h)
+          h = MAX_DIM
+        }
+      }
+      canvas.width = w
+      canvas.height = h
+      const ctx = canvas.getContext("2d")
+      if (ctx) {
+        // Mirror horizontally so the captured photo matches the mirrored webcam preview
+        ctx.translate(w, 0)
+        ctx.scale(-1, 1)
+        ctx.drawImage(video, 0, 0, w, h)
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.85)
+        setTimeInPhoto(dataUrl)
+        closeWebcam()
+      }
+    } catch (e) {
+      console.error("Failed to capture photo from webcam", e)
+      alert("Failed to capture photo from webcam. Please try again or upload a photo.")
+    }
+  }
+
+  useEffect(() => {
+    if (videoRef.current && webcamStream) {
+      videoRef.current.srcObject = webcamStream
+      videoRef.current.play().catch(e => {
+        console.warn("Video auto-play warning:", e)
+      })
+    }
+  }, [webcamStream, isWebcamOpen])
+
+  useEffect(() => {
+    return () => {
+      if (webcamStreamRef.current) {
+        webcamStreamRef.current.getTracks().forEach(track => track.stop())
+        webcamStreamRef.current = null
+      }
+    }
+  }, [])
 
   const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -234,6 +347,7 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
     }
 
     setTimeInPhoto(null)
+    closeWebcam()
     if (cameraInputRef.current) cameraInputRef.current.value = ""
     await fetchAttendanceFromDb()
     window.dispatchEvent(new Event("pinv_attendance_updated"))
@@ -334,7 +448,10 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => {
+              closeWebcam()
+              onClose()
+            }}
             className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors"
           >
             <X className="w-5 h-5" />
@@ -408,7 +525,6 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
               ref={cameraInputRef}
               onChange={handlePhotoSelect}
               accept="image/*"
-              capture="user"
               className="hidden"
             />
 
@@ -419,27 +535,27 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
                     src={timeInPhoto}
                     alt="Selfie"
                     onClick={() => setViewPhotoModal(timeInPhoto)}
-                    className="w-12 h-12 rounded-xl object-cover border-2 border-emerald-500 shrink-0 cursor-pointer hover:opacity-90 transition-opacity"
-                    title="Click to view full photo"
+                    className="w-11 h-11 rounded-lg object-cover border-2 border-emerald-500 shrink-0 cursor-pointer hover:opacity-90"
+                    title="Click to preview photo"
                   />
                   <div className="min-w-0">
                     <span className="text-xs font-bold text-emerald-800 dark:text-emerald-200 block truncate flex items-center gap-1">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 inline" />
-                      Selfie Photo Verified
+                      Selfie Ready
                     </span>
                     <button
                       type="button"
                       onClick={() => setViewPhotoModal(timeInPhoto)}
                       className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline font-semibold"
                     >
-                      Click to preview photo
+                      Preview photo
                     </button>
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <button
                     type="button"
-                    onClick={() => cameraInputRef.current?.click()}
+                    onClick={openWebcam}
                     className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg text-[10px] font-bold cursor-pointer"
                   >
                     Retake
@@ -454,15 +570,81 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
                   </button>
                 </div>
               </div>
+            ) : isWebcamOpen ? (
+              /* Inline Live Webcam View */
+              <div className="space-y-2">
+                <div className="relative rounded-xl overflow-hidden bg-slate-950 aspect-4/3 flex items-center justify-center border border-slate-800 shadow-inner">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover scale-x-[-1]"
+                  />
+                  {isWebcamStarting && (
+                    <div className="absolute inset-0 bg-slate-950/80 flex items-center justify-center text-xs text-slate-200 font-medium">
+                      Connecting camera...
+                    </div>
+                  )}
+                  {webcamError && (
+                    <div className="absolute inset-0 bg-slate-900/95 p-3 flex flex-col items-center justify-center text-center gap-2 text-rose-300 text-xs">
+                      <p className="font-medium">{webcamError}</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          closeWebcam()
+                          cameraInputRef.current?.click()
+                        }}
+                        className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold cursor-pointer"
+                      >
+                        Upload File Instead
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {!webcamError && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={isWebcamStarting}
+                      onClick={captureWebcamPhoto}
+                      className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                    >
+                      <Camera className="w-4 h-4" />
+                      Snap Photo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={closeWebcam}
+                      className="py-2.5 px-3 bg-gray-200 dark:bg-slate-700 hover:bg-gray-300 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-xl text-xs font-bold cursor-pointer transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
             ) : (
-              <button
-                type="button"
-                onClick={() => cameraInputRef.current?.click()}
-                className="w-full py-2.5 px-3 bg-white dark:bg-slate-800 hover:bg-amber-50 dark:hover:bg-slate-700 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shadow-2xs transition-colors"
-              >
-                <Camera className="w-4 h-4 text-amber-600" />
-                Take Selfie Photo
-              </button>
+              /* Simple Initial Single Button */
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={openWebcam}
+                  className="w-full py-2.5 px-3 bg-amber-500 hover:bg-amber-600 active:scale-[0.98] text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shadow-xs transition-all"
+                >
+                  <Camera className="w-4 h-4" />
+                  Take Selfie Photo
+                </button>
+                <div className="text-center">
+                  <button
+                    type="button"
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="text-[11px] text-gray-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 underline font-medium cursor-pointer"
+                  >
+                    or choose a file from laptop
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         )}
@@ -597,7 +779,10 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
         <div className="pt-2 border-t border-gray-100 dark:border-slate-700 flex justify-end">
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => {
+              closeWebcam()
+              onClose()
+            }}
             className="px-4 py-2 bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-300 dark:hover:bg-slate-600 rounded-xl text-xs font-bold transition-colors cursor-pointer"
           >
             Close Window
