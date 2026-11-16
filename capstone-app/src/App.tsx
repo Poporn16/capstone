@@ -804,7 +804,16 @@ export default function App() {
       supabase.from('inventory').select('*').range(0, 99999),
       supabase.from('inventory_batches').select('*').range(0, 99999),
       supabase.from('sale_item_batches').select('*').range(0, 99999),
-      supabase.from('sales').select('id, payment_proof_photo, reference_number').range(0, 99999)
+      (async () => {
+        try {
+          const res = await supabase.from('sales').select('id, payment_proof_photo, reference_number').range(0, 99999)
+          if (!res.error) return res
+          // Fallback query if reference_number column is not yet migrated in database
+          return await supabase.from('sales').select('id, payment_proof_photo').range(0, 99999)
+        } catch {
+          return { data: [], error: null }
+        }
+      })()
     ])
 
     const dbProofMap: Record<string, string> = {}
@@ -1250,12 +1259,14 @@ export default function App() {
             }
           }
         } else {
-          // Fallback: If item has no batch rows, attempt updating inventory table directly
-          const { data: invItem } = await supabase.from('inventory').select('stock').eq('id', targetItemId).single()
-          if (invItem && invItem.stock != null) {
-            const newInvStock = Math.max(0, Number(invItem.stock) - qtyToDeduct)
-            await supabase.from('inventory').update({ stock: newInvStock }).eq('id', targetItemId)
-          }
+          // Fallback: If item has no batch rows, attempt updating inventory table directly if stock column exists
+          try {
+            const { data: invItem } = await supabase.from('inventory').select('*').eq('id', targetItemId).maybeSingle()
+            if (invItem && (invItem as any).stock != null) {
+              const newInvStock = Math.max(0, Number((invItem as any).stock) - qtyToDeduct)
+              await supabase.from('inventory').update({ stock: newInvStock } as any).eq('id', targetItemId)
+            }
+          } catch (e) {}
         }
       }
     } catch (e) {

@@ -16,7 +16,11 @@ ALTER TABLE IF EXISTS public.sales
 ALTER TABLE IF EXISTS public.staff_attendance 
     ADD COLUMN IF NOT EXISTS time_in_photo text;
 
--- 3. Update or recreate view_sales_history to include the photo and reference columns
+-- 3. Add optional stock column to inventory to support legacy direct stock references
+ALTER TABLE IF EXISTS public.inventory 
+    ADD COLUMN IF NOT EXISTS stock integer DEFAULT 0;
+
+-- 4. Update or recreate view_sales_history to include the photo and reference columns
 CREATE OR REPLACE VIEW public.view_sales_history AS
 SELECT 
     s.id,
@@ -61,5 +65,5 @@ LEFT JOIN public.sale_items si ON s.id = si.sale_id
 LEFT JOIN public.inventory inv ON si.item_id = inv.id
 GROUP BY s.id;
 
--- 4. Reload schema cache for PostgREST
+-- 5. Reload schema cache for PostgREST
 NOTIFY pgrst, 'reload schema';

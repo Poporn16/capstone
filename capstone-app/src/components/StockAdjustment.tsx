@@ -495,7 +495,11 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
           }))
           for (let i = 0; i < batchesToInsert.length; i += 100) {
             if (isCancelledRef.current) break
-            await supabase.from("inventory_batches").insert(batchesToInsert.slice(i, i + 100))
+            const { error: batchInsErr } = await supabase.from("inventory_batches").insert(batchesToInsert.slice(i, i + 100))
+            if (batchInsErr && (batchInsErr as any).code === "23505") {
+              alert("Database primary key sequence conflict (code 23505).")
+              break
+            }
           }
         }
       }
@@ -561,7 +565,11 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
     const { error } = await supabase.from("inventory_batches").insert(batchInsertPayload)
 
     if (error) {
-      setErrorMessage("Database anomaly encountered while creating new product batch.")
+      if ((error as any).code === "23505") {
+        setErrorMessage("Database sequence conflict.")
+      } else {
+        setErrorMessage(`Database error: ${error.message || "Unable to create product batch."}`)
+      }
       setIsProcessing(false)
       return
     }
@@ -749,11 +757,6 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
         await supabase.from("inventory_batches").delete().eq("id", String(batchId))
       }
       await supabase.from("inventory_batches").delete().eq("batch_label", batchName)
-
-      // 3. Sync remaining total stock on parent inventory table
-      const numItemId = Number(selectedItem.id)
-      const targetItemId = !isNaN(numItemId) ? numItemId : selectedItem.id
-      await supabase.from("inventory").update({ stock: newTotalStock }).eq("id", targetItemId as any)
 
       if (onLogAction) {
         await onLogAction("DELETE_BATCH", "INVENTORY_MANAGEMENT", `Removed batch "${batchName}" for item "${selectedItem.name}"`)

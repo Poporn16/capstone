@@ -490,8 +490,10 @@ export function InventoryManager({
           if (isCancelledRef.current) break
           await new Promise(r => setTimeout(r, 50))
           const batchChunk = batchesToInsert.slice(i, i + 100)
+          let batchErr: any = null
           for (let attempt = 0; attempt < 3; attempt++) {
             const res = await supabase.from("inventory_batches").insert(batchChunk)
+            batchErr = res.error
             if (!res.error) break
             await new Promise(r => setTimeout(r, 200 * (attempt + 1)))
           }
