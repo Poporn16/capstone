@@ -283,33 +283,15 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
       time_in_photo: timeInPhoto || null
     }
 
-    let { data: inserted, error } = await supabase
+    // Direct insert to Supabase staff_attendance table
+    const { error } = await supabase
       .from("staff_attendance")
       .insert([payload])
-      .select("id")
-      .single()
 
     if (error) {
-      console.warn("Time in DB error (fallback without column):", error.message)
+      console.warn("Time in DB error (retrying without photo column if missing):", error.message)
       delete payload.time_in_photo
-      const retryResult = await supabase
-        .from("staff_attendance")
-        .insert([payload])
-        .select("id")
-        .single()
-      inserted = retryResult.data
-    }
-
-    if (timeInPhoto) {
-      try {
-        const photoMap = JSON.parse(localStorage.getItem("pinv_attendance_photo_map") || "{}")
-        if (inserted?.id) {
-          photoMap[String(inserted.id)] = timeInPhoto
-        }
-        const userKey = currentOperator.username.toLowerCase().trim()
-        photoMap[`${userKey}_${nowIso}`] = timeInPhoto
-        localStorage.setItem("pinv_attendance_photo_map", JSON.stringify(photoMap))
-      } catch (e) {}
+      await supabase.from("staff_attendance").insert([payload])
     }
 
     setTimeInPhoto(null)

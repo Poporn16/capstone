@@ -792,18 +792,29 @@ export default function App() {
       localProofPhotoMap = JSON.parse(localStorage.getItem("pinv_proof_photo_map") || "{}")
     } catch (e) {}
 
-    // Fetch view_sales_history along with inventory, batches, and sale_item_batches in parallel
+    // Fetch view_sales_history along with inventory, batches, sale_item_batches, and sales photo columns in parallel
     const [
       { data: viewData, error: viewErr },
       { data: inventoryData },
       { data: batchesData },
-      { data: saleBatchesData }
+      { data: saleBatchesData },
+      salesPhotoRes
     ] = await Promise.all([
       supabase.from('view_sales_history').select('*').range(0, 99999),
       supabase.from('inventory').select('*').range(0, 99999),
       supabase.from('inventory_batches').select('*').range(0, 99999),
-      supabase.from('sale_item_batches').select('*').range(0, 99999)
+      supabase.from('sale_item_batches').select('*').range(0, 99999),
+      supabase.from('sales').select('id, payment_proof_photo, reference_number').range(0, 99999)
     ])
+
+    const dbProofMap: Record<string, string> = {}
+    const dbRefMap: Record<string, string> = {}
+    if (salesPhotoRes && 'data' in salesPhotoRes && Array.isArray(salesPhotoRes.data)) {
+      salesPhotoRes.data.forEach((sp: any) => {
+        if (sp.payment_proof_photo) dbProofMap[String(sp.id)] = sp.payment_proof_photo
+        if (sp.reference_number) dbRefMap[String(sp.id)] = sp.reference_number
+      })
+    }
     
     if (viewData && !viewErr && viewData.length > 0) {
       const sortedView = [...viewData].sort((a: any, b: any) => {
@@ -883,7 +894,7 @@ export default function App() {
           }
         }
 
-        const resolvedRefNumber = s.reference_number || s.referenceNumber || localRefMap[String(s.id)] || localRefMap[String(idx + 1)] || undefined
+        const resolvedRefNumber = s.reference_number || dbRefMap[String(s.id)] || s.referenceNumber || localRefMap[String(s.id)] || localRefMap[String(idx + 1)] || undefined
 
         return {
           id: String(idx + 1),
@@ -901,7 +912,7 @@ export default function App() {
           paymentMethod: isCash ? "cash" : "other",
           onlineChannel: resolvedOnlineChan,
           referenceNumber: resolvedRefNumber,
-          paymentProofPhoto: s.payment_proof_photo || s.paymentProofPhoto || localProofPhotoMap[String(s.id)] || localProofPhotoMap[String(idx + 1)] || undefined,
+          paymentProofPhoto: s.payment_proof_photo || dbProofMap[String(s.id)] || s.paymentProofPhoto || localProofPhotoMap[String(s.id)] || localProofPhotoMap[String(idx + 1)] || undefined,
           discountLabel: discLabel,
           customerName: extractedCustomerName,
           processedBy: s.processed_by || "admin",
@@ -998,7 +1009,7 @@ export default function App() {
         }
       }
 
-      const resolvedRefNumber = sale.reference_number || sale.referenceNumber || localRefMap[String(sale.id)] || localRefMap[String(idx + 1)] || undefined
+      const resolvedRefNumber = sale.reference_number || dbRefMap[String(sale.id)] || sale.referenceNumber || localRefMap[String(sale.id)] || localRefMap[String(idx + 1)] || undefined
 
       return {
         id: String(idx + 1),
@@ -1016,7 +1027,7 @@ export default function App() {
         paymentMethod: isCash ? "cash" : "other",
         onlineChannel: resolvedOnlineChan,
         referenceNumber: resolvedRefNumber,
-        paymentProofPhoto: sale.payment_proof_photo || sale.paymentProofPhoto || localProofPhotoMap[String(sale.id)] || localProofPhotoMap[String(idx + 1)] || undefined,
+        paymentProofPhoto: sale.payment_proof_photo || dbProofMap[String(sale.id)] || sale.paymentProofPhoto || localProofPhotoMap[String(sale.id)] || localProofPhotoMap[String(idx + 1)] || undefined,
         discountLabel: discLabel,
         customerName: extractedCustomerName,
         processedBy: sale.processed_by || "admin",
@@ -1124,19 +1135,13 @@ export default function App() {
 
     if (sale.referenceNumber && saleId) {
       try {
-        const refMap = JSON.parse(localStorage.getItem("pinv_ref_number_map") || "{}")
-        refMap[String(saleId)] = sale.referenceNumber
-        refMap[String(sales.length + 1)] = sale.referenceNumber
-        localStorage.setItem("pinv_ref_number_map", JSON.stringify(refMap))
+        await supabase.from('sales').update({ reference_number: sale.referenceNumber }).eq('id', saleId)
       } catch (e) {}
     }
 
     if (sale.paymentProofPhoto && saleId) {
       try {
-        const photoMap = JSON.parse(localStorage.getItem("pinv_proof_photo_map") || "{}")
-        photoMap[String(saleId)] = sale.paymentProofPhoto
-        photoMap[String(sales.length + 1)] = sale.paymentProofPhoto
-        localStorage.setItem("pinv_proof_photo_map", JSON.stringify(photoMap))
+        await supabase.from('sales').update({ payment_proof_photo: sale.paymentProofPhoto }).eq('id', saleId)
       } catch (e) {}
     }
 

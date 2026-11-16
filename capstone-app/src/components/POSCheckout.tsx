@@ -41,29 +41,15 @@ export function POSCheckout({
     const file = e.target.files?.[0]
     if (!file) return
 
-    // Limit to only pictures, not video
-    if (!file.type.startsWith("image/") || file.type.startsWith("video/")) {
-      alert("Only picture files are allowed (not videos). Please select a valid photo.")
+    if (!file.type.startsWith("image/")) {
+      alert("Please select a valid photo.")
       if (e.target) e.target.value = ""
       return
     }
 
-    // Limit to 5MB
-    const MAX_SIZE = 5 * 1024 * 1024 // 5MB
-    if (file.size > MAX_SIZE) {
-      alert(`The selected picture exceeds the 5MB limit (${(file.size / (1024 * 1024)).toFixed(1)}MB). Please choose a photo under 5MB.`)
-      if (e.target) e.target.value = ""
-      return
-    }
-
-    // Read raw picture directly without imageUtil
     const reader = new FileReader()
-    reader.onerror = () => {
-      alert("Failed to read image file.")
-    }
     reader.onload = () => {
-      const rawDataUrl = reader.result as string
-      setPaymentProofPhoto(rawDataUrl)
+      setPaymentProofPhoto(reader.result as string)
       if (checkoutError) setCheckoutError(null)
     }
     reader.readAsDataURL(file)

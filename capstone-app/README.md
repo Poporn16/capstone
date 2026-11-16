@@ -188,6 +188,7 @@ CREATE TABLE IF NOT EXISTS public.named_persons (
 -- Sales Transactions
 CREATE TABLE IF NOT EXISTS public.sales (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    date timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
     gross_total numeric(10,2) NOT NULL,
     subtotal numeric(10,2) NOT NULL,
     discount numeric(10,2) NOT NULL DEFAULT 0.00,
@@ -197,22 +198,22 @@ CREATE TABLE IF NOT EXISTS public.sales (
     change numeric(10,2) NOT NULL DEFAULT 0.00,
     payment_method text NOT NULL,
     online_channel text,
+    reference_number text,
+    payment_proof_photo text,
     discount_label text,
     customer_name text,
-    operator_name text,
+    processed_by text,
+    is_refunded boolean DEFAULT false,
     created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
 -- Sales Line Items
-CREATE TABLE IF NOT EXISTS public.sales_items (
+CREATE TABLE IF NOT EXISTS public.sale_items (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     sale_id bigint REFERENCES public.sales(id) ON DELETE CASCADE,
     item_id bigint REFERENCES public.inventory(id),
-    product_name text NOT NULL,
     quantity integer NOT NULL,
-    unit_price numeric(10,2) NOT NULL,
-    total_price numeric(10,2) NOT NULL,
-    batch_label text
+    unit_price numeric(10,2) NOT NULL
 );
 
 -- Staff Attendance Logs
@@ -220,9 +221,12 @@ CREATE TABLE IF NOT EXISTS public.staff_attendance (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     username text NOT NULL,
     display_name text NOT NULL,
-    action_type text NOT NULL, -- 'time_in' or 'time_out'
-    notes text,
-    timestamp timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+    system_role text,
+    time_in timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
+    time_out timestamp with time zone,
+    duration_minutes integer,
+    time_in_photo text,
+    created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
 -- System Audit Logs
