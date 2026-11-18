@@ -4,6 +4,7 @@ import { downloadExcelWithAutoFit } from "../utils/excelUtils"
 import { getCategoryStyles } from "../utils/categoryColors"
 import { TrendingUp, BarChart3, DollarSign, ShoppingBag, Download, Filter, Users, CreditCard, Layers, UserCheck, PackageCheck, Search } from "lucide-react"
 
+// Component props and interface
 interface SalesReportProps {
   sales: Sale[]
   inventory: InventoryItem[]
@@ -11,6 +12,7 @@ interface SalesReportProps {
 }
 
 export function SalesReport({ sales, inventory }: SalesReportProps) {
+  // State management and date filter references
   const [dateFrame, setDateFrame] = useState<"today" | "yesterday" | "week" | "month" | "custom">("month")
   const [startDate, setStartDate] = useState<string>("")
   const [endDate, setEndDate] = useState<string>("")
@@ -675,7 +677,7 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
                   <th className="p-3 text-right">Profit Margin (%)</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-slate-700/60">
+              <tbody className="divide-y divide-gray-200 dark:divide-slate-700">
                 {filteredReport1List.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="p-6 text-center text-gray-400 italic">
@@ -685,8 +687,13 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
                 ) : (
                   filteredReport1List.map((item, idx) => {
                     const catStyles = getCategoryStyles(item.category)
+                    const isEven = idx % 2 === 0
+                    const rowBg = isEven
+                      ? "bg-white dark:bg-slate-800 hover:bg-slate-200/60 dark:hover:bg-slate-700/70"
+                      : "bg-slate-100 dark:bg-slate-900 hover:bg-slate-200/80 dark:hover:bg-slate-700/80"
+
                     return (
-                      <tr key={idx} className="hover:bg-gray-50/80 dark:hover:bg-slate-700/50 transition-colors">
+                      <tr key={idx} className={`transition-colors ${rowBg}`}>
                         <td className="p-3 font-bold text-gray-900 dark:text-white">{item.name}</td>
                         <td className="p-3">
                           <span className={`uppercase text-[9px] font-extrabold px-2.5 py-0.5 rounded-full shadow-2xs ${catStyles.badge}`}>

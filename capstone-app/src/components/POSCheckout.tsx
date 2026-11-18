@@ -7,6 +7,7 @@ import { ArrowLeft, Printer, CreditCard, X, Users, Search, Check, Sparkles, Scan
 
 export type { NamedPerson, ScanOption, CartItem, DiscountType, OnlineChannel }
 
+// Component props and interface
 interface POSCheckoutProps {
   inventory: InventoryItem[]
   sales?: Sale[]
@@ -26,6 +27,7 @@ export function POSCheckout({
   hasActiveShift = false,
   onOpenAttendanceModal
 }: POSCheckoutProps) {
+  // State management and cart references
   const [cart, setCart] = useState<CartItem[]>([])
   const [query, setQuery] = useState("")
   const [activeCategoryTab, setActiveCategoryTab] = useState<string>("all")
@@ -825,100 +827,70 @@ export function POSCheckout({
               </div>
             )}
 
-            {/* Search Input */}
-            <div className="relative flex items-center">
-              <input 
-                type="text" 
-                data-barcode-scanner="true"
-                aria-label="Search product name or barcode"
-                placeholder="Search product name or code.." 
-                value={query} 
-                onChange={e => handleQueryChange(e.target.value)} 
-                onKeyDown={e => {
-                  if (e.key === "Enter") {
-                    const trimmed = query.trim()
-                    if (trimmed) {
-                      const { options, hasDifferentManufacturers } = findMatchingInventoryOptions(inventory, trimmed)
-                      if (hasDifferentManufacturers && options.length > 1) {
-                        setScanMatchOptions({ code: trimmed, options })
-                        setQuery("")
-                        e.preventDefault()
-                      } else if (options.length > 0) {
-                        const singleOpt = options[0]
-                        if (singleOpt.stock > 0) {
-                          addToCart(singleOpt.item, singleOpt.batch)
-                          triggerScanToast(`✓ Scanned: ${singleOpt.productName} • ₱${singleOpt.price.toFixed(2)} added to cart`, "success")
+            {/* Search Input & Category Dropdown */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+              <div className="relative flex-1 flex items-center">
+                <input 
+                  type="text" 
+                  data-barcode-scanner="true"
+                  aria-label="Search product name or barcode"
+                  placeholder="Search product name or code.." 
+                  value={query} 
+                  onChange={e => handleQueryChange(e.target.value)} 
+                  onKeyDown={e => {
+                    if (e.key === "Enter") {
+                      const trimmed = query.trim()
+                      if (trimmed) {
+                        const { options, hasDifferentManufacturers } = findMatchingInventoryOptions(inventory, trimmed)
+                        if (hasDifferentManufacturers && options.length > 1) {
+                          setScanMatchOptions({ code: trimmed, options })
                           setQuery("")
                           e.preventDefault()
+                        } else if (options.length > 0) {
+                          const singleOpt = options[0]
+                          if (singleOpt.stock > 0) {
+                            addToCart(singleOpt.item, singleOpt.batch)
+                            triggerScanToast(`✓ Scanned: ${singleOpt.productName} • ₱${singleOpt.price.toFixed(2)} added to cart`, "success")
+                            setQuery("")
+                            e.preventDefault()
+                          }
                         }
                       }
                     }
-                  }
-                }}
-                className="w-full pl-4 pr-10 py-2.5 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-white rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-[#1b5e59]/25 focus:border-[#1b5e59] dark:focus:ring-[#2dd4bf]/25 dark:focus:border-[#2dd4bf] transition-all placeholder:text-slate-400 font-medium" 
-              />
-              {query && (
-                <button 
-                  type="button" 
-                  onClick={() => handleQueryChange("")}
-                  className="absolute right-3 p-1 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
-                  title="Clear search"
-                  aria-label="Clear search input"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-
-            {/* Category Tabs */}
-            <div role="tablist" aria-label="Product categories" className="flex gap-2 bg-slate-100/60 dark:bg-slate-900/60 p-2 rounded-2xl overflow-x-auto border border-slate-200/50 dark:border-slate-700/80 scrollbar-none">
-              <button 
-                type="button" 
-                role="tab"
-                aria-selected={activeCategoryTab === "all"}
-                onClick={() => handleCategoryTabChange("all")} 
-                className={`px-4 py-2 rounded-xl font-bold text-xs transition-all border whitespace-nowrap cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59] ${
-                  activeCategoryTab === "all"
-                    ? 'bg-[#1b5e59] text-white border-[#1b5e59] dark:bg-[#2dd4bf] dark:text-[#042f2e] dark:border-[#2dd4bf] shadow-xs'
-                    : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/70 hover:text-[#1b5e59] dark:hover:text-[#2dd4bf]'
-                }`}
-              >
-                ALL
-              </button>
-              
-              <button 
-                type="button" 
-                role="tab"
-                aria-selected={activeCategoryTab === "unmarked category"}
-                onClick={() => handleCategoryTabChange("unmarked category")} 
-                className={`px-4 py-2 rounded-xl font-bold text-xs uppercase transition-all border whitespace-nowrap cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59] ${
-                  activeCategoryTab === "unmarked category"
-                    ? 'bg-[#1b5e59] text-white border-[#1b5e59] dark:bg-[#2dd4bf] dark:text-[#042f2e] dark:border-[#2dd4bf] shadow-xs'
-                    : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/70 hover:text-[#1b5e59] dark:hover:text-[#2dd4bf]'
-                }`}
-              >
-                UNMARKED CATEGORY
-              </button>
-
-              {dynamicCategories.map((cat) => {
-                const isActive = activeCategoryTab === cat
-                return (
+                  }}
+                  className="w-full pl-4 pr-10 py-2.5 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-white rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-[#1b5e59]/25 focus:border-[#1b5e59] dark:focus:ring-[#2dd4bf]/25 dark:focus:border-[#2dd4bf] transition-all placeholder:text-slate-400 font-medium" 
+                />
+                {query && (
                   <button 
-                    key={cat} 
                     type="button" 
-                    role="tab"
-                    aria-selected={isActive}
-                    onClick={() => handleCategoryTabChange(cat)} 
-                    className={`px-4 py-2 rounded-xl font-bold text-xs uppercase transition-all border whitespace-nowrap cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59] ${
-                      isActive 
-                        ? 'bg-[#1b5e59] text-white border-[#1b5e59] dark:bg-[#2dd4bf] dark:text-[#042f2e] dark:border-[#2dd4bf] shadow-xs' 
-                        : 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/70 hover:text-[#1b5e59] dark:hover:text-[#2dd4bf]'
-                    }`}
+                    onClick={() => handleQueryChange("")}
+                    className="absolute right-3 p-1 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
+                    title="Clear search"
+                    aria-label="Clear search input"
                   >
-                    {cat}
+                    <X className="w-3.5 h-3.5" />
                   </button>
-                )
-              })}
+                )}
+              </div>
+
+              {/* Category Dropdown */}
+              <div className="relative sm:w-60 shrink-0">
+                <select
+                  id="pos-category-select"
+                  aria-label="Filter by category"
+                  value={activeCategoryTab}
+                  onChange={(e) => handleCategoryTabChange(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-white rounded-xl text-xs font-bold uppercase tracking-wider focus:outline-none focus:ring-2 focus:ring-[#1b5e59]/25 focus:border-[#1b5e59] dark:focus:ring-[#2dd4bf]/25 dark:focus:border-[#2dd4bf] cursor-pointer shadow-2xs transition-colors"
+                >
+                  <option value="all">ALL CATEGORIES</option>
+                  <option value="unmarked category">UNMARKED CATEGORY</option>
+                  {dynamicCategories.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat.toUpperCase()}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
 

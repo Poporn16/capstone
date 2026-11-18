@@ -4,6 +4,7 @@ import { downloadExcelWithAutoFit, downloadMultiSheetSalesWorkbook, type SalesEx
 import { Search, RotateCcw, FileText, Download, User, Printer, X, Eye, Image as ImageIcon, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { supabase } from "../utils/apiClient";
 
+// Component props and interface
 interface SalesHistoryProps {
   currentOperator?: Operator | null;
   sales: Sale[];
@@ -32,6 +33,7 @@ const formatReceiptDate = (d: Date | string) => {
 };
 
 export function SalesHistory({ currentOperator, sales, inventory = [], onToggleRefund }: SalesHistoryProps) {
+  // State management and filter references
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [dateFrame, setDateFrame] = useState<DateFrame>("all");
@@ -601,18 +603,18 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
         <div className="overflow-x-auto max-h-[580px] overflow-y-auto">
           <table className="w-full text-left border-collapse">
             <thead className="bg-gray-50 dark:bg-slate-900 border-b border-gray-100 dark:border-slate-700 sticky top-0 z-10 backdrop-blur-xs">
-              <tr className="text-gray-500 dark:text-gray-400 font-bold">
-                <th className="p-4">Transaction ID</th>
-                <th className="p-4">Date & Time</th>
-                <th className="p-4">Customer Name</th>
-                <th className="p-4">Operator</th>
-                <th className="p-4">Payment Type</th>
-                <th className="p-4">Status Profile</th>
-                <th className="p-4">Total Cost</th>
-                <th className="p-4 text-center">Actions</th>
+              <tr className="text-gray-600 dark:text-gray-300 font-bold text-xs">
+                <th className="py-3 px-4">Transaction ID</th>
+                <th className="py-3 px-4">Date & Time</th>
+                <th className="py-3 px-4">Customer Name</th>
+                <th className="py-3 px-4">Operator</th>
+                <th className="py-3 px-4">Payment Type</th>
+                <th className="py-3 px-4">Status Profile</th>
+                <th className="py-3 px-4">Total Cost</th>
+                <th className="py-3 px-4 text-center">Actions</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-gray-200 dark:divide-slate-700">
               {filteredSales.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="p-8 text-center text-gray-400 dark:text-gray-400 font-medium bg-white dark:bg-slate-800">
@@ -620,107 +622,118 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
                   </td>
                 </tr>
               ) : (
-                paginatedSales.map(sale => (
-                  <tr key={sale.id} className={`border-b border-gray-50 dark:border-slate-700/60 last:border-0 hover:bg-gray-50/60 dark:hover:bg-slate-700/60 transition-colors items-center ${sale.isRefunded ? 'bg-red-50/20 dark:bg-red-950/20 text-gray-400 dark:text-gray-500' : 'bg-white dark:bg-slate-800'}`}>
-                    <td className="p-4 font-mono font-bold text-gray-700 dark:text-slate-200">#{sale.id}</td>
-                    <td className="p-4 text-gray-600 dark:text-slate-300 font-medium whitespace-nowrap">{formatReceiptDate(sale.date)}</td>
-                    <td className="p-4">
-                      {(() => {
-                        const rawCustomer = sale.customerName || (sale.discountLabel && sale.discountLabel.includes("(") ? sale.discountLabel.split("(")[1]?.replace(")", "").trim() : null)
-                        const isWalkIn = !rawCustomer || 
-                          ["walk-in", "walk-in customer", "regular customer", "walkin"].includes(rawCustomer.trim().toLowerCase())
+                paginatedSales.map((sale, idx) => {
+                  const isEven = idx % 2 === 0
+                  const rowBg = sale.isRefunded
+                    ? isEven 
+                      ? "bg-red-50 dark:bg-red-950/40 text-gray-500 dark:text-gray-400 hover:bg-red-100/70 dark:hover:bg-red-950/60" 
+                      : "bg-red-100/70 dark:bg-red-950/60 text-gray-500 dark:text-gray-400 hover:bg-red-100 dark:hover:bg-red-950/80"
+                    : isEven
+                      ? "bg-white dark:bg-slate-800 hover:bg-slate-200/60 dark:hover:bg-slate-700/70"
+                      : "bg-slate-100 dark:bg-slate-900 hover:bg-slate-200/80 dark:hover:bg-slate-700/80"
 
-                        if (!isWalkIn && rawCustomer) {
-                          return (
-                            <button
-                              type="button"
-                              onClick={() => setSearchQuery(rawCustomer)}
-                              className="px-2 py-0.5 rounded font-bold text-[10px] bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/40 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 transition-colors inline-flex items-center gap-1"
-                              title="Click to search all orders by this customer"
-                            >
-                              <User className="w-3 h-3 text-blue-500" />
-                              <span>{rawCustomer}</span>
-                            </button>
-                          )
-                        }
-                        return <span className="text-[10px] text-gray-400 dark:text-slate-500 font-semibold italic">Walk-in</span>
-                      })()}
-                    </td>
-                    <td className="p-4">
-                      <div className="flex items-center gap-1 text-gray-700 dark:text-slate-200 font-semibold uppercase text-[10px]">
-                        <User className="w-3 h-3 text-gray-400 dark:text-gray-400" />
-                        {sale.processedBy}
-                      </div>
-                    </td>
-                    <td className="p-4">
-                      <span className={`px-2 py-0.5 rounded font-bold text-[9px] border ${
-                        sale.paymentMethod === 'cash'
-                          ? 'bg-green-50 dark:bg-green-950/40 border-green-200 dark:border-green-800 text-green-700 dark:text-green-300'
-                          : 'bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300'
-                      }`}>
-                        {sale.paymentMethod === 'cash'
-                          ? 'CASH'
-                          : sale.onlineChannel
-                            ? `ONLINE / ${sale.onlineChannel.toUpperCase()}`
-                            : 'ONLINE'}
-                      </span>
-                      {sale.referenceNumber && (
-                        <span className="block text-[8px] font-mono text-gray-500 dark:text-gray-400 mt-0.5 whitespace-nowrap">
-                          Ref: {sale.referenceNumber}
+                  return (
+                    <tr key={sale.id} className={`transition-colors ${rowBg}`}>
+                      <td className="py-3 px-4 font-mono font-bold text-gray-700 dark:text-slate-200">#{sale.id}</td>
+                      <td className="py-3 px-4 text-gray-600 dark:text-slate-300 font-medium whitespace-nowrap">{formatReceiptDate(sale.date)}</td>
+                      <td className="py-3 px-4">
+                        {(() => {
+                          const rawCustomer = sale.customerName || (sale.discountLabel && sale.discountLabel.includes("(") ? sale.discountLabel.split("(")[1]?.replace(")", "").trim() : null)
+                          const isWalkIn = !rawCustomer || 
+                            ["walk-in", "walk-in customer", "regular customer", "walkin"].includes(rawCustomer.trim().toLowerCase())
+
+                          if (!isWalkIn && rawCustomer) {
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => setSearchQuery(rawCustomer)}
+                                className="px-2 py-0.5 rounded font-bold text-[10px] bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/40 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 transition-colors inline-flex items-center gap-1"
+                                title="Click to search all orders by this customer"
+                              >
+                                <User className="w-3 h-3 text-blue-500" />
+                                <span>{rawCustomer}</span>
+                              </button>
+                            )
+                          }
+                          return <span className="text-[10px] text-gray-400 dark:text-slate-500 font-semibold italic">Walk-in</span>
+                        })()}
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-1 text-gray-700 dark:text-slate-200 font-semibold uppercase text-[10px]">
+                          <User className="w-3 h-3 text-gray-400 dark:text-gray-400" />
+                          {sale.processedBy}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className={`px-2 py-0.5 rounded font-bold text-[9px] border ${
+                          sale.paymentMethod === 'cash'
+                            ? 'bg-green-50 dark:bg-green-950/40 border-green-200 dark:border-green-800 text-green-700 dark:text-green-300'
+                            : 'bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300'
+                        }`}>
+                          {sale.paymentMethod === 'cash'
+                            ? 'CASH'
+                            : sale.onlineChannel
+                              ? `ONLINE / ${sale.onlineChannel.toUpperCase()}`
+                              : 'ONLINE'}
                         </span>
-                      )}
-                      {sale.paymentProofPhoto && (
-                        <button
-                          type="button"
-                          onClick={() => setViewPhotoModal(sale.paymentProofPhoto || null)}
-                          className="mt-0.5 flex items-center gap-1 text-[8px] font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
-                          title="View payment receipt screenshot"
-                        >
-                          <ImageIcon className="w-2.5 h-2.5" /> Photo Attached
-                        </button>
-                      )}
-                    </td>
-                    <td className="p-4">
-                      <span className={`px-2.5 py-0.5 rounded-full font-bold text-[9px] ${sale.isRefunded ? 'bg-red-100 dark:bg-red-900/60 text-red-600 dark:text-red-300' : 'bg-green-100 dark:bg-green-900/60 text-green-600 dark:text-green-300'}`}>
-                        {sale.isRefunded ? "Voided" : "Completed"}
-                      </span>
-                    </td>
-                    <td className={`p-4 font-bold font-mono ${sale.isRefunded ? 'text-gray-400 dark:text-gray-500 line-through' : 'text-gray-900 dark:text-white'}`}>
-                      ₱{sale.total.toFixed(2)}
-                    </td>
-                    <td className="p-4">
-                      <div className="flex items-center justify-center gap-2">
-                        <button 
-                          type="button" 
-                          onClick={() => setSelectedInvoice(sale)}
-                          className="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                          title="View Invoice Sheet Details"
-                        >
-                          <FileText className="w-4 h-4" />
-                        </button>
-                        {isAdmin ? (
-                          <button 
-                            type="button" 
-                            onClick={() => setVoidConfirmSale({ id: sale.id, isRefunded: !!sale.isRefunded, total: sale.total })}
-                            className={`p-1 transition-colors ${sale.isRefunded ? 'text-gray-400 hover:text-green-600 dark:hover:text-green-400' : 'text-gray-400 hover:text-red-500 dark:hover:text-red-400'}`}
-                            title={sale.isRefunded ? "Revert Void" : "Void Invoice"}
-                          >
-                            <RotateCcw className="w-4 h-4" />
-                          </button>
-                        ) : (
+                        {sale.referenceNumber && (
+                          <span className="block text-[8px] font-mono text-gray-500 dark:text-gray-400 mt-0.5 whitespace-nowrap">
+                            Ref: {sale.referenceNumber}
+                          </span>
+                        )}
+                        {sale.paymentProofPhoto && (
                           <button
                             type="button"
-                            onClick={() => alert("Admin Access Required: Only Administrators can void receipts.")}
-                            className="p-1 text-gray-300 dark:text-slate-600 cursor-not-allowed"
-                            title="Admin Access Required to Void"
+                            onClick={() => setViewPhotoModal(sale.paymentProofPhoto || null)}
+                            className="mt-0.5 flex items-center gap-1 text-[8px] font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                            title="View payment receipt screenshot"
                           >
-                            <RotateCcw className="w-4 h-4" />
+                            <ImageIcon className="w-2.5 h-2.5" /> Photo Attached
                           </button>
                         )}
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className={`px-2.5 py-0.5 rounded-full font-bold text-[9px] ${sale.isRefunded ? 'bg-red-100 dark:bg-red-900/60 text-red-600 dark:text-red-300' : 'bg-green-100 dark:bg-green-900/60 text-green-600 dark:text-green-300'}`}>
+                          {sale.isRefunded ? "Voided" : "Completed"}
+                        </span>
+                      </td>
+                      <td className={`py-3 px-4 font-bold font-mono ${sale.isRefunded ? 'text-gray-400 dark:text-gray-500 line-through' : 'text-gray-900 dark:text-white'}`}>
+                        ₱{sale.total.toFixed(2)}
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center justify-center gap-2">
+                          <button 
+                            type="button" 
+                            onClick={() => setSelectedInvoice(sale)}
+                            className="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                            title="View Invoice Sheet Details"
+                          >
+                            <FileText className="w-4 h-4" />
+                          </button>
+                          {isAdmin ? (
+                            <button 
+                              type="button" 
+                              onClick={() => setVoidConfirmSale({ id: sale.id, isRefunded: !!sale.isRefunded, total: sale.total })}
+                              className={`p-1 transition-colors ${sale.isRefunded ? 'text-gray-400 hover:text-green-600 dark:hover:text-green-400' : 'text-gray-400 hover:text-red-500 dark:hover:text-red-400'}`}
+                              title={sale.isRefunded ? "Revert Void" : "Void Invoice"}
+                            >
+                              <RotateCcw className="w-4 h-4" />
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => alert("Admin Access Required: Only Administrators can void receipts.")}
+                              className="p-1 text-gray-300 dark:text-slate-600 cursor-not-allowed"
+                              title="Admin Access Required to Void"
+                            >
+                              <RotateCcw className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })
               )}
             </tbody>
           </table>

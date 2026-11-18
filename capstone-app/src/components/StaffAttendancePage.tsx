@@ -6,6 +6,7 @@ import type { AttendanceRecord, Operator } from "../types"
 
 export type { AttendanceRecord }
 
+// Component props and constants
 interface StaffAttendancePageProps {
   currentOperator: Operator
   onLogAction?: (actionType: string, moduleName: string, details: string) => Promise<void>
@@ -15,6 +16,7 @@ const MAX_SHIFT_MINUTES = 12 * 60 // 12 hours maximum shift limit
 const MAX_SHIFT_MS = MAX_SHIFT_MINUTES * 60 * 1000
 
 export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAttendancePageProps) {
+  // State management and attendance records
   const [records, setRecords] = useState<AttendanceRecord[]>([])
   const [searchQuery, setSearchQuery] = useState("")
   const [roleFilter, setRoleFilter] = useState("all")
@@ -605,7 +607,7 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
                 <th className="p-4 text-center">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-slate-700/60">
+            <tbody className="divide-y divide-gray-200 dark:divide-slate-700">
               {filteredRecords.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="p-8 text-center text-gray-400 dark:text-slate-500 font-medium">
@@ -613,7 +615,7 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
                   </td>
                 </tr>
               ) : (
-                filteredRecords.map(r => {
+                filteredRecords.map((r, idx) => {
                   const inDate = new Date(r.timeIn)
                   const inStr = inDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) + " at " + inDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
                   const outStr = r.timeOut
@@ -627,6 +629,7 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
                   const isInv = invalidatedIds.has(r.id)
                   const isSusp = !isInv && r.durationMinutes !== undefined && r.durationMinutes < 5
                   const isActive = !r.timeOut
+                  const isEven = idx % 2 === 0
 
                   const liveMins = isActive && r.timeIn
                     ? Math.max(1, Math.floor((currentTime - new Date(r.timeIn).getTime()) / (1000 * 60)))
@@ -635,18 +638,26 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
                     ? `${Math.floor(liveMins / 60)}h ${liveMins % 60}m (Live)`
                     : durationStr
 
+                  const rowBg = isInv
+                    ? isEven 
+                      ? "bg-rose-50 dark:bg-rose-950/30 hover:bg-rose-100 dark:hover:bg-rose-950/40 opacity-80" 
+                      : "bg-rose-100/70 dark:bg-rose-950/50 hover:bg-rose-100 dark:hover:bg-rose-950/60 opacity-80"
+                    : isActive 
+                      ? isEven 
+                        ? "bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100/70 dark:hover:bg-emerald-950/60 border-l-4 border-l-emerald-500 font-medium" 
+                        : "bg-emerald-100/60 dark:bg-emerald-950/50 hover:bg-emerald-100/80 dark:hover:bg-emerald-950/70 border-l-4 border-l-emerald-500 font-medium" 
+                      : isSusp
+                        ? isEven 
+                          ? "bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-950/40 border-l-4 border-l-amber-500" 
+                          : "bg-amber-100/60 dark:bg-amber-950/50 hover:bg-amber-100 dark:hover:bg-amber-950/60 border-l-4 border-l-amber-500"
+                        : isEven
+                          ? "bg-white dark:bg-slate-800 hover:bg-slate-200/60 dark:hover:bg-slate-700/70"
+                          : "bg-slate-100 dark:bg-slate-900 hover:bg-slate-200/80 dark:hover:bg-slate-700/80"
+
                   return (
                     <tr 
                       key={r.id} 
-                      className={`transition-colors ${
-                        isInv
-                          ? "bg-rose-50/30 dark:bg-rose-950/20 hover:bg-rose-50/50 dark:hover:bg-rose-950/30 opacity-75"
-                          : isActive 
-                            ? "bg-emerald-50/60 dark:bg-emerald-950/30 hover:bg-emerald-50/90 dark:hover:bg-emerald-950/50 border-l-4 border-l-emerald-500 font-medium" 
-                            : isSusp
-                              ? "bg-amber-50/40 dark:bg-amber-950/20 hover:bg-amber-50/60 dark:hover:bg-amber-950/30 border-l-4 border-l-amber-500"
-                              : "hover:bg-gray-50/60 dark:hover:bg-slate-700/60"
-                      }`}
+                      className={`transition-colors ${rowBg}`}
                     >
                       <td className="p-4">
                         {r.timeInPhoto ? (

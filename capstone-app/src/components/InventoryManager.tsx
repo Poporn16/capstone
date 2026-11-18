@@ -7,6 +7,7 @@ import { useBarcodeScanner, matchBarcodeToItem } from "../utils/barcodeScanner"
 import { Search, FolderPlus, Download, Upload, FileSpreadsheet, X, Trash2, Edit2, Clock, CheckCircle2, Scan, Barcode, Package, ChevronDown, ChevronUp, Tag, Check } from "lucide-react"
 import { BarcodePrintModal } from "./BarcodePrintModal"
 
+// Component props and interface
 interface InventoryManagerProps {
   currentOperator?: Operator | null
   inventory: InventoryItem[]
@@ -28,6 +29,7 @@ export function InventoryManager({
   onDeleteProduct,
   onLogAction
 }: InventoryManagerProps) {
+  // State management and modal references
   const [query, setQuery] = useState("")
   const [catFilter, setCatFilter] = useState("all")
   const [showAdd, setShowAdd] = useState(false)
@@ -1189,14 +1191,24 @@ export function InventoryManager({
               <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold text-center">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100 dark:divide-slate-700">
-            {filtered.map(item => {
+          <tbody className="divide-y divide-gray-200 dark:divide-slate-700">
+            {filtered.map((item, idx) => {
               const catStyle = getCategoryStyles(item.category)
               const isSelected = selectedProductIds.has(String(item.id))
               const isPopoverOpen = quickCategoryPopoverItemId === String(item.id)
+              const isEven = idx % 2 === 0
 
               return (
-                <tr key={item.id} className={`hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors ${isSelected ? "bg-blue-50/50 dark:bg-blue-950/30" : ""}`}>
+                <tr 
+                  key={item.id} 
+                  className={`transition-colors ${
+                    isSelected 
+                      ? "bg-blue-100/80 dark:bg-blue-950/70" 
+                      : isEven 
+                        ? "bg-white dark:bg-slate-800 hover:bg-slate-200/60 dark:hover:bg-slate-700/70" 
+                        : "bg-slate-100 dark:bg-slate-900 hover:bg-slate-200/80 dark:hover:bg-slate-700/80"
+                  }`}
+                >
                   <td className="py-3 px-3 text-center">
                     <input 
                       type="checkbox"

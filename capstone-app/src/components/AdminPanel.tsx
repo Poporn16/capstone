@@ -9,6 +9,7 @@ import type { NamedPerson, AuditLog, BatchSaleRecord, AccountProfile, Operator }
 
 export type { NamedPerson }
 
+// Component props and interface
 interface AdminPanelProps {
   currentOperator: Operator
   onLogAction: (actionType: string, moduleTarget: string, details: string) => Promise<void>
@@ -16,6 +17,7 @@ interface AdminPanelProps {
 }
 
 export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: AdminPanelProps) {
+  // State management and modal references
   const [logs, setLogs] = useState<AuditLog[]>([])
   const [batchSales, setBatchSales] = useState<BatchSaleRecord[]>([])
   const [profiles, setProfiles] = useState<AccountProfile[]>([])
@@ -96,6 +98,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
   const [selectedBatchReceiptSaleId, setSelectedBatchReceiptSaleId] = useState<number | null>(null)
   const [selectedLogSummary, setSelectedLogSummary] = useState<AuditLog | null>(null)
 
+  // Named persons and discount ID registry (Supabase sync)
   const fetchNamedPersonsFromSupabase = async () => {
     try {
       const { data, error } = await supabase
@@ -237,6 +240,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     return p.name.toLowerCase().includes(q) || p.idNumber.toLowerCase().includes(q) || (p.discountType || "").toLowerCase().includes(q)
   })
 
+  // Staff attendance tracking and realtime synchronization
   const loadAttendanceLogs = async () => {
     try {
       const [attRes, profRes] = await Promise.all([
@@ -312,6 +316,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
   const [auditSearchQuery, setAuditSearchQuery] = useState("")
   const [batchSearchQuery, setBatchSearchQuery] = useState("")
 
+  // Database master reset and factory wipe operations
   const [resetConfirmInput, setResetConfirmInput] = useState("")
   const [showResetModal, setShowResetModal] = useState<"inventory" | "sales" | "audit" | "all" | null>(null)
   
@@ -422,6 +427,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     setIsLoading(false)
   }
 
+  // Realtime database subscriptions and active user heartbeat tracking
   useEffect(() => {
     fetchAllAdminData()
 
@@ -543,6 +549,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     }
   }
 
+  // Operator account management (create, edit, roles, force logout)
   const fetchProfiles = async () => {
     const { data, error } = await supabase
       .from("operator_profiles")
@@ -694,6 +701,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
            parsedDate.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })
   }
 
+  // Batch sales and stock grouping and search filters
   const groupSalesByTransaction = () => {
     // Group ALL items per sale_id (not just first item)
     const map = new Map<number, {
@@ -983,6 +991,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     return matchId || matchItem || matchBatches;
   });
 
+  // Excel and CSV workbook export handlers
   const handleExportAuditLogsCSV = () => {
     if (filteredAuditLogs.length === 0) return;
     const headers = ["Log ID", "Time & Date", "Operator Username", "Module Target", "Action Type", "Details Summary"];
@@ -1032,6 +1041,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
 
   const displayProfiles = profiles
 
+  // Main admin dashboard layout
   return (
     <>
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 text-xs font-medium font-sans">
@@ -1039,7 +1049,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
         {/* Left Column: Register Account & Directory (Col-span 4) */}
         <div className="lg:col-span-4 space-y-6">
           
-          {/* Register New Account Profile */}
+          {/* Card 1: Register New Account Profile */}
           <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-5 shadow-xs space-y-4">
             <h3 className="font-bold text-gray-900 dark:text-white text-sm flex items-center gap-2">
               <UserPlus className="w-4 h-4 text-blue-600 dark:text-blue-400" />
@@ -1359,7 +1369,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
         {/* Right Column: Audit Logs & Batch Logs (Col-span 8) */}
         <div className="lg:col-span-8 space-y-6">
 
-          {/* Staff Attendance Summary Log Card */}
+          {/* TABLE 1: Staff Attendance Summary Log Card */}
           <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 shadow-xs p-5 space-y-4">
             <div className="flex items-center justify-between border-b dark:border-slate-700 pb-3">
               <h3 className="font-bold text-gray-900 dark:text-white text-sm flex items-center gap-2">
@@ -1389,13 +1399,21 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                       <th className="p-2">Shift Duration</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-slate-700">
-                    {attendanceLogs.map((r: any) => {
+                  <tbody className="divide-y divide-gray-200 dark:divide-slate-700">
+                    {attendanceLogs.map((r: any, idx: number) => {
                       const inStr = new Date(r.timeIn).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
                       const outStr = r.timeOut ? new Date(r.timeOut).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "Active Shift"
                       const durationDisplay = r.durationMinutes ? `${Math.floor(r.durationMinutes / 60)}h ${r.durationMinutes % 60}m` : "-"
+                      const isEven = idx % 2 === 0
                       return (
-                        <tr key={r.id} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
+                        <tr
+                          key={r.id}
+                          className={`transition-colors ${
+                            isEven
+                              ? "bg-white dark:bg-slate-800 hover:bg-slate-200/60 dark:hover:bg-slate-700/70"
+                              : "bg-slate-100 dark:bg-slate-900 hover:bg-slate-200/80 dark:hover:bg-slate-700/80"
+                          }`}
+                        >
                           <td className="p-2 font-bold text-gray-800 dark:text-white">
                             {r.displayName || r.username} <span className="text-[10px] text-gray-400 font-normal">(@{r.username})</span>
                           </td>
@@ -1424,7 +1442,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
             </div>
           </div>
 
-          {/* Realtime System Audit Trail Logs Table */}
+          {/* TABLE 2: Realtime System Audit Trail Logs Table */}
           <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 shadow-xs p-5 space-y-4">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b dark:border-slate-700 pb-3">
               <h3 className="font-bold text-gray-900 dark:text-white text-sm flex items-center gap-2">
@@ -1492,7 +1510,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                     <th className="py-2 px-3 text-center">Summary</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y dark:divide-slate-700 font-mono text-[11px] bg-white dark:bg-slate-800">
+                <tbody className="divide-y divide-gray-200 dark:divide-slate-700 font-mono text-[11px]">
                   {filteredAuditLogs.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="py-8 text-center text-gray-400 dark:text-gray-500 font-sans">
@@ -1500,34 +1518,44 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                       </td>
                     </tr>
                   ) : (
-                    filteredAuditLogs.map(log => (
-                      <tr key={log.id} className="hover:bg-gray-50/50 dark:hover:bg-slate-700/50">
-                        <td className="py-2 px-3 text-gray-500 dark:text-gray-400 text-[10px] whitespace-nowrap">
-                          {formatDateString(log.created_at)}
-                        </td>
-                        <td className="py-2 px-3 font-bold text-gray-900 dark:text-slate-200">
-                          @{log.operator_username || "system"}
-                        </td>
-                        <td className="py-2 px-3">
-                          <span className="bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 px-1.5 py-0.5 rounded font-bold text-[9px]">
-                            {log.action_type}
-                          </span>
-                        </td>
-                        <td className="py-2 px-3 text-gray-600 dark:text-gray-300 font-sans text-[10px]">
-                          {log.module_target}
-                        </td>
-                        <td className="py-2 px-3 text-center">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedLogSummary(log)}
-                            className="text-blue-500 hover:text-blue-700 p-1"
-                            title="View Log Entry Details"
-                          >
-                            <Eye className="w-3.5 h-3.5 inline" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))
+                    filteredAuditLogs.map((log, idx) => {
+                      const isEven = idx % 2 === 0
+                      return (
+                        <tr
+                          key={log.id}
+                          className={`transition-colors ${
+                            isEven
+                              ? "bg-white dark:bg-slate-800 hover:bg-slate-200/60 dark:hover:bg-slate-700/70"
+                              : "bg-slate-100 dark:bg-slate-900 hover:bg-slate-200/80 dark:hover:bg-slate-700/80"
+                          }`}
+                        >
+                          <td className="py-2 px-3 text-gray-500 dark:text-gray-400 text-[10px] whitespace-nowrap">
+                            {formatDateString(log.created_at)}
+                          </td>
+                          <td className="py-2 px-3 font-bold text-gray-900 dark:text-slate-200">
+                            @{log.operator_username || "system"}
+                          </td>
+                          <td className="py-2 px-3">
+                            <span className="bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 px-1.5 py-0.5 rounded font-bold text-[9px]">
+                              {log.action_type}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 text-gray-600 dark:text-gray-300 font-sans text-[10px]">
+                            {log.module_target}
+                          </td>
+                          <td className="py-2 px-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedLogSummary(log)}
+                              className="text-blue-500 hover:text-blue-700 p-1"
+                              title="View Log Entry Details"
+                            >
+                              <Eye className="w-3.5 h-3.5 inline" />
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })
                   )}
                 </tbody>
               </table>
@@ -1620,6 +1648,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
 
             <div className="max-h-80 overflow-y-auto pr-1 rounded-lg border border-gray-100 dark:border-slate-700">
               {batchTabMode === "sales" ? (
+                /* TABLE 3: Realtime Batch Sales Logs Table */
                 <table className="w-full text-left border-collapse">
                   <thead className="bg-gray-50/90 dark:bg-slate-900 text-[10px] text-gray-500 dark:text-gray-400 font-bold uppercase sticky top-0 backdrop-blur-xs z-10 border-b dark:border-slate-700">
                     <tr>
@@ -1630,7 +1659,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                       <th className="py-2.5 px-3 text-center">Receipt</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y dark:divide-slate-700 font-mono text-[11px] bg-white dark:bg-slate-800">
+                  <tbody className="divide-y divide-gray-200 dark:divide-slate-700 font-mono text-[11px]">
                     {filteredGroupedBatchSales.length === 0 ? (
                       <tr>
                         <td colSpan={5} className="py-12 text-center text-gray-400 dark:text-gray-500 font-sans">
@@ -1638,43 +1667,58 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                         </td>
                       </tr>
                     ) : (
-                      filteredGroupedBatchSales.map(sale => (
-                        <tr key={sale.sale_id} className={`hover:bg-gray-50/50 dark:hover:bg-slate-700/50 ${sale.isRefunded ? 'opacity-65 bg-red-50/20 dark:bg-red-950/20' : ''}`}>
-                          <td className="py-2.5 px-3 font-bold">
-                            <span className={sale.isRefunded ? 'text-gray-400 dark:text-slate-500 line-through' : 'text-blue-600 dark:text-blue-400'}>
-                              #{sale.sale_id}
-                            </span>
-                            {sale.isRefunded && (
-                              <span className="ml-1.5 px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-950/80 text-red-600 dark:text-red-400 text-[8px] font-bold">
-                                VOIDED
+                      filteredGroupedBatchSales.map((sale, idx) => {
+                        const isEven = idx % 2 === 0
+                        return (
+                          <tr
+                            key={sale.sale_id}
+                            className={`transition-colors ${
+                              sale.isRefunded
+                                ? isEven
+                                  ? 'opacity-70 bg-red-50 dark:bg-red-950/40 hover:bg-red-100/70 dark:hover:bg-red-950/60'
+                                  : 'opacity-70 bg-red-100/60 dark:bg-red-950/60 hover:bg-red-100 dark:hover:bg-red-950/80'
+                                : isEven
+                                  ? 'bg-white dark:bg-slate-800 hover:bg-slate-200/60 dark:hover:bg-slate-700/70'
+                                  : 'bg-slate-100 dark:bg-slate-900 hover:bg-slate-200/80 dark:hover:bg-slate-700/80'
+                            }`}
+                          >
+                            <td className="py-2.5 px-3 font-bold">
+                              <span className={sale.isRefunded ? 'text-gray-400 dark:text-slate-500 line-through' : 'text-blue-600 dark:text-blue-400'}>
+                                #{sale.sale_id}
                               </span>
-                            )}
-                          </td>
-                          <td className={`py-2.5 px-3 text-center font-bold ${sale.isRefunded ? 'text-gray-400 dark:text-slate-500 line-through' : 'text-gray-800 dark:text-slate-200'}`}>
-                            {sale.total_qty} pc
-                          </td>
-                          <td className={`py-2.5 px-3 text-right font-bold ${sale.isRefunded ? 'text-gray-400 dark:text-slate-500 line-through' : 'text-green-700 dark:text-green-400'}`}>
-                            ₱{sale.total_price.toFixed(2)}
-                          </td>
-                          <td className="py-2.5 px-3 text-right text-gray-400 dark:text-gray-400 text-[10px] font-sans whitespace-nowrap">
-                            {formatDateString(sale.created_at)}
-                          </td>
-                          <td className="py-2.5 px-3 text-center">
-                            <button
-                              type="button"
-                              onClick={() => setSelectedBatchReceiptSaleId(sale.sale_id)}
-                              className="text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 p-1 cursor-pointer"
-                              title="View Batch Receipt"
-                            >
-                              <Eye className="w-3.5 h-3.5 inline" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))
+                              {sale.isRefunded && (
+                                <span className="ml-1.5 px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-950/80 text-red-600 dark:text-red-400 text-[8px] font-bold">
+                                  VOIDED
+                                </span>
+                              )}
+                            </td>
+                            <td className={`py-2.5 px-3 text-center font-bold ${sale.isRefunded ? 'text-gray-400 dark:text-slate-500 line-through' : 'text-gray-800 dark:text-slate-200'}`}>
+                              {sale.total_qty} pc
+                            </td>
+                            <td className={`py-2.5 px-3 text-right font-bold ${sale.isRefunded ? 'text-gray-400 dark:text-slate-500 line-through' : 'text-green-700 dark:text-green-400'}`}>
+                              ₱{sale.total_price.toFixed(2)}
+                            </td>
+                            <td className="py-2.5 px-3 text-right text-gray-400 dark:text-gray-400 text-[10px] font-sans whitespace-nowrap">
+                              {formatDateString(sale.created_at)}
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedBatchReceiptSaleId(sale.sale_id)}
+                                className="text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 p-1 cursor-pointer"
+                                title="View Batch Receipt"
+                              >
+                                <Eye className="w-3.5 h-3.5 inline" />
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })
                     )}
                   </tbody>
                 </table>
               ) : (
+                /* TABLE 4: Realtime Stock Additions & Deductions Table */
                 <table className="w-full text-left border-collapse">
                   <thead className="bg-gray-50/90 dark:bg-slate-900 text-[10px] text-gray-500 dark:text-slate-400 font-bold uppercase sticky top-0 backdrop-blur-xs z-10 border-b dark:border-slate-700">
                     <tr>
@@ -1686,7 +1730,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                       <th className="py-2.5 px-3 text-center">Voucher</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y dark:divide-slate-700 font-mono text-[11px] bg-white dark:bg-slate-800">
+                  <tbody className="divide-y divide-gray-200 dark:divide-slate-700 font-mono text-[11px]">
                     {filteredStockAdditions.length === 0 ? (
                       <tr>
                         <td colSpan={6} className="py-12 text-center text-gray-400 dark:text-slate-500 font-sans">
@@ -1694,10 +1738,22 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                         </td>
                       </tr>
                     ) : (
-                      filteredStockAdditions.map(group => {
+                      filteredStockAdditions.map((group, idx) => {
                         const isDeduct = Boolean(group.isDeduction || group.total_stock < 0)
+                        const isEven = idx % 2 === 0
                         return (
-                          <tr key={group.id} className="hover:bg-gray-50/50 dark:hover:bg-slate-700/50">
+                          <tr
+                            key={group.id}
+                            className={`transition-colors ${
+                              isDeduct
+                                ? isEven
+                                  ? 'bg-red-50 dark:bg-red-950/40 hover:bg-red-100/70 dark:hover:bg-red-950/60'
+                                  : 'bg-red-100/60 dark:bg-red-950/60 hover:bg-red-100 dark:hover:bg-red-950/80'
+                                : isEven
+                                  ? 'bg-white dark:bg-slate-800 hover:bg-slate-200/60 dark:hover:bg-slate-700/70'
+                                  : 'bg-slate-100 dark:bg-slate-900 hover:bg-slate-200/80 dark:hover:bg-slate-700/80'
+                            }`}
+                          >
                             <td className="py-2.5 px-3 font-bold">
                               {isDeduct ? (
                                 <span className="text-red-600 dark:text-red-400 flex items-center gap-1.5 flex-wrap">
@@ -1759,7 +1815,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
 
       </div>
 
-      {/* Styled Audit Trail Entry Details Modal (Dark Theme Design) */}
+      {/* Styled Audit Trail Entry Details Modal */}
       {selectedLogSummary && (
         <div className="fixed inset-0 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 z-50 font-sans">
           <div className="bg-[#182232] rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl border border-slate-700/60 text-white">
