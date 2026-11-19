@@ -338,7 +338,7 @@ export default function App() {
       pendingTimeInUsers.current.delete(target)
     }
   }
-
+// global shift lock verify
   const [hasActiveShift, setHasActiveShift] = useState<boolean>(() => {
     return sessionStorage.getItem("pinv_active_shift_verified") === "true"
   })
@@ -383,7 +383,7 @@ export default function App() {
       setIsVerifyingShift(false)
     }
   }
-
+//end
   useEffect(() => {
     if (currentOperator?.username) {
       autoTimeInUser(currentOperator)
