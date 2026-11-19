@@ -32,6 +32,7 @@ export function LoginScreen({ onAuthSuccess, theme }: LoginScreenProps) {
       return
     }
 
+    // Fetch user profile by username from operator_profiles table
     const { data: userProfile, error } = await supabase
       .from("operator_profiles")
       .select("*")

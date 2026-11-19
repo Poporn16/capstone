@@ -92,6 +92,7 @@ export function POSCheckout({
 
   useEffect(() => {
     const fetchNamedPersonsFromDb = async () => {
+      // Fetch registered discount persons (PWD/Senior) from named_persons table
       const { data } = await supabase.from("named_persons").select("*").order("id", { ascending: false })
       if (data) {
         const formatted = data.map((d: any) => ({
@@ -667,6 +668,7 @@ export function POSCheckout({
       )
       if (!existing) {
         try {
+          // Insert new discount person (PWD/Senior) into named_persons table
           const { error } = await supabase.from("named_persons").insert([{
             id_number: activeIdNumber,
             name: trimmedCustomer,
@@ -705,6 +707,7 @@ export function POSCheckout({
     }
 
     try {
+      // Calls handleProcessSale in App.tsx to insert sale to database and deduct stock
       onCompleteSale(saleRecord as any)
     } catch (err) {
       console.error("onCompleteSale error:", err)

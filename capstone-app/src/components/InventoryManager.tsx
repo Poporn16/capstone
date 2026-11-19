@@ -214,7 +214,7 @@ export function InventoryManager({
         currentItemName: "Pre-fetching database indexes..."
       }))
 
-      // Step 1: Pre-fetch existing inventory & categories in single queries
+      // Step 1: Pre-fetch existing inventory & categories
       const existingDbItems = await fetchAllSupabaseRows("inventory", "id, name, barcode")
       const existingDbCategories = await fetchAllSupabaseRows("product_categories", "name")
 
@@ -290,9 +290,10 @@ export function InventoryManager({
         })
       }
 
-      // Step 3: Insert new categories in 1 bulk query if needed
+      // Step 3: Insert new categories in bulk if needed
       if (newCategoriesToInsertSet.size > 0 && !isCancelledRef.current) {
         const newCatsArr = Array.from(newCategoriesToInsertSet).map(c => ({ name: c }))
+        // Bulk insert new categories into product_categories table
         await supabase.from("product_categories").insert(newCatsArr)
         newCategoriesToInsertSet.forEach(c => categorySet.add(c))
         await refreshCategories()
@@ -341,6 +342,7 @@ export function InventoryManager({
 
         let upErr: any = null
         for (let attempt = 0; attempt < 3; attempt++) {
+          // Bulk update modified items in inventory table
           const res = await supabase.from("inventory").upsert(cleanPayload)
           upErr = res.error
           if (!upErr) break
@@ -420,6 +422,7 @@ export function InventoryManager({
         let insertedItems: any = null
 
         for (let attempt = 0; attempt < 3; attempt++) {
+          // Bulk insert new products into inventory table
           const res = await supabase.from("inventory").insert(insertPayload).select("id, name")
           insErr = res.error
           insertedItems = res.data
@@ -494,6 +497,7 @@ export function InventoryManager({
           const batchChunk = batchesToInsert.slice(i, i + 100)
           let batchErr: any = null
           for (let attempt = 0; attempt < 3; attempt++) {
+            // Bulk insert initial inventory batch stock into inventory_batches table
             const res = await supabase.from("inventory_batches").insert(batchChunk)
             batchErr = res.error
             if (!res.error) break
@@ -539,6 +543,7 @@ export function InventoryManager({
     const cleaned = newCatInput.trim().toLowerCase()
     if (!cleaned || cleaned === "unmarked category") return
     
+    // Insert single category into product_categories table
     await supabase.from("product_categories").insert({ name: cleaned })
     setNewCatInput("")
     await refreshCategories()
@@ -549,7 +554,9 @@ export function InventoryManager({
     if (catToRemove === "unmarked category") return
     if (!window.confirm(`Delete "${catToRemove.toUpperCase()}"? Linked items will move to "unmarked category".`)) return
 
+    // Reassign products belonging to deleted category to unmarked category
     await supabase.from("inventory").update({ category: "unmarked category" }).eq("category", catToRemove)
+    // Delete category from product_categories table
     await supabase.from("product_categories").delete().eq("name", catToRemove)
     
     await refreshCategories()
@@ -564,6 +571,7 @@ export function InventoryManager({
     setEditForm({ ...item })
   }
 
+  // Calls updateInventoryItem in App.tsx to update product in inventory table
   const saveEdit = () => {
     if (!editingItem) return
     const targetItem = inventory.find(i => String(i.id) === String(editingItem.id))
@@ -591,6 +599,7 @@ export function InventoryManager({
     onUpdateInventory(updated)
     setQuickCategoryPopoverItemId(null)
     try {
+      // Update category for single product in inventory table
       await supabase.from("inventory").update({ category: newCategory }).eq("id", Number(itemId))
       if (onLogAction) {
         await onLogAction("UPDATE_ITEM_CATEGORY", "ITEM_SPECIFICATIONS", `Assigned category "${newCategory}" to product "${item.name}"`)
@@ -610,6 +619,7 @@ export function InventoryManager({
     try {
       const numIds = ids.map(id => Number(id)).filter(id => !isNaN(id))
       if (numIds.length > 0) {
+        // Batch update category for multiple product IDs in inventory table
         await supabase.from("inventory").update({ category: targetCategory }).in("id", numIds)
       }
       if (onLogAction) {
@@ -621,6 +631,7 @@ export function InventoryManager({
     setSelectedProductIds(new Set())
   }
 
+  // Calls updateInventoryItem in App.tsx to insert new product into inventory table
   const addNewItem = () => {
     if (!newItem.name || !newItem.name.trim()) return
     const item: any = {

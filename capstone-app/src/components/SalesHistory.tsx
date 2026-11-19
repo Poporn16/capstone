@@ -52,6 +52,7 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
   }, [searchQuery, dateFrame, startDate, endDate, statusCondition, paymentRoute, customerFilter]);
 
   useEffect(() => {
+    // Realtime subscription listening for sales updates across terminals
     const salesChannel = supabase
       .channel("realtime-sales-history")
       .on(
@@ -231,6 +232,7 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
 
   const [voidConfirmSale, setVoidConfirmSale] = useState<{ id: string; isRefunded: boolean; total: number } | null>(null);
 
+  // Triggers handleToggleRefund in App.tsx to void receipt and restore stock in database
   const handleToggleAction = (saleId: string, currentStatus: boolean) => {
     onToggleRefund(saleId, currentStatus);
     setVoidConfirmSale(null);

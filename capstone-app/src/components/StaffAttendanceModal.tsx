@@ -138,8 +138,11 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
 
   const fetchAttendanceFromDb = async () => {
     try {
+      // Fetch attendance logs and staff profile data
       const [attRes, profRes] = await Promise.all([
+        // Fetch attendance records from staff_attendance table
         supabase.from("staff_attendance").select("*").order("id", { ascending: false }),
+        // Fetch operator accounts from operator_profiles table
         supabase.from("operator_profiles").select("username, system_role, display_name")
       ])
 
@@ -180,6 +183,7 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
             const cappedOut = new Date(inT + MAX_SHIFT_MS).toISOString()
             s.time_out = cappedOut
             s.duration_minutes = MAX_SHIFT_MINUTES
+            // Update expired shift with auto time-out in staff_attendance table
             await supabase.from("staff_attendance").update({
               time_out: cappedOut,
               duration_minutes: MAX_SHIFT_MINUTES
@@ -210,6 +214,7 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
         })
 
         if (duplicateIdsToDelete.length > 0) {
+          // Delete duplicate shift rows from staff_attendance table
           await supabase.from("staff_attendance").delete().in("id", duplicateIdsToDelete)
         }
 
@@ -283,7 +288,7 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
       time_in_photo: timeInPhoto || null
     }
 
-    // Direct insert to Supabase staff_attendance table
+    // Insert new time-in record into staff_attendance table
     const { error } = await supabase
       .from("staff_attendance")
       .insert([payload])
@@ -291,6 +296,7 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
     if (error) {
       console.warn("Time in DB error (retrying without photo column if missing):", error.message)
       delete payload.time_in_photo
+      // Fallback insert of time-in record without photo column
       await supabase.from("staff_attendance").insert([payload])
     }
 
@@ -338,6 +344,7 @@ export function StaffAttendanceModal({ currentOperator, onClose, onLogAction }: 
 
     const numId = Number(activeSession.id)
     if (!isNaN(numId)) {
+      // Update shift with time-out and duration in staff_attendance table
       await supabase.from("staff_attendance").update({
         time_out: timeOutIso,
         duration_minutes: durationMinutes

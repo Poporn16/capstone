@@ -71,7 +71,9 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
   const loadAttendance = async () => {
     try {
       const [attRes, profRes] = await Promise.all([
+        // Fetch all attendance logs from staff_attendance table
         supabase.from("staff_attendance").select("*").order("id", { ascending: false }),
+        // Fetch operator accounts from operator_profiles table
         supabase.from("operator_profiles").select("username, system_role, display_name")
       ])
 
@@ -104,6 +106,7 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
             const cappedOut = new Date(inT + MAX_SHIFT_MS).toISOString()
             s.time_out = cappedOut
             s.duration_minutes = MAX_SHIFT_MINUTES
+            // Update expired shift with auto time-out in staff_attendance table
             await supabase.from("staff_attendance").update({
               time_out: cappedOut,
               duration_minutes: MAX_SHIFT_MINUTES
@@ -122,6 +125,7 @@ export function StaffAttendancePage({ currentOperator, onLogAction }: StaffAtten
               const cappedOut = new Date(inT + MAX_SHIFT_MS).toISOString()
               b.time_out = cappedOut
               b.duration_minutes = MAX_SHIFT_MINUTES
+              // Update bloated duration records in staff_attendance table
               await supabase.from("staff_attendance").update({
                 time_out: cappedOut,
                 duration_minutes: MAX_SHIFT_MINUTES

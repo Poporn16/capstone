@@ -577,6 +577,7 @@ export default function App() {
         await supabase.from('inventory').delete().eq('id', validNum)
       }
 
+      // Fallback cleanup by string target ID
       await supabase.from('sale_items').delete().eq('item_id', String(targetId))
       await supabase.from('inventory_batches').delete().eq('item_id', String(targetId))
       await supabase.from('inventory').delete().eq('id', String(targetId))
@@ -800,15 +801,20 @@ export default function App() {
       { data: saleBatchesData },
       salesPhotoRes
     ] = await Promise.all([
+      // Fetch all sales transaction history with joined line items from view_sales_history
       supabase.from('view_sales_history').select('*').range(0, 99999),
+      // Fetch all product specifications from inventory table
       supabase.from('inventory').select('*').range(0, 99999),
+      // Fetch all active stock batches from inventory_batches table
       supabase.from('inventory_batches').select('*').range(0, 99999),
+      // Fetch batch deduction logs from sale_item_batches table
       supabase.from('sale_item_batches').select('*').range(0, 99999),
       (async () => {
         try {
+          // Fetch payment proof photos and reference numbers from sales table
           const res = await supabase.from('sales').select('id, payment_proof_photo, reference_number').range(0, 99999)
           if (!res.error) return res
-          // Fallback query if reference_number column is not yet migrated in database
+          // Fallback if reference_number column is not present in database
           return await supabase.from('sales').select('id, payment_proof_photo').range(0, 99999)
         } catch {
           return { data: [], error: null }
@@ -932,7 +938,7 @@ export default function App() {
       return
     }
 
-    // 2. Standard multi-table query fallback
+    // 2. Standard multi-table fallback
     const { data: salesData } = await supabase.from('sales').select('*').range(0, 99999)
     const { data: saleItemsData } = await supabase.from('sale_items').select('*').range(0, 99999)
 
@@ -1088,11 +1094,13 @@ export default function App() {
       payload.id = 1
     }
 
+    // Insert main sale transaction record into sales table
     let { data: newSale, error: saleError } = await supabase.from('sales').insert(payload).select('id').single()
 
     if (saleError && isResetState) {
       // If explicit ID 1 failed (e.g. strict identity generated always), retry without explicit ID
       delete payload.id
+      // Retry insert of sale record without hardcoded id
       const retryResult = await supabase.from('sales').insert(payload).select('id').single()
       newSale = retryResult.data
       saleError = retryResult.error
@@ -1103,6 +1111,7 @@ export default function App() {
     } else {
       console.error("Full payload failed:", saleError?.message)
       // Minimal fallback - only required fields
+      // Fallback insert of sale record into sales table
       const { data: fallbackSale, error: fbErr } = await supabase.from('sales').insert({
         date: sale.date.toISOString(),
         total: sale.total,
@@ -1125,6 +1134,7 @@ export default function App() {
         // Try to update online_channel separately
         if (onlineChanValue && saleId) {
           try {
+            // Update online channel payment provider (GCash/Maya)
             await supabase.from('sales').update({ online_channel: onlineChanValue }).eq('id', saleId)
           } catch (e) {}
         }
@@ -1144,12 +1154,14 @@ export default function App() {
 
     if (sale.referenceNumber && saleId) {
       try {
+        // Update payment reference number on receipt
         await supabase.from('sales').update({ reference_number: sale.referenceNumber }).eq('id', saleId)
       } catch (e) {}
     }
 
     if (sale.paymentProofPhoto && saleId) {
       try {
+        // Update digital payment proof screenshot photo URL
         await supabase.from('sales').update({ payment_proof_photo: sale.paymentProofPhoto }).eq('id', saleId)
       } catch (e) {}
     }
@@ -1171,9 +1183,11 @@ export default function App() {
           quantity: si.quantity, 
           unit_price: si.item.price 
         }))
+        // Insert line items for this sale receipt into sale_items table
         const { error: itemsErr } = await supabase.from('sale_items').insert(saleItems)
         if (itemsErr) {
           const basicItems = sale.items.map(si => ({ sale_id: saleId, item_id: si.item.id, quantity: si.quantity }))
+          // Fallback insert of sale items
           await supabase.from('sale_items').insert(basicItems)
         }
 
@@ -1187,6 +1201,7 @@ export default function App() {
           quantity_deducted: si.quantity,
           unit_price: si.batch && si.batch.price > 0 ? si.batch.price : si.item.price
         }))
+        // Insert batch deduction records into sale_item_batches table
         await supabase.from('sale_item_batches').insert(batchRows)
       }
 
@@ -1199,6 +1214,7 @@ export default function App() {
 
         // 1. If cashier specifically selected a batch/option, deduct directly from that batch
         if (specificBatchId || specificBatchLabel) {
+          // Fetch specific batch by item_id and batch id/label
           let batchQuery = supabase
             .from('inventory_batches')
             .select('*')
@@ -1215,8 +1231,10 @@ export default function App() {
             const currentBatchStock = Number(specificBatchData.stock) || 0
             const newStock = Math.max(0, currentBatchStock - qtyToDeduct)
             if (newStock <= 0) {
+              // Delete batch if quantity reaches 0
               await supabase.from('inventory_batches').delete().eq('id', specificBatchData.id)
             } else {
+              // Deduct sold quantity from target batch in inventory_batches table
               await supabase.from('inventory_batches').update({ stock: newStock }).eq('id', specificBatchData.id)
             }
             continue
@@ -1224,6 +1242,7 @@ export default function App() {
         }
 
         // 2. Fallback: Fetch active batches for target item and deduct via FEFO
+        // Fetch all active batches for item to apply FEFO deduction
         const { data: itemBatches } = await supabase
           .from('inventory_batches')
           .select('*')
@@ -1247,11 +1266,13 @@ export default function App() {
             remainingDeduct -= deductFromThis
 
             if (newStock <= 0) {
+              // Remove depleted stock batch from inventory_batches table
               await supabase
                 .from('inventory_batches')
                 .delete()
                 .eq('id', batch.id)
             } else {
+              // Deduct sold quantity from FEFO batch in inventory_batches table
               await supabase
                 .from('inventory_batches')
                 .update({ stock: newStock })
@@ -1261,9 +1282,11 @@ export default function App() {
         } else {
           // Fallback: If item has no batch rows, attempt updating inventory table directly if stock column exists
           try {
+            // Fallback check for single inventory row
             const { data: invItem } = await supabase.from('inventory').select('*').eq('id', targetItemId).maybeSingle()
             if (invItem && (invItem as any).stock != null) {
               const newInvStock = Math.max(0, Number((invItem as any).stock) - qtyToDeduct)
+              // Update stock column directly in inventory table
               await supabase.from('inventory').update({ stock: newInvStock } as any).eq('id', targetItemId)
             }
           } catch (e) {}
@@ -1285,12 +1308,15 @@ export default function App() {
     triggerGlobalSync()
   }
 
+  // Update or insert inventory item
   const updateInventoryItem = async (item: InventoryItem) => {
     const payload = { name: item.name, category: item.category, min_stock: item.minStock, barcode: item.barcode, manufacturer: item.manufacturer }
     if (item.id && item.id.trim() !== "") {
+      // Update existing product in inventory table
       await supabase.from('inventory').update(payload).eq('id', Number(item.id))
       await logSystemAction("UPDATE_PRODUCT", "ITEM_SPECIFICATIONS", `Modified "${item.name}"`)
     } else {
+      // Insert new product into inventory table
       await supabase.from('inventory').insert(payload)
       await logSystemAction("CREATE_PRODUCT", "ITEM_SPECIFICATIONS", `Registered "${item.name}"`)
     }
@@ -1318,6 +1344,7 @@ export default function App() {
     healVoidedBatch()
   }, [])
 
+  // Void receipt and restore stock to inventory
   const handleToggleRefund = async (id: string, status: boolean) => {
     const newStatus = !status
     const targetSale = sales.find(s => String(s.id) === String(id) || String(s.dbId) === String(id))
@@ -1329,12 +1356,14 @@ export default function App() {
     try {
       const numId = Number(realDbId)
 
+      // Void or restore receipt status in sales table
       if (!isNaN(numId)) {
         await supabase.from('sales').update({ is_refunded: newStatus }).eq('id', numId)
       }
+      // Fallback update receipt status in sales table
       await supabase.from('sales').update({ is_refunded: newStatus }).eq('id', String(realDbId))
 
-      // 1. Fetch batch deduction records for this sale from sale_item_batches
+      // Fetch batch deduction records for this sale from sale_item_batches
       const queryId = !isNaN(numId) ? numId : realDbId
       const { data: saleBatches } = await supabase
         .from('sale_item_batches')
@@ -1372,6 +1401,7 @@ export default function App() {
 
           // If itemId not yet known, lookup from inventory
           if (!resolvedItemId) {
+            // Find product info by name from inventory table
             const { data: inv } = await supabase
               .from('inventory')
               .select('id, price, cost')
@@ -1390,6 +1420,7 @@ export default function App() {
           let existingBatch: any = null
 
           if (it.batchId) {
+            // Check if original batch row exists in inventory_batches table
             const { data: bById } = await supabase
               .from('inventory_batches')
               .select('*')
@@ -1399,6 +1430,7 @@ export default function App() {
           }
 
           if (!existingBatch) {
+            // Select candidate batches for item from inventory_batches table
             const { data: batches } = await supabase
               .from('inventory_batches')
               .select('*')
@@ -1415,6 +1447,7 @@ export default function App() {
 
           if (existingBatch) {
             const updatedStock = (Number(existingBatch.stock) || 0) + it.qty
+            // Restore returned stock back to inventory_batches table
             await supabase
               .from('inventory_batches')
               .update({ stock: updatedStock })
@@ -1435,7 +1468,7 @@ export default function App() {
               return invItem
             }))
           } else {
-            // Recreate batch if it was deleted when stock hit 0
+            // Re-insert batch into inventory_batches table if previously deleted
             await supabase.from('inventory_batches').insert({
               item_id: resolvedItemId,
               batch_label: it.batchLabel || "DEFAULT",
@@ -1496,11 +1529,13 @@ export default function App() {
         for (const it of itemsToDeduct) {
           let resolvedItemId = it.itemId
           if (!resolvedItemId) {
+            // Find product by name from inventory table
             const { data: inv } = await supabase.from('inventory').select('id').ilike('name', it.itemName).maybeSingle()
             if (inv) resolvedItemId = inv.id
           }
           if (!resolvedItemId) continue
 
+          // Select batches from inventory_batches table
           const { data: batches } = await supabase
             .from('inventory_batches')
             .select('*')
@@ -1516,8 +1551,10 @@ export default function App() {
             if (match) {
               const newStock = Math.max(0, (Number(match.stock) || 0) - it.qty)
               if (newStock <= 0) {
+                // Delete depleted batch when void is reverted
                 await supabase.from('inventory_batches').delete().eq('id', match.id)
               } else {
+                // Deduct stock from inventory_batches table when void is reverted
                 await supabase.from('inventory_batches').update({ stock: newStock }).eq('id', match.id)
               }
 

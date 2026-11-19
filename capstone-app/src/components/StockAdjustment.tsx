@@ -107,6 +107,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
       const numId = Number(selectedItem.id)
       const targetId = !isNaN(numId) ? numId : selectedItem.id
       
+      // Update product manufacturer in inventory table
       await supabase.from("inventory").update({ manufacturer: newBrand }).eq("id", targetId as any)
       setSelectedItem(prev => prev ? { ...prev, manufacturer: newBrand } : null)
       if (onLogAction) {
@@ -365,7 +366,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
         }
       })
 
-      // Query DB for any items missing from prop
+      // Fetch items from database missing from prop
       const missingNamesSet = new Set<string>()
       for (let i = 1; i < rows.length; i++) {
         const pName = rows[i]?.[0]?.trim()
@@ -482,6 +483,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
           for (let i = 0; i < minStockUpdates.length; i += 10) {
             if (isCancelledRef.current) break
             const chunk = minStockUpdates.slice(i, i + 10)
+            // Update minimum stock thresholds in inventory table
             await Promise.all(
               chunk.map(up => supabase.from("inventory").update({ min_stock: up.minStock }).eq("id", up.id))
             )
@@ -495,6 +497,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
           }))
           for (let i = 0; i < batchesToInsert.length; i += 100) {
             if (isCancelledRef.current) break
+            // Bulk insert restock batches into inventory_batches table
             const { error: batchInsErr } = await supabase.from("inventory_batches").insert(batchesToInsert.slice(i, i + 100))
             if (batchInsErr && (batchInsErr as any).code === "23505") {
               alert("Database primary key sequence conflict (code 23505).")
@@ -562,6 +565,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
       expiry_date: expiryDate || null
     }
 
+    // Insert new stock batch into inventory_batches table
     const { error } = await supabase.from("inventory_batches").insert(batchInsertPayload)
 
     if (error) {
@@ -600,6 +604,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
     if (nextStock === 0) {
       await handleDeleteBatch(batchId, batchName)
     } else {
+      // Update stock in inventory_batches table (manual deduction or adjustment)
       await supabase.from("inventory_batches").update({ stock: nextStock }).eq("id", Number(batchId))
     }
 
@@ -663,6 +668,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
     if (nextStock === 0) {
       await handleDeleteBatch(batchId, batchName)
     } else {
+      // Update stock in inventory_batches table (manual deduction or adjustment)
       await supabase.from("inventory_batches").update({ stock: nextStock }).eq("id", Number(batchId))
     }
 
@@ -702,6 +708,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
     if (!selectedItem) return
     const parsed = parseFloat(typedCost) || 0
 
+    // Update cost price in inventory_batches table
     await supabase.from("inventory_batches").update({ cost: parsed }).eq("id", Number(batchId))
     if (onLogAction) {
       await onLogAction("EDIT_BATCH_COST", "INVENTORY_MANAGEMENT", `Updated batch "${batchName}" cost to ₱${parsed.toFixed(2)} for item "${selectedItem.name}"`)
@@ -713,6 +720,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
     if (!selectedItem) return
     const parsed = parseFloat(typedPrice) || 0
 
+    // Update selling price in inventory_batches table
     await supabase.from("inventory_batches").update({ price: parsed }).eq("id", Number(batchId))
     if (onLogAction) {
       await onLogAction("EDIT_BATCH_PRICE", "INVENTORY_MANAGEMENT", `Updated batch "${batchName}" selling price to ₱${parsed.toFixed(2)} for item "${selectedItem.name}"`)
@@ -724,6 +732,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
     if (!selectedItem) return
     const sanitizedExpiry = newExpiry || null
 
+    // Update expiration date in inventory_batches table
     await supabase
       .from("inventory_batches")
       .update({ expiry_date: sanitizedExpiry })
@@ -745,17 +754,20 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
       
       setSelectedItem(prev => prev ? { ...prev, stock: newTotalStock, batches: remainingBatches } : null)
 
-      // 2. Clear linked sale_item_batches records if any
+      // Delete linked batch sales history
       await supabase.from("sale_item_batches").delete().eq("batch_label", batchName)
 
       const numId = Number(batchId)
       const targetId = !isNaN(numId) ? numId : batchId
+      // Delete stock batch from inventory_batches table
       const { error: delErr } = await supabase.from("inventory_batches").delete().eq("id", targetId as any)
       
       if (delErr) {
         console.warn("Delete by targetId failed, trying string format:", delErr)
+        // Fallback delete batch by string id
         await supabase.from("inventory_batches").delete().eq("id", String(batchId))
       }
+      // Cleanup delete batch by label
       await supabase.from("inventory_batches").delete().eq("batch_label", batchName)
 
       if (onLogAction) {

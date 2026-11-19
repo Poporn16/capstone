@@ -3,7 +3,7 @@ import { createPortal } from "react-dom"
 import { supabase, triggerForceLogout, fetchAllSupabaseRows } from "../utils/apiClient"
 import { downloadExcelWithAutoFit, downloadMultiSheetStockAdditionsWorkbook } from "../utils/excelUtils"
 import { hashPassword } from "../utils/passwordUtils"
-import { ShieldAlert, UserPlus, Trash2, History, RefreshCw, ShoppingBag, Eye, X, Flame, Database, AlertOctagon, RotateCcw, LogOut, Download, Edit, Users, Plus, Search, Edit2, Clock, CheckCircle2 } from "lucide-react"
+import { ShieldAlert, UserPlus, Trash2, History, RefreshCw, ShoppingBag, Eye, X, LogOut, Download, Edit, Users, Plus, Search, Edit2 } from "lucide-react"
 
 import type { NamedPerson, AuditLog, BatchSaleRecord, AccountProfile, Operator } from "../types"
 
@@ -61,38 +61,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     })
   }
 
-  const [opProgress, setOpProgress] = useState<{
-    isOpen: boolean
-    title: string
-    stepMessage: string
-    percent: number
-    isComplete: boolean
-    processedRows?: number
-    totalRows?: number
-    startTime?: number
-    isCancellable?: boolean
-    currentItemName?: string
-  }>({
-    isOpen: false,
-    title: "",
-    stepMessage: "",
-    percent: 0,
-    isComplete: false
-  })
 
-
-  const calculateEta = (processed: number, total: number, startTime: number) => {
-    if (processed === 0 || total === 0) return "Calculating..."
-    const elapsedMs = Date.now() - startTime
-    const msPerRecord = elapsedMs / processed
-    const remainingRecords = total - processed
-    const remainingMs = remainingRecords * msPerRecord
-    const seconds = Math.ceil(remainingMs / 1000)
-    if (seconds < 60) return `~${seconds}s remaining`
-    const minutes = Math.floor(seconds / 60)
-    const remSec = seconds % 60
-    return `~${minutes}m ${remSec}s remaining`
-  }
 
 
   const [selectedBatchReceiptSaleId, setSelectedBatchReceiptSaleId] = useState<number | null>(null)
@@ -170,12 +139,14 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
       if (editingPerson) {
         const numId = Number(editingPerson.id)
         if (!isNaN(numId) && numId > 0) {
+          // Update discount person record by id in named_persons table
           await supabase.from('named_persons').update({
             id_number: cleanIdNumber,
             name: cleanName,
             discount_type: cleanDiscount
           }).eq('id', numId)
         } else {
+          // Update discount person record by id_number in named_persons table
           await supabase.from('named_persons').update({
             id_number: cleanIdNumber,
             name: cleanName,
@@ -184,6 +155,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
         }
         setEditingPerson(null)
       } else {
+        // Insert new discount person record into named_persons table
         await supabase.from('named_persons').insert([{
           id_number: cleanIdNumber,
           name: cleanName,
@@ -214,8 +186,10 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     try {
       const numId = Number(id)
       if (!isNaN(numId) && numId > 0) {
+        // Delete discount person record by id from named_persons table
         await supabase.from('named_persons').delete().eq('id', numId)
       } else if (target) {
+        // Delete discount person record by id_number from named_persons table
         await supabase.from('named_persons').delete().eq('id_number', target.idNumber)
       }
     } catch (e) {
@@ -244,7 +218,9 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
   const loadAttendanceLogs = async () => {
     try {
       const [attRes, profRes] = await Promise.all([
+        // Fetch recent attendance logs from staff_attendance table
         supabase.from("staff_attendance").select("*").order("id", { ascending: false }).limit(200),
+        // Fetch staff profiles from operator_profiles table
         supabase.from("operator_profiles").select("username, system_role, display_name")
       ])
       const profMap = new Map<string, { role: string; name: string }>()
@@ -316,116 +292,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
   const [auditSearchQuery, setAuditSearchQuery] = useState("")
   const [batchSearchQuery, setBatchSearchQuery] = useState("")
 
-  // Database master reset and factory wipe operations
-  const [resetConfirmInput, setResetConfirmInput] = useState("")
-  const [showResetModal, setShowResetModal] = useState<"inventory" | "sales" | "audit" | "all" | null>(null)
-  
-  const handleExecuteMasterReset = async (type: "inventory" | "sales" | "audit" | "all") => {
-    if (resetConfirmInput.trim().toUpperCase() !== "CONFIRM") {
-      alert("Please type 'CONFIRM' in uppercase to execute master data reset.")
-      return
-    }
 
-    setIsLoading(true)
-    setOpProgress({
-      isOpen: true,
-      title: `Master Reset [${type.toUpperCase()}]`,
-      stepMessage: `Purging ${type.toUpperCase()} database tables...`,
-      percent: 30,
-      isComplete: false
-    })
-
-    try {
-      setOpProgress(p => ({ ...p, stepMessage: `Purging ${type.toUpperCase()} database tables...`, percent: 55 }))
-
-      if (type === "inventory" || type === "all") {
-        await supabase.from("inventory_batches").delete().neq("id", 0)
-        await supabase.from("sale_item_batches").delete().neq("id", 0)
-        await supabase.from("sale_items").delete().neq("id", 0)
-        await supabase.from("inventory").delete().neq("id", 0)
-        await supabase.from("product_categories").delete().neq("name", "unmarked category")
-      }
-
-      if (type === "sales" || type === "all") {
-        await supabase.from("sale_item_batches").delete().neq("id", 0)
-        await supabase.from("sale_items").delete().neq("id", 0)
-        await supabase.from("sales").delete().neq("id", 0)
-
-        try {
-          await supabase.rpc("reset_sales_sequence")
-          await supabase.rpc("reset_all_database_sequences")
-        } catch (e) {}
-      }
-
-      if (type === "inventory" || type === "all") {
-        try {
-          await supabase.rpc("reset_inventory_sequence")
-          await supabase.rpc("reset_all_database_sequences")
-        } catch (e) {}
-      }
-
-      if (type === "audit" || type === "all") {
-        await supabase.from("system_audit_logs").delete().neq("id", 0)
-        try {
-          await supabase.rpc("reset_all_database_sequences")
-        } catch (e) {}
-      }
-
-      if (type === "all") {
-        try {
-          try {
-            await supabase.from("staff_attendance").delete().not("id", "is", null)
-          } catch (e) {}
-          try {
-            await supabase.from("named_persons").delete().neq("id", 0)
-          } catch (e) {}
-          try {
-            await supabase.rpc("reset_named_persons_sequence")
-          } catch (e) {}
-          try {
-            await supabase.rpc("reset_all_database_sequences")
-          } catch (e) {}
-
-          localStorage.removeItem("pinv_named_persons_registry")
-          localStorage.removeItem("pinv_customer_sales_map")
-          localStorage.removeItem("pinv_staff_attendance")
-          localStorage.setItem("pinv_staff_attendance", JSON.stringify([]))
-          setAttendanceLogs([])
-          setNamedPersons([])
-          window.dispatchEvent(new Event("pinv_registry_updated"))
-          window.dispatchEvent(new Event("pinv_attendance_updated"))
-        } catch (e) {}
-      }
-
-      setOpProgress(p => ({ ...p, stepMessage: "Resetting auto-increment sequences and state...", percent: 85 }))
-
-      await onLogAction(
-        type === "all" ? "FACTORY_RESET" : "DATA_RESET",
-        "ADMIN_PANEL",
-        `Executed master data reset for: ${type.toUpperCase()}. All tables and registries cleared and ready for new data.`
-      )
-
-      setShowResetModal(null)
-      setResetConfirmInput("")
-
-      setOpProgress({
-        isOpen: true,
-        title: "Data Reset Complete",
-        stepMessage: `Master Data Reset Completed for [${type.toUpperCase()}]. All tables are ready for new data!`,
-        percent: 100,
-        isComplete: true
-      })
-
-      window.dispatchEvent(new Event("refresh_sales_data"))
-      window.dispatchEvent(new Event("pinv_sale_completed"))
-      if (refreshAllData) await refreshAllData()
-      await fetchAllAdminData()
-    } catch (err: any) {
-      alert(`Data reset error: ${err.message}`)
-      setOpProgress(p => ({ ...p, stepMessage: `Reset Error: ${err.message}`, isComplete: true }))
-    }
-    setIsLoading(false)
-  }
 
   // Realtime database subscriptions and active user heartbeat tracking
   useEffect(() => {
@@ -577,6 +444,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     e.preventDefault()
     if (!regUsername.trim() || !regPin.trim() || !regDisplayName.trim()) return
 
+    // Insert new operator account into operator_profiles table
     const { error } = await supabase.from("operator_profiles").insert({
       username: regUsername.trim().toLowerCase(),
       password_hash: hashPassword(regPin.trim()),
@@ -618,6 +486,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
       keysToRemove.forEach(k => localStorage.removeItem(k))
     } catch (e) {}
 
+    // Insert session termination audit log into system_audit_logs table
     await supabase.from("system_audit_logs").insert({
       operator_username: normUser,
       action_type: "SESSION_LOGOUT",
@@ -685,6 +554,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
   const handleDeleteProfile = async (profileId: number, username: string) => {
     if (!window.confirm(`Delete operator profile @${username}?`)) return
 
+    // Delete operator account from operator_profiles table
     await supabase.from("operator_profiles").delete().eq("id", profileId)
     await onLogAction("DELETE_OPERATOR", "ADMIN_PANEL", `Removed profile @${username}`)
     triggerForceLogout(username, "admin")
@@ -2077,73 +1947,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
         </div>
       )}
 
-      {/* Interactive Data Operation Progress Modal (Reset) */}
-      {opProgress.isOpen && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200 font-sans">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border dark:border-slate-700 font-sans">
-            <div className="flex items-center justify-between">
-              <h3 className="font-extrabold text-base text-gray-900 dark:text-white flex items-center gap-2">
-                <RefreshCw className={`w-5 h-5 text-blue-600 dark:text-blue-400 ${!opProgress.isComplete ? 'animate-spin' : ''}`} />
-                {opProgress.title}
-              </h3>
-              <span className="text-xs font-mono font-extrabold px-2.5 py-1 bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 rounded-full border border-blue-200 dark:border-blue-800">
-                {opProgress.percent}%
-              </span>
-            </div>
 
-            {/* Animated Progress Track */}
-            <div className="w-full bg-gray-100 dark:bg-slate-900 rounded-full h-3.5 overflow-hidden p-0.5 border dark:border-slate-700">
-              <div
-                style={{ width: `${opProgress.percent}%` }}
-                className="bg-gradient-to-r from-blue-600 to-indigo-600 h-full rounded-full transition-all duration-300 shadow-sm"
-              />
-            </div>
-
-            {/* Record Counters & ETA (if available) */}
-            {opProgress.totalRows !== undefined && opProgress.totalRows > 0 && (
-              <div className="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400 font-sans">
-                <span>{opProgress.processedRows || 0} of {opProgress.totalRows} records</span>
-                {opProgress.startTime && !opProgress.isComplete && (
-                  <span className="font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5 font-mono">
-                    <Clock className="w-3.5 h-3.5 text-blue-500 animate-spin" />
-                    {calculateEta(opProgress.processedRows || 0, opProgress.totalRows, opProgress.startTime)}
-                  </span>
-                )}
-              </div>
-            )}
-
-            {/* Current Item status banner */}
-            <div className="p-3 bg-gray-50 dark:bg-slate-900 rounded-xl border dark:border-slate-700 text-xs space-y-1">
-              <div className="text-gray-400 dark:text-gray-400 text-[10px] uppercase tracking-wider font-bold">
-                Current Record Processing
-              </div>
-              <div className="font-semibold text-gray-800 dark:text-gray-200 truncate flex items-center gap-2">
-                {opProgress.isComplete ? (
-                  <div className="flex items-center gap-2 text-green-600 dark:text-green-400 font-bold">
-                    <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />
-                    <span>{opProgress.stepMessage}</span>
-                  </div>
-                ) : (
-                  <span>{opProgress.currentItemName || opProgress.stepMessage}</span>
-                )}
-              </div>
-            </div>
-
-
-            {opProgress.isComplete && (
-              <div className="pt-2 border-t dark:border-slate-700 flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => setOpProgress(p => ({ ...p, isOpen: false }))}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-md transition-all active:scale-95 cursor-pointer"
-                >
-                  Done & Close
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
     </>
   )
