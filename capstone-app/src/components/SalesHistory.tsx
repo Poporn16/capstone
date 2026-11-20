@@ -332,23 +332,23 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
   )
 
   return (
-    <div className="space-y-6 text-xs font-medium font-sans">
+    <div className="space-y-4 text-xs font-sans">
 
-      <div className="bg-white dark:bg-slate-800 p-5 rounded-xl border border-gray-100 dark:border-slate-700 shadow-sm space-y-4">
+      <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-sm space-y-3">
         <div className="relative">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-gray-400" />
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 dark:text-gray-400" />
           <input 
             type="text" 
             placeholder="Search by transaction date (e.g. 2026-11-02, Nov 2), customer name, ID, item, or operator..." 
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-xl font-medium text-gray-800 dark:text-white text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="w-full pl-9 pr-4 py-2 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-xl font-medium text-gray-800 dark:text-white text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
           {searchQuery && (
             <button
               type="button"
               onClick={() => setSearchQuery("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400 hover:text-gray-600 dark:hover:text-white"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400 hover:text-gray-600 dark:hover:text-white cursor-pointer"
             >
               Clear
             </button>
@@ -357,17 +357,17 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
 
         {/* Named Customers Quick Filter Bar */}
         {uniqueCustomerNames.length > 0 && (
-          <div className="space-y-1 pt-1 border-t border-gray-100 dark:border-slate-700/60">
-            <span className="block text-[9px] font-bold text-gray-400 dark:text-gray-400 uppercase tracking-wider">
+          <div className="space-y-1.5 pt-1 border-t border-gray-100 dark:border-slate-700/60">
+            <span className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
               Filter By Named Customer Profile ({uniqueCustomerNames.length}):
             </span>
-            <div className="flex flex-wrap gap-1">
+            <div className="flex flex-wrap gap-1.5">
               {uniqueCustomerNames.slice(0, 15).map(cName => (
                 <button
                   key={cName}
                   type="button"
                   onClick={() => setSearchQuery(searchQuery.toLowerCase() === cName.toLowerCase() ? "" : cName)}
-                  className={`px-2 py-0.5 rounded text-[10px] font-bold border transition-all ${
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
                     searchQuery.toLowerCase() === cName.toLowerCase()
                       ? "bg-blue-600 text-white border-blue-600 shadow-2xs"
                       : "bg-blue-50 dark:bg-blue-950/40 text-blue-800 dark:text-blue-300 border-blue-200 dark:border-blue-900 hover:bg-blue-100"
@@ -380,20 +380,20 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
           </div>
         )}
 
-        <div className="flex flex-wrap gap-6 items-center pt-1 text-[10px] text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider">
+        <div className="flex flex-wrap gap-6 items-center pt-1 text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider">
           <div className="space-y-1.5">
             <span className="block text-gray-400 dark:text-gray-400">Date Frame</span>
             <div className="flex flex-wrap bg-gray-100 dark:bg-slate-900 p-0.5 rounded-lg border dark:border-slate-700 gap-0.5">
               {(["all", "today", "week", "month", "custom"] as const).map(f => (
-                <button key={f} type="button" onClick={() => setDateFrame(f)} className={`px-3 py-1 rounded-md transition-all uppercase ${dateFrame === f ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs font-black' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}>{f}</button>
+                <button key={f} type="button" onClick={() => setDateFrame(f)} className={`px-3 py-1.5 rounded-md transition-all uppercase text-xs ${dateFrame === f ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs font-black' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}>{f}</button>
               ))}
             </div>
             {dateFrame === "custom" && (
               <div className="flex items-center gap-2 pt-1 font-sans">
-                <label className="text-gray-500 dark:text-gray-400 text-[10px] font-bold">From:</label>
-                <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="p-1 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-800 dark:text-white rounded text-xs" />
-                <label className="text-gray-500 dark:text-gray-400 text-[10px] font-bold">To:</label>
-                <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="p-1 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-800 dark:text-white rounded text-xs" />
+                <label className="text-gray-500 dark:text-gray-400 text-xs font-bold">From:</label>
+                <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="p-1.5 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-800 dark:text-white rounded-lg text-sm" />
+                <label className="text-gray-500 dark:text-gray-400 text-xs font-bold">To:</label>
+                <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="p-1.5 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-gray-800 dark:text-white rounded-lg text-sm" />
               </div>
             )}
           </div>
@@ -401,8 +401,8 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
           <div className="space-y-1.5">
             <span className="block text-gray-400 dark:text-gray-400">Status Condition</span>
             <div className="flex bg-gray-100 dark:bg-slate-900 p-0.5 rounded-lg border dark:border-slate-700">
-              {(["all", "completed", "voided"] as const).map(s => (
-                <button key={s} type="button" onClick={() => setStatusCondition(s)} className={`px-3 py-1 rounded-md transition-all ${statusCondition === s ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs font-black' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}>{s}</button>
+              {(["all", "COMPLETED", "VOIDED"] as const).map(s => (
+                <button key={s} type="button" onClick={() => setStatusCondition(s)} className={`px-3 py-1.5 rounded-md transition-all text-xs ${statusCondition === s ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-xs font-black' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}>{s}</button>
               ))}
             </div>
           </div>
@@ -413,7 +413,7 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
               <button
                 type="button"
                 onClick={() => setPaymentRoute("all")}
-                className={`px-3 py-1 rounded-md border transition-all text-[10px] font-bold uppercase tracking-wider cursor-pointer ${
+                className={`px-3 py-1.5 rounded-md border transition-all text-xs font-bold uppercase tracking-wider cursor-pointer ${
                   paymentRoute === "all"
                     ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
                     : 'bg-white dark:bg-slate-900 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-slate-700 hover:border-blue-300'
@@ -424,7 +424,7 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
               <button
                 type="button"
                 onClick={() => setPaymentRoute("cash")}
-                className={`px-3 py-1 rounded-md border transition-all text-[10px] font-bold uppercase tracking-wider cursor-pointer ${
+                className={`px-3 py-1.5 rounded-md border transition-all text-xs font-bold uppercase tracking-wider cursor-pointer ${
                   paymentRoute === "cash"
                     ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
                     : 'bg-white dark:bg-slate-900 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-slate-700 hover:border-blue-300'
@@ -549,54 +549,54 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs flex flex-col justify-between">
-          <span className="text-gray-400 dark:text-gray-400 font-bold text-[9px] uppercase tracking-wider">Revenue (Active Matrix Filtered)</span>
-          <h3 className="text-gray-900 dark:text-white font-bold text-lg mt-1 font-mono">₱{matrixRevenue.toFixed(2)}</h3>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs flex flex-col justify-between">
+          <span className="text-gray-500 dark:text-gray-400 font-bold text-[11px] uppercase tracking-wider">Revenue (Active Matrix Filtered)</span>
+          <h3 className="text-gray-900 dark:text-white font-extrabold text-base mt-1 font-mono">₱{matrixRevenue.toFixed(2)}</h3>
         </div>
-        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs flex flex-col justify-between">
-          <span className="text-gray-400 dark:text-gray-400 font-bold text-[9px] uppercase tracking-wider">Active Transactions Total Count</span>
-          <h3 className="text-gray-900 dark:text-white font-bold text-lg mt-1 font-mono">{activeTransactionsCount}</h3>
+        <div className="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs flex flex-col justify-between">
+          <span className="text-gray-500 dark:text-gray-400 font-bold text-[11px] uppercase tracking-wider">Active Transactions Total Count</span>
+          <h3 className="text-gray-900 dark:text-white font-extrabold text-base mt-1 font-mono">{activeTransactionsCount}</h3>
         </div>
-        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs flex flex-col justify-between">
-          <span className="text-gray-400 dark:text-gray-400 font-bold text-[9px] uppercase tracking-wider">Average Active Billing Cost Value</span>
-          <h3 className="text-gray-900 dark:text-white font-bold text-lg mt-1 font-mono">₱{averageValue.toFixed(2)}</h3>
+        <div className="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs flex flex-col justify-between">
+          <span className="text-gray-500 dark:text-gray-400 font-bold text-[11px] uppercase tracking-wider">Average Active Billing Cost Value</span>
+          <h3 className="text-gray-900 dark:text-white font-extrabold text-base mt-1 font-mono">₱{averageValue.toFixed(2)}</h3>
         </div>
-        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs flex flex-col justify-between">
-          <span className="text-gray-400 dark:text-gray-400 font-bold text-[9px] uppercase tracking-wider">No. of Transactions</span>
-          <h3 className="text-gray-900 dark:text-white font-bold text-lg mt-1 font-mono">{numberOfTransactions}</h3>
+        <div className="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs flex flex-col justify-between">
+          <span className="text-gray-500 dark:text-gray-400 font-bold text-[11px] uppercase tracking-wider">No. of Transactions</span>
+          <h3 className="text-gray-900 dark:text-white font-extrabold text-base mt-1 font-mono">{numberOfTransactions}</h3>
         </div>
-        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs flex flex-col justify-between">
-          <span className="text-gray-400 dark:text-gray-400 font-bold text-[9px] uppercase tracking-wider">Total Refunds</span>
+        <div className="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs flex flex-col justify-between">
+          <span className="text-gray-500 dark:text-gray-400 font-bold text-[11px] uppercase tracking-wider">Total Refunds</span>
           <div className="mt-1 flex items-baseline justify-between">
-            <h3 className="text-red-600 dark:text-red-400 font-bold text-lg font-mono">₱{totalRefundsAmount.toFixed(2)}</h3>
-            <span className="text-[9px] text-gray-400 dark:text-gray-400 font-bold">({totalRefundsCount} voided)</span>
+            <h3 className="text-red-600 dark:text-red-400 font-bold text-xl font-mono">₱{totalRefundsAmount.toFixed(2)}</h3>
+            <span className="text-xs text-gray-500 dark:text-gray-400 font-bold">({totalRefundsCount} voided)</span>
           </div>
         </div>
         <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 shadow-xs flex flex-col justify-between">
-          <span className="text-gray-400 dark:text-gray-400 font-bold text-[9px] uppercase tracking-wider">No. of Online Orders</span>
-          <h3 className="text-purple-700 dark:text-purple-300 font-bold text-lg mt-1 font-mono">{numberOfOnlineOrders}</h3>
+          <span className="text-gray-500 dark:text-gray-400 font-bold text-xs uppercase tracking-wider">No. of Online Orders</span>
+          <h3 className="text-purple-700 dark:text-purple-300 font-bold text-xl mt-1 font-mono">{numberOfOnlineOrders}</h3>
         </div>
       </div>
 
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-100 dark:border-slate-700 shadow-sm overflow-hidden">
         <div className="p-4 border-b border-gray-100 dark:border-slate-700 flex items-center justify-between">
-          <h3 className="font-bold text-gray-800 dark:text-white text-sm tracking-wide flex items-center gap-2">
+          <h3 className="font-bold text-gray-800 dark:text-white text-base tracking-wide flex items-center gap-2">
             Logged Invoices Explorer
-            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" title="Realtime Active" />
+            <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" title="Realtime Active" />
           </h3>
           {isAdmin ? (
             <button 
               type="button" 
               onClick={handleExportCSV} 
               disabled={filteredSales.length === 0}
-              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors disabled:opacity-50"
+              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg flex items-center gap-1.5 shadow-xs transition-colors disabled:opacity-50 text-xs cursor-pointer"
             >
-              <Download className="w-3.5 h-3.5" />
+              <Download className="w-4 h-4" />
               Export CSV
             </button>
           ) : (
-            <span className="text-[10px] text-gray-400 font-bold bg-gray-100 dark:bg-slate-700 px-2 py-1 rounded">
+            <span className="text-xs text-gray-400 font-bold bg-gray-100 dark:bg-slate-700 px-2.5 py-1 rounded">
               Export Admin-Only
             </span>
           )}
@@ -605,7 +605,7 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
         <div className="overflow-x-auto max-h-[580px] overflow-y-auto">
           <table className="w-full text-left border-collapse">
             <thead className="bg-gray-50 dark:bg-slate-900 border-b border-gray-100 dark:border-slate-700 sticky top-0 z-10 backdrop-blur-xs">
-              <tr className="text-gray-600 dark:text-gray-300 font-bold text-xs">
+              <tr className="text-gray-600 dark:text-gray-300 font-bold text-xs uppercase tracking-wider">
                 <th className="py-3 px-4">Transaction ID</th>
                 <th className="py-3 px-4">Date & Time</th>
                 <th className="py-3 px-4">Customer Name</th>
@@ -628,15 +628,15 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
                   const isEven = idx % 2 === 0
                   const rowBg = sale.isRefunded
                     ? isEven 
-                      ? "bg-red-50 dark:bg-red-950/40 text-gray-500 dark:text-gray-400 hover:bg-red-100/70 dark:hover:bg-red-950/60" 
-                      : "bg-red-100/70 dark:bg-red-950/60 text-gray-500 dark:text-gray-400 hover:bg-red-100 dark:hover:bg-red-950/80"
+                      ? "bg-red-50 dark:bg-red-950/40 hover:bg-red-100/70 dark:hover:bg-red-950/60" 
+                      : "bg-red-100/50 dark:bg-red-950/60 hover:bg-red-100 dark:hover:bg-red-950/80"
                     : isEven
-                      ? "bg-white dark:bg-slate-800 hover:bg-slate-200/60 dark:hover:bg-slate-700/70"
-                      : "bg-slate-100 dark:bg-slate-900 hover:bg-slate-200/80 dark:hover:bg-slate-700/80"
+                      ? "bg-white dark:bg-slate-800 hover:bg-slate-100/80 dark:hover:bg-slate-700/70"
+                      : "bg-slate-50 dark:bg-slate-900/70 hover:bg-slate-100 dark:hover:bg-slate-700/80"
 
                   return (
-                    <tr key={sale.id} className={`transition-colors ${rowBg}`}>
-                      <td className="py-3 px-4 font-mono font-bold text-gray-700 dark:text-slate-200">#{sale.id}</td>
+                    <tr key={sale.id} className={`transition-colors text-sm ${rowBg}`}>
+                      <td className="py-3 px-4 font-mono font-bold text-gray-900 dark:text-white">#{sale.id}</td>
                       <td className="py-3 px-4 text-gray-600 dark:text-slate-300 font-medium whitespace-nowrap">{formatReceiptDate(sale.date)}</td>
                       <td className="py-3 px-4">
                         {(() => {
@@ -649,25 +649,25 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
                               <button
                                 type="button"
                                 onClick={() => setSearchQuery(rawCustomer)}
-                                className="px-2 py-0.5 rounded font-bold text-[10px] bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/40 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 transition-colors inline-flex items-center gap-1"
+                                className="px-2.5 py-1 rounded-lg font-bold text-xs bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/40 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 transition-colors inline-flex items-center gap-1 cursor-pointer"
                                 title="Click to search all orders by this customer"
                               >
-                                <User className="w-3 h-3 text-blue-500" />
+                                <User className="w-3.5 h-3.5 text-blue-500" />
                                 <span>{rawCustomer}</span>
                               </button>
                             )
                           }
-                          return <span className="text-[10px] text-gray-400 dark:text-slate-500 font-semibold italic">Walk-in</span>
+                          return <span className="text-xs text-gray-400 dark:text-slate-500 font-semibold italic">Walk-in</span>
                         })()}
                       </td>
                       <td className="py-3 px-4">
-                        <div className="flex items-center gap-1 text-gray-700 dark:text-slate-200 font-semibold uppercase text-[10px]">
-                          <User className="w-3 h-3 text-gray-400 dark:text-gray-400" />
+                        <div className="flex items-center gap-1 text-gray-700 dark:text-slate-200 font-semibold uppercase text-xs">
+                          <User className="w-3.5 h-3.5 text-gray-400 dark:text-gray-400" />
                           {sale.processedBy}
                         </div>
                       </td>
                       <td className="py-3 px-4">
-                        <span className={`px-2 py-0.5 rounded font-bold text-[9px] border ${
+                        <span className={`px-2.5 py-0.5 rounded-md font-bold text-xs border ${
                           sale.paymentMethod === 'cash'
                             ? 'bg-green-50 dark:bg-green-950/40 border-green-200 dark:border-green-800 text-green-700 dark:text-green-300'
                             : 'bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300'
@@ -679,7 +679,7 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
                               : 'ONLINE'}
                         </span>
                         {sale.referenceNumber && (
-                          <span className="block text-[8px] font-mono text-gray-500 dark:text-gray-400 mt-0.5 whitespace-nowrap">
+                          <span className="block text-xs font-mono text-gray-500 dark:text-gray-400 mt-0.5 whitespace-nowrap">
                             Ref: {sale.referenceNumber}
                           </span>
                         )}
@@ -696,7 +696,7 @@ export function SalesHistory({ currentOperator, sales, inventory = [], onToggleR
                       </td>
                       <td className="py-3 px-4">
                         <span className={`px-2.5 py-0.5 rounded-full font-bold text-[9px] ${sale.isRefunded ? 'bg-red-100 dark:bg-red-900/60 text-red-600 dark:text-red-300' : 'bg-green-100 dark:bg-green-900/60 text-green-600 dark:text-green-300'}`}>
-                          {sale.isRefunded ? "Voided" : "Completed"}
+                          {sale.isRefunded ? "VOIDED" : "COMPLETED"}
                         </span>
                       </td>
                       <td className={`py-3 px-4 font-bold font-mono ${sale.isRefunded ? 'text-gray-400 dark:text-gray-500 line-through' : 'text-gray-900 dark:text-white'}`}>

@@ -4,7 +4,7 @@ import { supabase, triggerGlobalSync, fetchAllSupabaseRows } from "../utils/apiC
 import { downloadExcelWithAutoFit, parseSpreadsheetFile } from "../utils/excelUtils"
 import { getCategoryStyles } from "../utils/categoryColors"
 import { useBarcodeScanner, matchBarcodeToItem } from "../utils/barcodeScanner"
-import { Search, FolderPlus, Download, Upload, FileSpreadsheet, X, Trash2, Edit2, Clock, CheckCircle2, Scan, Barcode, Package, ChevronDown, ChevronUp, Tag, Check } from "lucide-react"
+import { Search, FolderPlus, Download, Upload, FileSpreadsheet, X, Trash2, Edit2, Clock, CheckCircle2, Scan, Barcode, Package, ChevronDown, ChevronUp, Tag, Check, AlertTriangle } from "lucide-react"
 import { BarcodePrintModal } from "./BarcodePrintModal"
 
 // Component props and interface
@@ -43,6 +43,17 @@ export function InventoryManager({
   const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set())
   const [quickCategoryPopoverItemId, setQuickCategoryPopoverItemId] = useState<string | null>(null)
   const [scanToast, setScanToast] = useState<{ message: string; type: "success" | "warning"; id: number } | null>(null)
+  const [duplicateWarningModal, setDuplicateWarningModal] = useState<{
+    isOpen: boolean
+    title: string
+    message: string
+    details?: {
+      name?: string
+      category?: string
+      barcode?: string
+      stock?: number
+    }
+  } | null>(null)
   const [importProgress, setImportProgress] = useState<{
     active: boolean
     totalRows: number
@@ -540,14 +551,53 @@ export function InventoryManager({
   }
 
   const handleAddCategory = async () => {
-    const cleaned = newCatInput.trim().toLowerCase()
-    if (!cleaned || cleaned === "unmarked category") return
+    const raw = newCatInput.trim()
+    const cleaned = raw.toLowerCase()
+    if (!cleaned) {
+      alert("Please enter a category name.")
+      return
+    }
+    if (cleaned === "unmarked category") {
+      alert('Info: "Unmarked Category" is the default system category.')
+      return
+    }
     
-    // Insert single category into product_categories table
-    await supabase.from("product_categories").insert({ name: cleaned })
-    setNewCatInput("")
-    await refreshCategories()
-    triggerGlobalSync()
+    // Check if category already exists
+    const alreadyExists = dynamicCategories.some(c => c.trim().toLowerCase() === cleaned) ||
+                          categoriesList.some(c => c.trim().toLowerCase() === cleaned) ||
+                          inventory.some(i => (i.category || "").trim().toLowerCase() === cleaned)
+
+    if (alreadyExists) {
+      setDuplicateWarningModal({
+        isOpen: true,
+        title: "Category Already Exists",
+        message: `The product category "${raw}" is already registered in the system.`,
+        details: {
+          name: raw.toUpperCase(),
+          category: "Product Category"
+        }
+      })
+      return
+    }
+
+    try {
+      // Insert single category into product_categories table
+      const { error } = await supabase.from("product_categories").insert({ name: cleaned })
+      if (error) {
+        if (error.code === "23505" || error.message?.toLowerCase().includes("duplicate") || error.message?.toLowerCase().includes("unique")) {
+          alert(`⚠️ Existing Category: The category "${raw}" is already registered in the database.`)
+          return
+        }
+        alert(`Error adding category: ${error.message}`)
+        return
+      }
+      setNewCatInput("")
+      await refreshCategories()
+      triggerGlobalSync()
+      alert(`✓ Category "${cleaned.toUpperCase()}" added successfully!`)
+    } catch (e: any) {
+      alert(`Error adding category: ${e?.message || "Failed to add category."}`)
+    }
   }
 
   const handleRemoveCategory = async (catToRemove: string) => {
@@ -574,21 +624,62 @@ export function InventoryManager({
   // Calls updateInventoryItem in App.tsx to update product in inventory table
   const saveEdit = () => {
     if (!editingItem) return
+    const trimmedName = (editForm.name || "").trim()
+    if (!trimmedName) {
+      alert("Please enter a product name.")
+      return
+    }
+    const trimmedBarcode = (editForm.barcode || "").trim()
+
+    const dupName = inventory.find(i => String(i.id) !== String(editingItem.id) && i.name.trim().toLowerCase() === trimmedName.toLowerCase())
+    if (dupName) {
+      setDuplicateWarningModal({
+        isOpen: true,
+        title: "Product Already Exists",
+        message: `Another product named "${dupName.name}" already exists in the inventory specifications.`,
+        details: {
+          name: dupName.name,
+          category: dupName.category || "Unmarked Category",
+          barcode: dupName.barcode || "None",
+          stock: dupName.stock ?? 0
+        }
+      })
+      return
+    }
+    if (trimmedBarcode) {
+      const dupBarcode = inventory.find(i => String(i.id) !== String(editingItem.id) && i.barcode && i.barcode.trim().toLowerCase() === trimmedBarcode.toLowerCase())
+      if (dupBarcode) {
+        setDuplicateWarningModal({
+          isOpen: true,
+          title: "Duplicate Barcode Detected",
+          message: `The barcode "${trimmedBarcode}" is already assigned to another product in the catalog.`,
+          details: {
+            name: dupBarcode.name,
+            category: dupBarcode.category || "Unmarked Category",
+            barcode: trimmedBarcode,
+            stock: dupBarcode.stock ?? 0
+          }
+        })
+        return
+      }
+    }
+
     const targetItem = inventory.find(i => String(i.id) === String(editingItem.id))
     const sanitizedItem: InventoryItem = {
       id: String(editingItem.id),
-      name: editForm.name || "",
+      name: trimmedName,
       category: editForm.category || "unmarked category",
       price: targetItem ? targetItem.price : 0,
       cost: targetItem ? targetItem.cost : 0,
       manufacturer: editForm.manufacturer || "",
-      barcode: editForm.barcode || "",
+      barcode: trimmedBarcode,
       stock: targetItem ? targetItem.stock : 0,
       minStock: Math.floor(Number(editForm.minStock)) || 10,
       batches: targetItem ? targetItem.batches : []
     }
 
     onUpdateInventory(sanitizedItem)
+    alert(`✓ Product specifications for "${trimmedName}" updated successfully!`)
     setEditingItem(null)
   }
 
@@ -633,14 +724,56 @@ export function InventoryManager({
 
   // Calls updateInventoryItem in App.tsx to insert new product into inventory table
   const addNewItem = () => {
-    if (!newItem.name || !newItem.name.trim()) return
+    const trimmedName = (newItem.name || "").trim()
+    if (!trimmedName) {
+      alert("Please enter a product name.")
+      return
+    }
+    const trimmedBarcode = (newItem.barcode || "").trim()
+
+    // Check if product with the same name already exists in inventory
+    const existingByName = inventory.find(i => i.name.trim().toLowerCase() === trimmedName.toLowerCase())
+    if (existingByName) {
+      setDuplicateWarningModal({
+        isOpen: true,
+        title: "Product Already In Inventory",
+        message: `A product named "${existingByName.name}" is already registered in the inventory catalog.`,
+        details: {
+          name: existingByName.name,
+          category: existingByName.category || "Unmarked Category",
+          barcode: existingByName.barcode || "None",
+          stock: existingByName.stock ?? 0
+        }
+      })
+      return
+    }
+
+    // Check if product with the same barcode already exists
+    if (trimmedBarcode) {
+      const existingByBarcode = inventory.find(i => i.barcode && i.barcode.trim().toLowerCase() === trimmedBarcode.toLowerCase())
+      if (existingByBarcode) {
+        setDuplicateWarningModal({
+          isOpen: true,
+          title: "Barcode Already Registered",
+          message: `The barcode "${trimmedBarcode}" is already assigned to another product in the catalog.`,
+          details: {
+            name: existingByBarcode.name,
+            category: existingByBarcode.category || "Unmarked Category",
+            barcode: trimmedBarcode,
+            stock: existingByBarcode.stock ?? 0
+          }
+        })
+        return
+      }
+    }
+
     const item: any = {
       id: "",
-      name: newItem.name.trim(),
+      name: trimmedName,
       category: newItem.category || "unmarked category",
       price: 0,
       cost: 0,
-      barcode: newItem.barcode ? newItem.barcode.trim() : "",
+      barcode: trimmedBarcode,
       manufacturer: newItem.manufacturer || "",
       stock: 0,
       minStock: Math.floor(Number(newItem.minStock)) || 10,
@@ -648,6 +781,7 @@ export function InventoryManager({
     }
     
     onUpdateInventory(item)
+    alert(`✓ Product "${trimmedName}" has been successfully registered!`)
     setNewItem({ name: "", category: "unmarked category", barcode: "", manufacturer: "", minStock: 10 })
     setShowAdd(false)
   }
@@ -711,7 +845,7 @@ export function InventoryManager({
   }
 
   return (
-    <div className="space-y-6 text-xs font-medium relative">
+    <div className="space-y-4 text-xs font-sans relative">
       {/* Floating Scanner Toast Notification */}
       {scanToast && (
         <div className="fixed top-4 right-4 z-50 animate-in slide-in-from-top-3 fade-in duration-200 pointer-events-none">
@@ -735,36 +869,36 @@ export function InventoryManager({
       )}
 
       {/* Categories Controls */}
-      <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-4 space-y-3">
-        <h3 className="font-bold text-gray-800 dark:text-slate-200 text-sm flex items-center gap-1"><FolderPlus className="w-4 h-4 text-blue-600"/>Manage Categories</h3>
+      <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-3.5 space-y-2.5">
+        <h3 className="font-bold text-gray-800 dark:text-slate-200 text-xs flex items-center gap-1.5"><FolderPlus className="w-4 h-4 text-blue-600"/>Manage Categories</h3>
         <div className="flex flex-wrap gap-2 items-center">
-          <div className="flex gap-1">
+          <div className="flex gap-1.5">
             <input 
               type="text" 
               disabled={!isAdmin}
               placeholder={isAdmin ? "Category name..." : "Admin access required"} 
               value={newCatInput} 
               onChange={e=>setNewCatInput(e.target.value)} 
-              className="px-2 py-1.5 border rounded-lg bg-white dark:bg-slate-900 dark:border-slate-700 dark:text-white text-xs disabled:bg-gray-100 dark:disabled:bg-slate-800" 
+              className="px-3 py-1.5 border rounded-lg bg-white dark:bg-slate-900 dark:border-slate-700 dark:text-white text-xs disabled:bg-gray-100 dark:disabled:bg-slate-800" 
             />
             <button 
               type="button" 
               disabled={!isAdmin}
               onClick={handleAddCategory} 
-              className={`px-3 py-1.5 font-bold rounded-lg text-white ${isAdmin ? "bg-blue-600 hover:bg-blue-700" : "bg-gray-400 cursor-not-allowed"}`}
+              className={`px-3.5 py-1.5 font-bold rounded-lg text-white text-xs cursor-pointer ${isAdmin ? "bg-blue-600 hover:bg-blue-700" : "bg-gray-400 cursor-not-allowed"}`}
             >
               Add
             </button>
           </div>
           <div className="flex flex-wrap gap-1.5 ml-2 border-l border-gray-200 dark:border-slate-700 pl-3">
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-gray-100 dark:bg-slate-700 border dark:border-slate-600 font-bold uppercase text-[10px]">
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-gray-100 dark:bg-slate-700 border dark:border-slate-600 font-bold uppercase text-[10px]">
               unmarked category
             </span>
             {dynamicCategories.map(cat => (
-              <span key={cat} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-gray-100 dark:bg-slate-700 border dark:border-slate-600 font-bold uppercase text-[10px]">
+              <span key={cat} className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-gray-100 dark:bg-slate-700 border dark:border-slate-600 font-bold uppercase text-[10px]">
                 {cat}
                 {isAdmin && (
-                  <button type="button" onClick={() => handleRemoveCategory(cat)} className="text-red-500 font-black ml-1 text-xs">×</button>
+                  <button type="button" onClick={() => handleRemoveCategory(cat)} className="text-red-500 font-black ml-1 text-xs cursor-pointer hover:text-red-700">×</button>
                 )}
               </span>
             ))}
@@ -773,27 +907,27 @@ export function InventoryManager({
       </div>
 
       {/* Manage Products Section */}
-      <div className="space-y-4 pt-1">
+      <div className="space-y-3 pt-0.5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b dark:border-slate-700 pb-2">
           <div>
-            <h2 className="text-base font-bold text-gray-900 dark:text-white flex items-center gap-2">
-              <Package className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+            <h2 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
+              <Package className="w-4 h-4 text-blue-600 dark:text-blue-400" />
               Manage Products
             </h2>
-            <p className="text-xs text-gray-500 dark:text-slate-400">
+            <p className="text-[11px] text-gray-500 dark:text-slate-400">
               Configure product specifications, barcode identities, and assign item categories using checkboxes.
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-xs px-2.5 py-1 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold border border-blue-200 dark:border-blue-800">
+            <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 font-bold border border-blue-200 dark:border-blue-800">
               {filtered.length} {filtered.length === 1 ? "Product" : "Products"}
             </span>
           </div>
         </div>
 
       {/* Search Header Bar */}
-      <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-4 shadow-xs">
-        <div className="flex flex-col md:flex-row gap-4">
+      <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-3 shadow-xs">
+        <div className="flex flex-col md:flex-row gap-3">
           <div className="relative flex-1 flex items-center">
             <Search className="w-4 h-4 text-gray-400 dark:text-slate-400 absolute left-3 pointer-events-none" />
             <input 
@@ -801,7 +935,7 @@ export function InventoryManager({
               placeholder="Search product profile templates by name, barcode, or brand..." 
               value={query} 
               onChange={e=>setQuery(e.target.value)} 
-              className="w-full pl-9 pr-8 py-2.5 border border-gray-200 dark:border-slate-700 rounded-xl bg-gray-50/50 dark:bg-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-gray-400" 
+              className="w-full pl-9 pr-8 py-2 border border-gray-200 dark:border-slate-700 rounded-xl bg-gray-50/50 dark:bg-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-gray-400" 
             />
             {query && (
               <button 
@@ -817,7 +951,7 @@ export function InventoryManager({
           <select 
             value={catFilter} 
             onChange={e=>setCatFilter(e.target.value)} 
-            className="px-4 py-2.5 border border-gray-200 dark:border-slate-700 rounded-xl uppercase tracking-wider bg-white dark:bg-slate-900 dark:text-white text-xs font-bold focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+            className="px-3 py-2 border border-gray-200 dark:border-slate-700 rounded-xl uppercase tracking-wider bg-white dark:bg-slate-900 dark:text-white text-xs font-bold focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
           >
             <option value="all">All Categories</option>
             <option value="unmarked category">UNMARKED CATEGORY</option>
@@ -834,12 +968,12 @@ export function InventoryManager({
               setEditingItem(null)
               setShowAdd(true)
             }} 
-            className={`px-4 py-2.5 rounded-xl font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 whitespace-nowrap text-white cursor-pointer ${
+            className={`px-3.5 py-2 rounded-xl font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 whitespace-nowrap text-white text-xs cursor-pointer ${
               isAdmin ? "bg-blue-600 hover:bg-blue-700 active:scale-98" : "bg-gray-400 dark:bg-slate-700 cursor-not-allowed"
             }`}
             title={!isAdmin ? "Only Admin can add items" : undefined}
           >
-            <FolderPlus className="w-4 h-4" />
+            <FolderPlus className="w-3.5 h-3.5" />
             Add Item Profile
           </button>
         </div>
@@ -1196,10 +1330,10 @@ export function InventoryManager({
                   className="w-4 h-4 text-blue-600 rounded border-gray-300 dark:border-slate-600 dark:bg-slate-800 focus:ring-blue-500 cursor-pointer"
                 />
               </th>
-              <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold">Product Profile Name</th>
-              <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold">Category</th>
-              <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold text-center">Min Stock</th>
-              <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold text-center">Actions</th>
+              <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold uppercase tracking-wider">Product Profile Name</th>
+              <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold uppercase tracking-wider">Category</th>
+              <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold uppercase tracking-wider text-center">Min Stock</th>
+              <th className="py-3 px-4 text-xs text-gray-600 dark:text-gray-300 font-bold uppercase tracking-wider text-center">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200 dark:divide-slate-700">
@@ -1212,15 +1346,15 @@ export function InventoryManager({
               return (
                 <tr 
                   key={item.id} 
-                  className={`transition-colors ${
+                  className={`transition-colors text-xs ${
                     isSelected 
                       ? "bg-blue-100/80 dark:bg-blue-950/70" 
                       : isEven 
-                        ? "bg-white dark:bg-slate-800 hover:bg-slate-200/60 dark:hover:bg-slate-700/70" 
-                        : "bg-slate-100 dark:bg-slate-900 hover:bg-slate-200/80 dark:hover:bg-slate-700/80"
+                        ? "bg-white dark:bg-slate-800 hover:bg-slate-100/80 dark:hover:bg-slate-700/70" 
+                        : "bg-slate-50 dark:bg-slate-900/70 hover:bg-slate-100 dark:hover:bg-slate-700/80"
                   }`}
                 >
-                  <td className="py-3 px-3 text-center">
+                  <td className="py-2.5 px-3 text-center">
                     <input 
                       type="checkbox"
                       aria-label={`Select ${item.name}`}
@@ -1235,13 +1369,13 @@ export function InventoryManager({
                       className="w-4 h-4 text-blue-600 rounded border-gray-300 dark:border-slate-600 dark:bg-slate-800 focus:ring-blue-500 cursor-pointer"
                     />
                   </td>
-                  <td className="py-3 px-4">
-                    <p className="text-sm font-medium text-gray-900 dark:text-white">{item.name}</p>
-                    <p className="text-[10px] text-gray-500 dark:text-gray-400 font-mono mt-0.5">{item.barcode}</p>
+                  <td className="py-2.5 px-4">
+                    <p className="text-xs font-bold text-gray-900 dark:text-white leading-tight">{item.name}</p>
+                    <p className="text-[10px] text-gray-500 dark:text-slate-400 font-mono mt-0.5">{item.barcode || "No Barcode"}</p>
                   </td>
-                  <td className="py-3 px-4 relative">
+                  <td className="py-2.5 px-4 relative">
                     <div className="flex items-center gap-1.5">
-                      <span className={`text-[9px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider ${catStyle.badge}`}>
+                      <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${catStyle.badge}`}>
                         {item.category}
                       </span>
                       <button
@@ -1250,7 +1384,7 @@ export function InventoryManager({
                         className="p-1 rounded-md text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors cursor-pointer"
                         title="Quick assign category with checkboxes"
                       >
-                        <Tag className="w-3.5 h-3.5" />
+                        <Tag className="w-4 h-4" />
                       </button>
                     </div>
 
@@ -1479,6 +1613,78 @@ export function InventoryManager({
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Duplicate Product / Category Warning Modal */}
+      {duplicateWarningModal && duplicateWarningModal.isOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 font-sans animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-amber-200 dark:border-amber-700/50">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-950/60 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-sm text-gray-900 dark:text-white">
+                  {duplicateWarningModal.title}
+                </h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  Item conflict detection
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">
+              {duplicateWarningModal.message}
+            </p>
+
+            {duplicateWarningModal.details && (
+              <div className="p-3 bg-amber-50/70 dark:bg-amber-950/30 rounded-xl border border-amber-200/80 dark:border-amber-800/40 text-xs space-y-1.5">
+                {duplicateWarningModal.details.name && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-500 dark:text-gray-400 text-[10px] uppercase font-bold">Existing Item:</span>
+                    <span className="font-semibold text-gray-900 dark:text-white truncate max-w-[220px]">
+                      {duplicateWarningModal.details.name}
+                    </span>
+                  </div>
+                )}
+                {duplicateWarningModal.details.category && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-500 dark:text-gray-400 text-[10px] uppercase font-bold">Category:</span>
+                    <span className="font-medium text-gray-800 dark:text-gray-200">
+                      {duplicateWarningModal.details.category}
+                    </span>
+                  </div>
+                )}
+                {duplicateWarningModal.details.barcode && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-500 dark:text-gray-400 text-[10px] uppercase font-bold">Barcode:</span>
+                    <span className="font-mono text-gray-800 dark:text-gray-200">
+                      {duplicateWarningModal.details.barcode}
+                    </span>
+                  </div>
+                )}
+                {typeof duplicateWarningModal.details.stock === "number" && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-500 dark:text-gray-400 text-[10px] uppercase font-bold">Current Stock:</span>
+                    <span className="font-semibold text-gray-900 dark:text-white">
+                      {duplicateWarningModal.details.stock} units
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setDuplicateWarningModal(null)}
+                className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
+              >
+                Understood
+              </button>
+            </div>
           </div>
         </div>
       )}

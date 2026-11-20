@@ -400,28 +400,28 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
   }
 
   return (
-    <div className="space-y-6 font-sans pb-12 text-gray-800 dark:text-slate-100">
+    <div className="space-y-4 font-sans pb-12 text-gray-800 dark:text-slate-100 text-xs">
       {/* Header Bar with Date Frame Controls */}
-      <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 border border-gray-200 dark:border-slate-700 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-gray-200 dark:border-slate-700 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg sm:text-xl font-extrabold text-gray-900 dark:text-white flex items-center gap-2">
-            <BarChart3 className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+          <h2 className="text-base font-extrabold text-gray-900 dark:text-white flex items-center gap-2">
+            <BarChart3 className="w-5 h-5 text-blue-600 dark:text-blue-400" />
             POS Sales & Profitability Reports
           </h2>
-          <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">
+          <p className="text-[11px] text-gray-500 dark:text-slate-400 mt-0.5">
             4 Core Reports ({dateRangeLabel}): Profit & COGS by Item, Items Sold by Category, Sales by Cashier, and Sales by Payment Method.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
           {/* Date Frame Selector */}
-          <div className="flex bg-gray-100 dark:bg-slate-900 p-1 rounded-xl border dark:border-slate-700 text-xs font-bold">
+          <div className="flex bg-gray-100 dark:bg-slate-900 p-0.5 rounded-xl border dark:border-slate-700 text-xs font-bold">
             {(["today", "yesterday", "week", "month", "custom"] as const).map(df => (
               <button
                 key={df}
                 type="button"
                 onClick={() => setDateFrame(df)}
-                className={`px-3 py-1.5 rounded-lg uppercase transition-all ${dateFrame === df ? 'bg-blue-600 text-white shadow-2xs' : 'text-gray-600 dark:text-slate-300 hover:text-blue-600'}`}
+                className={`px-2.5 py-1 rounded-lg uppercase transition-all ${dateFrame === df ? 'bg-blue-600 text-white shadow-2xs' : 'text-gray-600 dark:text-slate-300 hover:text-blue-600'}`}
               >
                 {df === "week" ? "This Week" : df}
               </button>
@@ -431,9 +431,9 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
           <button
             type="button"
             onClick={handleExportExcel}
-            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-2xs transition-colors"
+            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
           >
-            <Download className="w-4 h-4" />
+            <Download className="w-3.5 h-3.5" />
             Export Excel
           </button>
         </div>
@@ -441,33 +441,31 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
 
       {/* Custom Date Range Picker */}
       {dateFrame === "custom" && (
-        <div className="p-3.5 bg-blue-50/60 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 rounded-xl flex flex-wrap items-center gap-4 text-xs animate-in fade-in">
+        <div className="p-3 bg-blue-50/60 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 rounded-xl flex flex-wrap items-center gap-4 text-xs animate-in fade-in">
           <span className="font-bold text-blue-900 dark:text-blue-300 flex items-center gap-1">
-            <Filter className="w-4 h-4" /> Custom Date Frame Range:
+            <Filter className="w-3.5 h-3.5" /> Custom Date Frame Range:
           </span>
           <div className="flex items-center gap-2">
-            <label className="font-semibold text-gray-600 dark:text-slate-300">From:</label>
-            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="p-1.5 border bg-white dark:bg-slate-900 rounded-lg dark:border-slate-700 font-mono text-xs text-gray-900 dark:text-white" />
+            <label className="font-semibold text-gray-600 dark:text-slate-300 text-xs">From:</label>
+            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="p-1 border bg-white dark:bg-slate-900 rounded-lg dark:border-slate-700 font-mono text-xs text-gray-900 dark:text-white" />
           </div>
           <div className="flex items-center gap-2">
-            <label className="font-semibold text-gray-600 dark:text-slate-300">To:</label>
-            <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="p-1.5 border bg-white dark:bg-slate-900 rounded-lg dark:border-slate-700 font-mono text-xs text-gray-900 dark:text-white" />
+            <label className="font-semibold text-gray-600 dark:text-slate-300 text-xs">To:</label>
+            <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="p-1 border bg-white dark:bg-slate-900 rounded-lg dark:border-slate-700 font-mono text-xs text-gray-900 dark:text-white" />
           </div>
         </div>
       )}
 
-
-
       {/* Metric Highlights Overview Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white dark:bg-slate-800 p-4.5 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-xs space-y-1 card-hover">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="bg-white dark:bg-slate-800 p-3.5 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-xs space-y-1 card-hover">
           <div className="flex items-center justify-between text-gray-500 dark:text-slate-400">
-            <span className="text-[10px] uppercase font-bold tracking-wider">Net Sales Revenue</span>
-            <div className="w-7 h-7 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
-              <DollarSign className="w-4 h-4" />
+            <span className="text-[11px] uppercase font-bold tracking-wider">Net Sales Revenue</span>
+            <div className="w-6 h-6 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+              <DollarSign className="w-3.5 h-3.5" />
             </div>
           </div>
-          <p className="text-xl font-extrabold text-gray-900 dark:text-white font-mono">
+          <p className="text-base font-extrabold text-gray-900 dark:text-white font-mono">
             ₱{overallMetrics.totalRevenue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
           <p className="text-[10px] text-gray-500 dark:text-slate-400 font-medium">
@@ -475,14 +473,14 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
           </p>
         </div>
 
-        <div className="bg-white dark:bg-slate-800 p-4.5 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-xs space-y-1 card-hover">
+        <div className="bg-white dark:bg-slate-800 p-3.5 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-xs space-y-1 card-hover">
           <div className="flex items-center justify-between text-gray-500 dark:text-slate-400">
-            <span className="text-[10px] uppercase font-bold tracking-wider">Cost of Goods Sold (COGS)</span>
-            <div className="w-7 h-7 rounded-lg bg-orange-50 dark:bg-orange-950/60 text-orange-600 dark:text-orange-400 flex items-center justify-center">
-              <PackageCheck className="w-4 h-4" />
+            <span className="text-[11px] uppercase font-bold tracking-wider">Cost of Goods Sold (COGS)</span>
+            <div className="w-6 h-6 rounded-lg bg-orange-50 dark:bg-orange-950/60 text-orange-600 dark:text-orange-400 flex items-center justify-center">
+              <PackageCheck className="w-3.5 h-3.5" />
             </div>
           </div>
-          <p className="text-xl font-extrabold text-orange-600 dark:text-orange-400 font-mono">
+          <p className="text-base font-extrabold text-orange-600 dark:text-orange-400 font-mono">
             ₱{overallMetrics.totalCogs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
           <p className="text-[10px] text-gray-500 dark:text-slate-400 font-medium">
@@ -490,32 +488,32 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
           </p>
         </div>
 
-        <div className="bg-white dark:bg-slate-800 p-4.5 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-xs space-y-1 card-hover">
+        <div className="bg-white dark:bg-slate-800 p-3.5 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-xs space-y-1 card-hover">
           <div className="flex items-center justify-between text-gray-500 dark:text-slate-400">
-            <span className="text-[10px] uppercase font-bold tracking-wider">Gross Profit</span>
-            <div className="w-7 h-7 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
-              <TrendingUp className="w-4 h-4" />
+            <span className="text-[11px] uppercase font-bold tracking-wider">Gross Profit</span>
+            <div className="w-6 h-6 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+              <TrendingUp className="w-3.5 h-3.5" />
             </div>
           </div>
-          <p className="text-xl font-extrabold text-blue-600 dark:text-blue-400 font-mono">
+          <p className="text-base font-extrabold text-blue-600 dark:text-blue-400 font-mono">
             ₱{overallMetrics.grossProfit.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
-          <p className="text-[10px] text-blue-600 dark:text-blue-400 font-semibold">
+          <p className="text-[10px] text-blue-600 dark:text-blue-400 font-bold">
             Profit Margin: {overallMetrics.profitMargin.toFixed(1)}%
           </p>
         </div>
 
-        <div className="bg-white dark:bg-slate-800 p-4.5 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-xs space-y-1 card-hover">
+        <div className="bg-white dark:bg-slate-800 p-3.5 rounded-2xl border border-gray-200 dark:border-slate-700 shadow-xs space-y-1 card-hover">
           <div className="flex items-center justify-between text-gray-500 dark:text-slate-400">
-            <span className="text-[10px] uppercase font-bold tracking-wider">Total Items Fulfillments</span>
-            <div className="w-7 h-7 rounded-lg bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center">
-              <ShoppingBag className="w-4 h-4" />
+            <span className="text-[11px] uppercase font-bold tracking-wider">Total Items Fulfillments</span>
+            <div className="w-6 h-6 rounded-lg bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center">
+              <ShoppingBag className="w-3.5 h-3.5" />
             </div>
           </div>
-          <p className="text-xl font-extrabold text-gray-900 dark:text-white font-mono">
+          <p className="text-base font-extrabold text-gray-900 dark:text-white font-mono">
             {overallMetrics.totalUnitsSold.toLocaleString()} <span className="text-xs font-normal text-gray-400">pcs</span>
           </p>
-          <p className="text-[10px] text-purple-600 dark:text-purple-400 font-semibold">
+          <p className="text-[10px] text-purple-600 dark:text-purple-400 font-bold">
             Discounts Given: ₱{overallMetrics.totalDiscounts.toFixed(2)}
           </p>
         </div>
@@ -665,8 +663,8 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
           </div>
 
           <div className="overflow-x-auto max-h-[580px] overflow-y-auto rounded-xl border border-gray-100 dark:border-slate-700">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead className="bg-gray-50 dark:bg-slate-900 text-gray-600 dark:text-slate-400 font-bold border-b dark:border-slate-700 sticky top-0 z-10 backdrop-blur-xs">
+            <table className="w-full text-left border-collapse text-sm">
+              <thead className="bg-gray-50 dark:bg-slate-900 text-gray-600 dark:text-slate-400 font-bold uppercase tracking-wider text-xs border-b dark:border-slate-700 sticky top-0 z-10 backdrop-blur-xs">
                 <tr>
                   <th className="p-3">Product Name</th>
                   <th className="p-3">Category</th>
@@ -689,14 +687,14 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
                     const catStyles = getCategoryStyles(item.category)
                     const isEven = idx % 2 === 0
                     const rowBg = isEven
-                      ? "bg-white dark:bg-slate-800 hover:bg-slate-200/60 dark:hover:bg-slate-700/70"
-                      : "bg-slate-100 dark:bg-slate-900 hover:bg-slate-200/80 dark:hover:bg-slate-700/80"
+                      ? "bg-white dark:bg-slate-800 hover:bg-slate-100/80 dark:hover:bg-slate-700/70"
+                      : "bg-slate-50 dark:bg-slate-900/70 hover:bg-slate-100 dark:hover:bg-slate-700/80"
 
                     return (
-                      <tr key={idx} className={`transition-colors ${rowBg}`}>
+                      <tr key={idx} className={`transition-colors text-sm ${rowBg}`}>
                         <td className="p-3 font-bold text-gray-900 dark:text-white">{item.name}</td>
                         <td className="p-3">
-                          <span className={`uppercase text-[9px] font-extrabold px-2.5 py-0.5 rounded-full shadow-2xs ${catStyles.badge}`}>
+                          <span className={`uppercase text-xs font-extrabold px-2.5 py-0.5 rounded-full shadow-2xs ${catStyles.badge}`}>
                             {item.category}
                           </span>
                         </td>
@@ -705,7 +703,7 @@ export function SalesReport({ sales, inventory }: SalesReportProps) {
                         <td className="p-3 text-right font-mono font-bold text-orange-600 dark:text-orange-400">₱{item.cogs.toFixed(2)}</td>
                         <td className="p-3 text-right font-mono font-extrabold text-emerald-600 dark:text-emerald-400">₱{item.profit.toFixed(2)}</td>
                         <td className="p-3 text-right font-mono font-extrabold">
-                          <span className={`px-2 py-0.5 rounded text-[10px] ${item.margin >= 30 ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'}`}>
+                          <span className={`px-2 py-0.5 rounded text-xs font-bold ${item.margin >= 30 ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'}`}>
                             {item.margin.toFixed(1)}%
                           </span>
                         </td>

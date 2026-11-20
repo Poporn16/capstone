@@ -127,6 +127,15 @@ export default function App() {
   }, [expiringItems, notificationCategory])
 
   const totalNotificationCount = lowStockItems.length + expiringItems.length
+  const [hasDismissedNotifications, setHasDismissedNotifications] = useState(false)
+  const prevNotificationCountRef = useRef(totalNotificationCount)
+
+  useEffect(() => {
+    if (totalNotificationCount > prevNotificationCountRef.current) {
+      setHasDismissedNotifications(false)
+    }
+    prevNotificationCountRef.current = totalNotificationCount
+  }, [totalNotificationCount])
 
   const [showAttendanceModal, setShowAttendanceModal] = useState(false)
   const [logoImgError, setLogoImgError] = useState(false)
@@ -1662,14 +1671,14 @@ export default function App() {
       <aside className={`fixed md:sticky md:top-0 inset-y-0 left-0 z-50 ${isSidebarCollapsed ? "w-20 px-3 py-4" : "w-64 p-5"} ${
         theme === "dark" 
           ? "bg-[#131F1E] text-slate-200 border-r border-[#1C2E2C]" 
-          : "bg-[#89A1A0] text-slate-900 border-r border-[#758e8d]"
+          : "bg-[#CADBD9] text-slate-900 border-r border-[#AFC5C4]"
       } h-screen max-h-screen flex flex-col justify-between shrink-0 transition-all duration-200 ease-in-out overflow-y-auto ${
         isSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
       }`}>
         <div className="space-y-6 flex-1 flex flex-col min-h-0">
           <div className="flex items-center justify-between shrink-0">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-white/60 dark:bg-white/10 rounded-xl shadow-xs border border-white/60 dark:border-white/20 flex items-center justify-center p-0.5 shrink-0 overflow-hidden">
+              <div className="w-10 h-10 bg-white/70 dark:bg-white/10 rounded-xl shadow-xs border border-white/60 dark:border-white/20 flex items-center justify-center p-0.5 shrink-0 overflow-hidden">
                 {!logoImgError ? (
                   <img 
                     src="/icon.jpg" 
@@ -1685,8 +1694,8 @@ export default function App() {
               </div>
               {!isSidebarCollapsed && (
                 <div className="leading-tight">
-                  <span className={`font-bold text-base tracking-tight block ${theme === "dark" ? "text-white" : "text-slate-900"}`}>Pharmacy</span>
-                  <span className={`text-base font-bold tracking-tight block ${theme === "dark" ? "text-slate-300" : "text-slate-900"}`}>Inventory</span>
+                  <span className={`font-extrabold text-base tracking-tight block ${theme === "dark" ? "text-white" : "text-slate-900"}`}>Pharmacy</span>
+                  <span className={`text-base font-extrabold tracking-tight block ${theme === "dark" ? "text-slate-300" : "text-slate-900"}`}>Inventory</span>
                 </div>
               )}
             </div>
@@ -1695,7 +1704,7 @@ export default function App() {
                 type="button" 
                 onClick={() => setIsSidebarCollapsed(c => !c)} 
                 className={`hidden md:flex p-1.5 rounded-lg transition-colors cursor-pointer ${
-                  theme === "dark" ? "text-slate-400 hover:text-white hover:bg-[#1C2E2C]" : "text-slate-800 hover:text-slate-950 hover:bg-[#789291]"
+                  theme === "dark" ? "text-slate-400 hover:text-white hover:bg-[#1C2E2C]" : "text-slate-800 hover:text-slate-950 hover:bg-[#B5CBC9]"
                 }`}
               >
                 {isSidebarCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
@@ -1704,14 +1713,14 @@ export default function App() {
                 type="button" 
                 onClick={() => setIsSidebarOpen(false)} 
                 className={`md:hidden p-1.5 rounded-lg ${
-                  theme === "dark" ? "text-slate-400 hover:text-white hover:bg-[#1C2E2C]" : "text-slate-800 hover:text-slate-950 hover:bg-[#789291]"
+                  theme === "dark" ? "text-slate-400 hover:text-white hover:bg-[#1C2E2C]" : "text-slate-800 hover:text-slate-950 hover:bg-[#B5CBC9]"
                 }`}
               >
                 <X className="w-6 h-6" />
               </button>
             </div>
           </div>
-          <nav className="space-y-1 flex-1 overflow-y-auto pr-1">
+          <nav className="space-y-1.5 flex-1 overflow-y-auto pr-1">
             {navigationTabs.map(tab => {
               const Icon = tab.icon
               const isActive = activeTab === tab.id
@@ -1720,17 +1729,17 @@ export default function App() {
                   key={tab.id} 
                   onClick={() => { setActiveTab(tab.id); setIsSidebarOpen(false) }} 
                   title={isSidebarCollapsed ? tab.label : undefined} 
-                  className={`w-full flex items-center ${isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3.5"} py-2.5 text-xs font-semibold tracking-wide antialiased transition-all duration-150 cursor-pointer rounded-xl ${
+                  className={`w-full flex items-center ${isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3.5"} py-2.5 text-sm font-semibold tracking-normal antialiased transition-all duration-150 cursor-pointer rounded-xl ${
                     isActive 
                       ? theme === "dark"
                         ? "bg-[#1b5e59] text-white font-bold shadow-md shadow-[#1b5e59]/30"
-                        : "bg-white text-slate-900 font-bold shadow-xs"
+                        : "bg-white text-[#154b47] font-bold shadow-xs ring-1 ring-black/5"
                       : theme === "dark"
                         ? "text-slate-300 hover:bg-[#1C2E2C] hover:text-white font-medium"
-                        : "text-slate-800 hover:bg-[#789291] hover:text-slate-950 font-medium"
+                        : "text-slate-800 hover:bg-[#B5CBC9] hover:text-slate-950 font-semibold"
                   }`}
                 >
-                  <Icon className={`w-4 h-4 shrink-0 ${isActive ? (theme === "dark" ? "text-white" : "text-[#1b5e59]") : (theme === "dark" ? "text-slate-400" : "text-slate-700")}`} />
+                  <Icon className={`w-5 h-5 shrink-0 ${isActive ? (theme === "dark" ? "text-white" : "text-[#154b47]") : (theme === "dark" ? "text-slate-400" : "text-slate-700")}`} />
                   {!isSidebarCollapsed && <span>{tab.label}</span>}
                 </button>
               )
@@ -1738,10 +1747,10 @@ export default function App() {
           </nav>
         </div>
         <div className={`pt-3 border-t flex flex-col gap-2.5 shrink-0 ${
-          theme === "dark" ? "border-[#1C2E2C] text-slate-300" : "border-[#758e8d] text-slate-900"
+          theme === "dark" ? "border-[#1C2E2C] text-slate-300" : "border-[#AFC5C4] text-slate-900"
         }`}>
           {!isSidebarCollapsed && (
-            <div className="p-2.5 px-3 rounded-2xl bg-black/15 dark:bg-black/25 border border-white/20 dark:border-white/10 flex items-center justify-between gap-2 shadow-2xs">
+            <div className="p-2.5 px-3 rounded-2xl bg-black/10 dark:bg-black/25 border border-white/40 dark:border-white/10 flex items-center justify-between gap-2 shadow-2xs">
               <span className="font-extrabold text-sm text-slate-900 dark:text-white truncate" title={currentOperator?.displayName}>
                 {currentOperator?.displayName}
               </span>
@@ -1758,7 +1767,7 @@ export default function App() {
             type="button" 
             onClick={handleLogoutClick} 
             disabled={isCheckingLogout}
-            className="w-full flex items-center justify-center gap-2 py-2 px-3 font-bold rounded-xl transition-all text-xs cursor-pointer bg-red-600 hover:bg-red-700 active:scale-95 text-white shadow-xs disabled:opacity-60"
+            className="w-full flex items-center justify-center gap-2 py-2.5 px-3 font-bold rounded-xl transition-all text-sm cursor-pointer bg-red-600 hover:bg-red-700 active:scale-95 text-white shadow-xs disabled:opacity-60"
             title="Log Out"
           >
             <LogOut className="w-4 h-4 shrink-0" />
@@ -1799,9 +1808,21 @@ export default function App() {
               {theme === "light" ? <Moon className="w-4 h-4 text-slate-700" /> : <Sun className="w-4 h-4 text-amber-400" />}
             </button>
             <div className="relative" ref={notificationRef}>
-              <button type="button" onClick={() => setShowNotifications(prev => !prev)} className="w-9 h-9 rounded-xl bg-white dark:bg-[#1C2E2C] border border-red-200 dark:border-red-900/40 text-red-500 flex items-center justify-center shadow-xs hover:bg-red-50 dark:hover:bg-[#233835] transition-colors cursor-pointer">
+              <button 
+                type="button" 
+                onClick={() => {
+                  setShowNotifications(prev => !prev)
+                  setHasDismissedNotifications(true)
+                }} 
+                className="w-9 h-9 rounded-xl bg-white dark:bg-[#1C2E2C] border border-red-200 dark:border-red-900/40 text-red-500 flex items-center justify-center shadow-xs hover:bg-red-50 dark:hover:bg-[#233835] transition-colors cursor-pointer"
+                title="Notifications"
+              >
                 <Bell className="w-4 h-4 text-red-500" />
-                {totalNotificationCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold min-w-4.5 h-4.5 px-1 flex items-center justify-center rounded-full ring-2 ring-white dark:ring-[#131F1E] shadow-xs">{totalNotificationCount}</span>}
+                {!hasDismissedNotifications && totalNotificationCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold min-w-4.5 h-4.5 px-1 flex items-center justify-center rounded-full ring-2 ring-white dark:ring-[#131F1E] shadow-xs">
+                    {totalNotificationCount}
+                  </span>
+                )}
               </button>
               {showNotifications && (
                 <div className="absolute right-0 mt-3 w-80 sm:w-96 bg-white dark:bg-[#131F1E] rounded-2xl shadow-2xl border border-gray-200 dark:border-[#1C2E2C] p-4 z-50 space-y-3 font-sans transition-all duration-150 animate-in fade-in-50 zoom-in-95">

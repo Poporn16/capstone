@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { createPortal } from "react-dom"
 import { supabase, triggerForceLogout, fetchAllSupabaseRows } from "../utils/apiClient"
 import { downloadExcelWithAutoFit, downloadMultiSheetStockAdditionsWorkbook } from "../utils/excelUtils"
 import { hashPassword } from "../utils/passwordUtils"
-import { ShieldAlert, UserPlus, Trash2, History, RefreshCw, ShoppingBag, Eye, X, LogOut, Download, Edit, Users, Plus, Search, Edit2 } from "lucide-react"
+import { ShieldAlert, UserPlus, Trash2, History, RefreshCw, ShoppingBag, Eye, X, LogOut, Download, Edit, Users, Plus, Search, Edit2, AlertTriangle } from "lucide-react"
 
 import type { NamedPerson, AuditLog, BatchSaleRecord, AccountProfile, Operator } from "../types"
 
@@ -280,13 +280,22 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
 
   const [regUsername, setRegUsername] = useState("")
   const [regPin, setRegPin] = useState("")
-  const [regDisplayName, setRegDisplayName] = useState("")
+  const [regFirstName, setRegFirstName] = useState("")
+  const [regLastName, setRegLastName] = useState("")
   const [regRole, setRegRole] = useState("staff")
+  const [accountSearchQuery, setAccountSearchQuery] = useState("")
+  const [duplicateAccountModal, setDuplicateAccountModal] = useState<{
+    isOpen: boolean
+    title: string
+    message: string
+    details?: {
+      username?: string
+      displayName?: string
+      role?: string
+    }
+  } | null>(null)
 
   const [editingProfile, setEditingProfile] = useState<AccountProfile | null>(null)
-  const [editDisplayName, setEditDisplayName] = useState("")
-  const [editPin, setEditPin] = useState("")
-  const [editRole, setEditRole] = useState("staff")
 
   const [auditModuleFilter, setAuditModuleFilter] = useState("ALL")
   const [auditSearchQuery, setAuditSearchQuery] = useState("")
@@ -442,27 +451,71 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
 
   const handleCreateProfile = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!regUsername.trim() || !regPin.trim() || !regDisplayName.trim()) return
+    const fName = regFirstName.trim()
+    const lName = regLastName.trim()
+    const uName = regUsername.trim().toLowerCase()
+    if (!uName || !regPin.trim() || !fName || !lName) {
+      alert("Please fill in username, PIN, first name, and last name.")
+      return
+    }
+
+    const fullDisplayName = `${fName} ${lName}`
+
+    // Check if account username already exists in profiles
+    const existingProfile = profiles.find(p => p.username.trim().toLowerCase() === uName)
+    if (existingProfile) {
+      setDuplicateAccountModal({
+        isOpen: true,
+        title: "Account Already Exists",
+        message: `An account profile with username ID "@${uName}" is already registered in the system.`,
+        details: {
+          username: `@${uName}`,
+          displayName: existingProfile.display_name,
+          role: existingProfile.system_role.toUpperCase()
+        }
+      })
+      return
+    }
 
     // Insert new operator account into operator_profiles table
     const { error } = await supabase.from("operator_profiles").insert({
-      username: regUsername.trim().toLowerCase(),
+      username: uName,
       password_hash: hashPassword(regPin.trim()),
-      display_name: regDisplayName.trim(),
-      system_role: regRole
+      display_name: fullDisplayName,
+      system_role: "staff"
     })
 
     if (error) {
+      if (
+        error.code === "23505" || 
+        error.message?.includes("operator_profiles_username_key") ||
+        error.message?.toLowerCase().includes("unique constraint") ||
+        error.message?.toLowerCase().includes("duplicate key")
+      ) {
+        setDuplicateAccountModal({
+          isOpen: true,
+          title: "Username Already Taken",
+          message: `The username ID "@${uName}" is already registered to another operator account.`,
+          details: {
+            username: `@${uName}`,
+            displayName: fullDisplayName,
+            role: regRole.toUpperCase()
+          }
+        })
+        return
+      }
       alert(`Error creating profile: ${error.message}`)
       return
     }
 
-    await onLogAction("CREATE_OPERATOR", "ADMIN_PANEL", `Created profile @${regUsername.toLowerCase()} (${regDisplayName})`)
+    await onLogAction("CREATE_OPERATOR", "ADMIN_PANEL", `Created profile @${uName} (${fullDisplayName})`)
     setRegUsername("")
     setRegPin("")
-    setRegDisplayName("")
+    setRegFirstName("")
+    setRegLastName("")
     setRegRole("staff")
     await fetchProfiles()
+    alert(`✓ Account profile for "${fullDisplayName}" (@${uName}) created successfully!`)
   }
 
   const handleForceLogoutProfile = async (username: string) => {
@@ -506,12 +559,14 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     e.preventDefault()
     if (!editingProfile) return
 
-    const dName = editDisplayName.trim()
-    const pin = editPin.trim()
-    const role = editRole.trim()
+    const fName = regFirstName.trim()
+    const lName = regLastName.trim()
+    const dName = `${fName} ${lName}`.trim()
+    const pin = regPin.trim()
+    const role = "staff"
 
-    if (!dName || !role) {
-      alert("Please fill in full display employee name and authorization role.")
+    if (!fName || !lName) {
+      alert("Please fill in first name and last name.")
       return
     }
 
@@ -542,11 +597,16 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     await onLogAction(
       "UPDATE_ACCOUNT_PROFILE",
       "ADMIN_PANEL",
-      `Updated profile @${editingProfile.username} (Display Name: ${dName}, Role: ${role.toUpperCase()}${pin ? ", Password Changed -> Active Sessions Logged Out" : ""})`
+      `Updated profile @${editingProfile.username} (Display Name: ${dName}, Role: STAFF OPERATOR${pin ? ", Password Changed -> Active Sessions Logged Out" : ""})`
     )
 
     alert(`Account profile "@${editingProfile.username}" updated successfully!`)
     setEditingProfile(null)
+    setRegUsername("")
+    setRegPin("")
+    setRegFirstName("")
+    setRegLastName("")
+    setRegRole("staff")
     setActionMenuAnchor(null)
     await fetchProfiles()
   }
@@ -909,268 +969,226 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
     }
   };
 
-  const displayProfiles = profiles
+  const filteredProfiles = useMemo(() => {
+    if (!accountSearchQuery.trim()) return profiles
+    const q = accountSearchQuery.toLowerCase().trim()
+    return profiles.filter(p => 
+      (p.display_name || "").toLowerCase().includes(q) ||
+      (p.username || "").toLowerCase().includes(q) ||
+      (p.system_role || "").toLowerCase().includes(q)
+    )
+  }, [profiles, accountSearchQuery])
+
+  const displayProfiles = filteredProfiles
 
   // Main admin dashboard layout
   return (
     <>
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 text-xs font-medium font-sans">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 text-xs font-sans">
         
         {/* Left Column: Register Account & Directory (Col-span 4) */}
-        <div className="lg:col-span-4 space-y-6">
+        <div className="lg:col-span-4 space-y-4">
           
-          {/* Card 1: Register New Account Profile */}
-          <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-5 shadow-xs space-y-4">
-            <h3 className="font-bold text-gray-900 dark:text-white text-sm flex items-center gap-2">
-              <UserPlus className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-              Register New Account Profile
-            </h3>
-
-            <form onSubmit={handleCreateProfile} className="space-y-3">
-              <div>
-                <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] mb-1">Operator Username ID</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. staff_member"
-                  value={regUsername}
-                  onChange={e => setRegUsername(e.target.value)}
-                  className="w-full p-2.5 border border-gray-200 dark:border-slate-700 rounded-xl text-xs bg-gray-50/50 dark:bg-slate-900 text-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-gray-400"
-                />
-              </div>
-
-              <div>
-                <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] mb-1">Account Password PIN</label>
-                <input
-                  type="password"
-                  required
-                  placeholder="Enter access code..."
-                  value={regPin}
-                  onChange={e => setRegPin(e.target.value)}
-                  className="w-full p-2.5 border border-gray-200 dark:border-slate-700 rounded-xl text-xs bg-gray-50/50 dark:bg-slate-900 text-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-mono placeholder:text-gray-400"
-                />
-              </div>
-
-              <div>
-                <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] mb-1">Full Display Employee Name</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Jane Doe"
-                  value={regDisplayName}
-                  onChange={e => setRegDisplayName(e.target.value)}
-                  className="w-full p-2.5 border border-gray-200 dark:border-slate-700 rounded-xl text-xs bg-gray-50/50 dark:bg-slate-900 text-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-gray-400"
-                />
-              </div>
-
-              <div>
-                <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] mb-1">Authorization Role</label>
-                <select
-                  value={regRole}
-                  onChange={e => setRegRole(e.target.value)}
-                  className="w-full p-2.5 border border-gray-200 dark:border-slate-700 rounded-xl text-xs bg-white dark:bg-slate-900 text-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-bold uppercase cursor-pointer"
-                >
-                  <option value="staff">STAFF OPERATOR</option>
-                  <option value="admin">SYSTEM ADMIN</option>
-                </select>
-              </div>
-
-              <button
-                type="submit"
-                className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-xs text-xs tracking-wide transition-all cursor-pointer active:scale-98"
-              >
-                Create Credentials Profile
-              </button>
-            </form>
-          </div>
-
-          {/* Named Person & ID Registry Management Card */}
-          <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-5 shadow-xs space-y-4">
+          {/* Merged Card: Account Profiles & Directory */}
+          <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-4 shadow-xs space-y-3">
             <div className="flex justify-between items-center">
-              <h3 className="font-bold text-gray-900 dark:text-white text-sm flex items-center gap-2">
-                <Users className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                Named Person & ID Registry
+              <h3 className="font-bold text-gray-900 dark:text-white text-xs flex items-center gap-1.5">
+                <ShieldAlert className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                Account Profiles & Directory
               </h3>
-              <span className="text-[10px] text-gray-400 font-mono font-bold">{namedPersons.length} Records</span>
+              <span className="text-[10px] text-gray-400 font-mono font-bold">{profiles.length} Accounts</span>
             </div>
 
-            {/* Form to Add or Edit a Person */}
-            <form onSubmit={handleSavePerson} className="p-3 bg-blue-50/50 dark:bg-slate-900 border dark:border-slate-700 rounded-xl space-y-2.5">
+            {/* Form to Register or Edit Account Profile */}
+            <form onSubmit={editingProfile ? handleSaveEditProfile : handleCreateProfile} className="p-3 bg-blue-50/50 dark:bg-slate-900 border dark:border-slate-700 rounded-xl space-y-2">
               <h4 className="font-bold text-xs text-gray-800 dark:text-slate-200 flex items-center gap-1.5">
-                {editingPerson ? <Edit2 className="w-3.5 h-3.5 text-blue-600" /> : <Plus className="w-3.5 h-3.5 text-green-600" />}
-                {editingPerson ? `Editing ${editingPerson.name}` : "Register Named Person / ID"}
+                {editingProfile ? <Edit2 className="w-3.5 h-3.5 text-blue-600" /> : <UserPlus className="w-3.5 h-3.5 text-blue-600" />}
+                {editingProfile ? `Editing @${editingProfile.username}` : "Register New Account Profile"}
               </h4>
 
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <div>
-                  <label className="block text-[9px] font-bold text-gray-500 dark:text-slate-400 uppercase mb-0.5">ID Number *</label>
-                  <input 
-                    type="text" 
+                  <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[10px] mb-1">
+                    Operator Username ID {editingProfile ? "(Fixed)" : "*"}
+                  </label>
+                  <input
+                    type="text"
                     required
-                    placeholder="e.g. 10101"
-                    value={personForm.idNumber}
-                    onChange={e => setPersonForm({ ...personForm, idNumber: e.target.value })}
-                    className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-xs font-mono font-bold text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+                    disabled={Boolean(editingProfile)}
+                    placeholder="e.g. staff_member"
+                    value={regUsername}
+                    onChange={e => setRegUsername(e.target.value)}
+                    className={`w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-800 text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all placeholder:text-gray-400 font-mono ${editingProfile ? 'bg-gray-100 dark:bg-slate-900/60 text-gray-500 cursor-not-allowed' : ''}`}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[9px] font-bold text-gray-500 dark:text-slate-400 uppercase mb-0.5">Customer Name *</label>
-                  <input 
-                    type="text" 
-                    required
-                    placeholder="e.g. Juan Cruz"
-                    value={personForm.name}
-                    onChange={e => setPersonForm({ ...personForm, name: e.target.value })}
-                    className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-xs font-bold text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+                  <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[10px] mb-1">
+                    Account Password PIN {editingProfile ? "(Leave blank to keep current)" : "*"}
+                  </label>
+                  <input
+                    type="password"
+                    required={!editingProfile}
+                    placeholder={editingProfile ? "Leave blank to keep existing password..." : "Enter access code..."}
+                    value={regPin}
+                    onChange={e => setRegPin(e.target.value)}
+                    className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-800 text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all font-mono placeholder:text-gray-400"
                   />
                 </div>
 
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[10px] mb-1">First Name *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Jane"
+                      value={regFirstName}
+                      onChange={e => setRegFirstName(e.target.value)}
+                      className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-800 text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all placeholder:text-gray-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[10px] mb-1">Last Name *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Doe"
+                      value={regLastName}
+                      onChange={e => setRegLastName(e.target.value)}
+                      className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg text-xs bg-white dark:bg-slate-800 text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all placeholder:text-gray-400"
+                    />
+                  </div>
+                </div>
+
                 <div>
-                  <label className="block text-[9px] font-bold text-gray-500 dark:text-slate-400 uppercase mb-0.5">Privilege Discount Group</label>
-                  <select 
-                    value={personForm.discountType}
-                    onChange={e => setPersonForm({ ...personForm, discountType: e.target.value })}
-                    className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-xs uppercase font-bold text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+                  <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[10px] mb-1">Authorization Role</label>
+                  <select
+                    value="staff"
+                    disabled
+                    className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg text-xs bg-gray-100 dark:bg-slate-800 text-gray-800 dark:text-white font-bold uppercase cursor-not-allowed"
                   >
-                    <option value="none">Standard / None</option>
-                    <option value="senior">Senior Citizen (20%)</option>
-                    <option value="pwd">PWD (20%)</option>
-                    <option value="soloparent">Solo Parent (10%)</option>
-                    <option value="naac">NAAC</option>
+                    <option value="staff">STAFF OPERATOR</option>
                   </select>
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-1">
-                {editingPerson && (
-                  <button 
-                    type="button" 
-                    onClick={() => { setEditingPerson(null); setPersonForm({ idNumber: "", name: "", discountType: "none" }); }}
-                    className="px-3 py-1.5 bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-slate-200 font-bold rounded-lg text-xs"
-                  >
-                    Cancel
-                  </button>
+              <div className="flex gap-2 pt-1">
+                {editingProfile ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingProfile(null)
+                        setRegUsername("")
+                        setRegPin("")
+                        setRegFirstName("")
+                        setRegLastName("")
+                        setRegRole("staff")
+                      }}
+                      className="px-3 py-1.5 bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-slate-200 font-bold rounded-lg text-xs hover:bg-gray-300 dark:hover:bg-slate-600 transition-colors cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="flex-1 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-2xs text-xs tracking-wide transition-all cursor-pointer active:scale-98"
+                    >
+                      Save Account Changes
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRegUsername("")
+                        setRegPin("")
+                        setRegFirstName("")
+                        setRegLastName("")
+                        setRegRole("staff")
+                      }}
+                      className="px-3 py-1.5 bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-slate-200 font-bold rounded-lg text-xs hover:bg-gray-300 dark:hover:bg-slate-600 transition-colors cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      type="submit"
+                      className="flex-1 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-2xs text-xs tracking-wide transition-all cursor-pointer active:scale-98"
+                    >
+                      Create Credentials Profile
+                    </button>
+                  </>
                 )}
-                <button 
-                  type="submit" 
-                  className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-xs transition-colors shadow-2xs"
-                >
-                  {editingPerson ? "Save Person Record" : "Add Person to Registry"}
-                </button>
               </div>
             </form>
 
-            {/* Registry Search & Directory List */}
+            {/* Account Search & Directory List */}
             <div className="space-y-2">
               <div className="relative">
                 <input
                   type="text"
-                  placeholder="Search ID number or name..."
-                  value={personSearchQuery}
-                  onChange={e => setPersonSearchQuery(e.target.value)}
+                  placeholder="Search account name or username..."
+                  value={accountSearchQuery}
+                  onChange={e => setAccountSearchQuery(e.target.value)}
                   className="w-full p-2 pl-8 border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900 rounded-lg text-xs text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
                 <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-2.5" />
               </div>
 
-              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                {filteredNamedPersons.length === 0 ? (
-                  <p className="text-gray-400 text-center py-3 text-[11px] italic">No matching registry records.</p>
+              <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                {displayProfiles.length === 0 ? (
+                  <p className="text-gray-400 text-center py-4 text-xs italic">No matching operator accounts.</p>
                 ) : (
-                  filteredNamedPersons.map(person => (
-                    <div key={person.id} className="p-2.5 bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-700 rounded-xl flex items-center justify-between">
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-mono font-bold text-blue-600 dark:text-blue-400 text-xs">#{person.idNumber}</span>
-                          <span className="font-bold text-gray-900 dark:text-white text-xs">{person.name}</span>
-                        </div>
-                        {person.discountType && person.discountType !== "none" && (
-                          <span className="inline-block uppercase text-[8px] font-bold px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
-                            {person.discountType}
-                          </span>
-                        )}
-                      </div>
+                  displayProfiles.map((p, pIdx) => {
+                    const profileUsername = String(p.username || "").trim().toLowerCase()
+                    const isActiveUser = activeUsernames.includes(profileUsername)
+                    const isEven = pIdx % 2 === 0
 
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => handleStartEditPerson(person)}
-                          className="p-1 bg-blue-50 text-blue-600 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded hover:bg-blue-100"
-                          title="Edit Record"
-                        >
-                          <Edit2 className="w-3 h-3" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeletePerson(person.id)}
-                          className="p-1 bg-red-50 text-red-600 dark:bg-red-950 dark:text-red-300 border border-red-200 dark:border-red-800 rounded hover:bg-red-100"
-                          title="Delete Record"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Directory Listing */}
-          <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-5 shadow-xs space-y-3">
-            <div className="flex justify-between items-center">
-              <h3 className="font-bold text-gray-900 dark:text-white text-sm flex items-center gap-2">
-                <ShieldAlert className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                Account Profiles Directory
-              </h3>
-              <span className="text-[10px] text-gray-400 font-mono">{displayProfiles.length} Accounts</span>
-            </div>
-
-            <div className="space-y-2 max-h-72 overflow-y-auto pr-1 pb-2">
-              {displayProfiles.length === 0 ? (
-                <p className="text-gray-400 text-center py-4 text-[11px]">No operator accounts created.</p>
-              ) : (
-                displayProfiles.map((p) => {
-                  const profileUsername = String(p.username || "").trim().toLowerCase()
-                  const isActiveUser = activeUsernames.includes(profileUsername)
-
-                  return (
-                    <div key={p.id} className="p-3 bg-gray-50/80 dark:bg-slate-900/80 border border-gray-100 dark:border-slate-700 rounded-xl flex justify-between items-center relative">
-                      <div className="flex items-center gap-2.5">
-                        <div className="relative flex items-center justify-center">
-                          <span className={`w-2.5 h-2.5 rounded-full ${isActiveUser ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}`} />
-                          {isActiveUser && (
-                            <span className="absolute w-3.5 h-3.5 rounded-full bg-green-400 animate-ping opacity-75" />
-                          )}
-                        </div>
-
-                        <div>
-                          <div className="flex items-center gap-1.5">
-                            <p className="font-bold text-gray-900 dark:text-white text-xs">{p.display_name}</p>
+                    return (
+                      <div 
+                        key={p.id} 
+                        className={`p-2.5 border rounded-xl flex justify-between items-center transition-colors ${
+                          isEven 
+                            ? 'bg-white dark:bg-slate-800 border-gray-100 dark:border-slate-700' 
+                            : 'bg-slate-50 dark:bg-slate-900/70 border-gray-200/60 dark:border-slate-700/80'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="relative flex items-center justify-center">
+                            <span className={`w-2 h-2 rounded-full ${isActiveUser ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}`} />
                             {isActiveUser && (
-                              <span className="bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-300 font-bold text-[8px] px-1.5 py-0.2 rounded uppercase">
-                                Active Now
-                              </span>
+                              <span className="absolute w-3 h-3 rounded-full bg-green-400 animate-ping opacity-75" />
                             )}
                           </div>
-                          <p className="text-[10px] text-gray-400 dark:text-gray-400 font-mono mt-0.5">@{p.username} • {p.system_role.toUpperCase()}</p>
+
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <p className="font-bold text-gray-900 dark:text-white text-xs">{p.display_name}</p>
+                              {isActiveUser && (
+                                <span className="bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-300 font-bold text-[9px] px-1.5 py-0.2 rounded uppercase">
+                                  Active Now
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-gray-500 dark:text-gray-400 font-mono mt-0.5">@{p.username} • {p.system_role.toUpperCase()}</p>
+                          </div>
+                        </div>
+
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={(e) => handleOpenActionMenu(e, p)}
+                            className="px-2.5 py-1 bg-white dark:bg-slate-800 hover:bg-gray-100 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-gray-200 font-bold rounded-lg text-xs flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+                          >
+                            Action ▾
+                          </button>
                         </div>
                       </div>
-
-                      <div className="relative">
-                        <button
-                          type="button"
-                          onClick={(e) => handleOpenActionMenu(e, p)}
-                          className="px-3 py-1 bg-white dark:bg-slate-800 hover:bg-gray-100 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700 text-gray-700 dark:text-gray-200 font-bold rounded-lg text-xs flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
-                        >
-                          Action ▾
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })
-              )}
+                    )
+                  })
+                )}
+              </div>
             </div>
 
             {actionMenuAnchor && typeof document !== "undefined" && createPortal(
@@ -1194,10 +1212,16 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                     onClick={() => {
                       const p = actionMenuAnchor.profile
                       setEditingProfile(p)
-                      setEditDisplayName(p.display_name)
-                      setEditPin("")
-                      setEditRole(p.system_role)
+                      const parts = (p.display_name || "").trim().split(" ")
+                      const fName = parts.length > 1 ? parts.slice(0, -1).join(" ") : parts[0] || ""
+                      const lName = parts.length > 1 ? parts.slice(1).join(" ") : ""
+                      setRegFirstName(fName)
+                      setRegLastName(lName)
+                      setRegUsername(p.username)
+                      setRegPin("")
+                      setRegRole("staff")
                       setActionMenuAnchor(null)
+                      window.scrollTo({ top: 0, behavior: "smooth" })
                     }}
                     className="w-full text-left px-3 py-1.5 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-950/40 text-blue-600 dark:text-blue-400 font-medium flex items-center gap-2 transition-colors cursor-pointer"
                   >
@@ -1232,6 +1256,149 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
               </div>,
               document.body
             )}
+          </div>
+
+          {/* Named Person & ID Registry Management Card */}
+          <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 p-4 shadow-xs space-y-3">
+            <div className="flex justify-between items-center">
+              <h3 className="font-bold text-gray-900 dark:text-white text-xs flex items-center gap-1.5">
+                <Users className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                Named Person & ID Registry
+              </h3>
+              <span className="text-[10px] text-gray-400 font-mono font-bold">{namedPersons.length} Records</span>
+            </div>
+
+            {/* Form to Add or Edit a Person */}
+            <form onSubmit={handleSavePerson} className="p-3 bg-blue-50/50 dark:bg-slate-900 border dark:border-slate-700 rounded-xl space-y-2">
+              <h4 className="font-bold text-xs text-gray-800 dark:text-slate-200 flex items-center gap-1.5">
+                {editingPerson ? <Edit2 className="w-3.5 h-3.5 text-blue-600" /> : <Plus className="w-3.5 h-3.5 text-green-600" />}
+                {editingPerson ? `Editing ${editingPerson.name}` : "Register Named Person / ID"}
+              </h4>
+
+              <div className="space-y-1.5">
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 dark:text-slate-400 uppercase mb-1">ID Number *</label>
+                  <input 
+                    type="text" 
+                    required
+                    placeholder="e.g. 10101"
+                    value={personForm.idNumber}
+                    onChange={e => setPersonForm({ ...personForm, idNumber: e.target.value })}
+                    className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-xs font-mono font-bold text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 dark:text-slate-400 uppercase mb-1">Customer Name *</label>
+                  <input 
+                    type="text" 
+                    required
+                    placeholder="e.g. Juan Cruz"
+                    value={personForm.name}
+                    onChange={e => setPersonForm({ ...personForm, name: e.target.value })}
+                    className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-xs font-bold text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 dark:text-slate-400 uppercase mb-1">Privilege Discount Group</label>
+                  <select 
+                    value={personForm.discountType}
+                    onChange={e => setPersonForm({ ...personForm, discountType: e.target.value })}
+                    className="w-full p-2 border border-gray-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-xs uppercase font-bold text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+                  >
+                    <option value="none">Standard / None</option>
+                    <option value="senior">Senior Citizen (20%)</option>
+                    <option value="pwd">PWD (20%)</option>
+                    <option value="soloparent">Solo Parent (10%)</option>
+                    <option value="naac">NAAC</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                {editingPerson && (
+                  <button 
+                    type="button" 
+                    onClick={() => { setEditingPerson(null); setPersonForm({ idNumber: "", name: "", discountType: "none" }); }}
+                    className="px-3 py-1.5 bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-slate-200 font-bold rounded-lg text-xs cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                )}
+                <button 
+                  type="submit" 
+                  className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-xs transition-colors shadow-2xs cursor-pointer"
+                >
+                  {editingPerson ? "Save Person Record" : "Add Person to Registry"}
+                </button>
+              </div>
+            </form>
+
+            {/* Registry Search & Directory List */}
+            <div className="space-y-2">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search ID number or name..."
+                  value={personSearchQuery}
+                  onChange={e => setPersonSearchQuery(e.target.value)}
+                  className="w-full p-2 pl-8 border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900 rounded-lg text-xs text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-2.5" />
+              </div>
+
+              <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                {filteredNamedPersons.length === 0 ? (
+                  <p className="text-gray-400 text-center py-3 text-xs italic">No matching registry records.</p>
+                ) : (
+                  filteredNamedPersons.map((person, pIdx) => {
+                    const isEven = pIdx % 2 === 0
+                    return (
+                      <div 
+                        key={person.id} 
+                        className={`p-2.5 border rounded-xl flex items-center justify-between transition-colors ${
+                          isEven 
+                            ? 'bg-white dark:bg-slate-800 border-gray-100 dark:border-slate-700' 
+                            : 'bg-slate-50 dark:bg-slate-900/70 border-gray-200/60 dark:border-slate-700/80'
+                        }`}
+                      >
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono font-bold text-blue-600 dark:text-blue-400 text-xs">#{person.idNumber}</span>
+                          <span className="font-bold text-gray-900 dark:text-white text-xs">{person.name}</span>
+                        </div>
+                        {person.discountType && person.discountType !== "none" && (
+                          <span className="inline-block uppercase text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300">
+                            {person.discountType}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleStartEditPerson(person)}
+                          className="p-1 bg-blue-50 text-blue-600 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-lg hover:bg-blue-100 cursor-pointer"
+                          title="Edit Record"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePerson(person.id)}
+                          className="p-1 bg-red-50 text-red-600 dark:bg-red-950 dark:text-red-300 border border-red-200 dark:border-red-800 rounded-lg hover:bg-red-100 cursor-pointer"
+                          title="Delete Record"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })
+                )}
+              </div>
+            </div>
           </div>
 
         </div>
@@ -1278,14 +1445,14 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                       return (
                         <tr
                           key={r.id}
-                          className={`transition-colors ${
+                          className={`transition-colors text-xs ${
                             isEven
-                              ? "bg-white dark:bg-slate-800 hover:bg-slate-200/60 dark:hover:bg-slate-700/70"
-                              : "bg-slate-100 dark:bg-slate-900 hover:bg-slate-200/80 dark:hover:bg-slate-700/80"
+                              ? "bg-white dark:bg-slate-800 hover:bg-slate-100/80 dark:hover:bg-slate-700/70"
+                              : "bg-slate-50 dark:bg-slate-900/70 hover:bg-slate-100 dark:hover:bg-slate-700/80"
                           }`}
                         >
-                          <td className="p-2 font-bold text-gray-800 dark:text-white">
-                            {r.displayName || r.username} <span className="text-[10px] text-gray-400 font-normal">(@{r.username})</span>
+                          <td className="p-2 font-bold text-gray-900 dark:text-white">
+                            {r.displayName || r.username} <span className="text-[10px] text-gray-500 dark:text-slate-400 font-normal">(@{r.username})</span>
                           </td>
                           <td className="p-2">
                             {String(r.systemRole || "").toLowerCase() === "admin" ? (
@@ -1298,11 +1465,11 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                               </span>
                             )}
                           </td>
-                          <td className="p-2">{inStr}</td>
+                          <td className="p-2 font-mono text-gray-600 dark:text-slate-300 text-xs">{inStr}</td>
                           <td className="p-2">
-                            <span className={r.timeOut ? "text-gray-700 dark:text-slate-300" : "text-emerald-600 font-bold"}>{outStr}</span>
+                            <span className={r.timeOut ? "text-gray-700 dark:text-slate-300 font-mono text-xs" : "text-emerald-600 dark:text-emerald-400 font-bold font-mono text-xs"}>{outStr}</span>
                           </td>
-                          <td className="p-2 font-mono font-bold text-blue-700 dark:text-blue-400">{durationDisplay}</td>
+                          <td className="p-2 font-mono font-bold text-blue-700 dark:text-blue-400 text-xs">{durationDisplay}</td>
                         </tr>
                       )
                     })}
@@ -1343,11 +1510,11 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
             {/* Audit Logs Controls */}
             <div className="flex flex-col sm:flex-row gap-3">
               <div className="w-full sm:w-1/3">
-                <label className="block text-[9px] font-bold text-gray-400 dark:text-gray-400 uppercase mb-1">Target Module Category</label>
+                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Target Module Category</label>
                 <select
                   value={auditModuleFilter}
                   onChange={e => setAuditModuleFilter(e.target.value)}
-                  className="w-full p-2 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-white rounded-lg text-xs font-bold uppercase"
+                  className="w-full p-2.5 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-white rounded-lg text-sm font-bold uppercase"
                 >
                   <option value="ALL">All Modules</option>
                   <option value="INVENTORY">INVENTORY & PRODUCTS</option>
@@ -1358,29 +1525,29 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
               </div>
 
               <div className="w-full sm:w-2/3">
-                <label className="block text-[9px] font-bold text-gray-400 dark:text-gray-400 uppercase mb-1">Search Logs</label>
+                <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Search Logs</label>
                 <input
                   type="text"
                   placeholder="Search operator, action, details..."
                   value={auditSearchQuery}
                   onChange={e => setAuditSearchQuery(e.target.value)}
-                  className="w-full p-2 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-white rounded-lg text-xs"
+                  className="w-full p-2.5 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-white rounded-lg text-sm"
                 />
               </div>
             </div>
 
             <div className="max-h-64 overflow-y-auto pr-1 rounded-lg border border-gray-100 dark:border-slate-700">
               <table className="w-full text-left border-collapse">
-                <thead className="bg-gray-50/90 dark:bg-slate-900 text-[10px] text-gray-500 dark:text-gray-400 font-bold uppercase sticky top-0 backdrop-blur-xs z-10 border-b dark:border-slate-700">
+                <thead className="bg-gray-50/90 dark:bg-slate-900 text-xs text-gray-500 dark:text-gray-400 font-bold uppercase sticky top-0 backdrop-blur-xs z-10 border-b dark:border-slate-700">
                   <tr>
-                    <th className="py-2 px-3">Timestamp Date</th>
-                    <th className="py-2 px-3">Operator</th>
-                    <th className="py-2 px-3">Action Tag</th>
-                    <th className="py-2 px-3">Target Module</th>
-                    <th className="py-2 px-3 text-center">Summary</th>
+                    <th className="py-2.5 px-3">Timestamp Date</th>
+                    <th className="py-2.5 px-3">Operator</th>
+                    <th className="py-2.5 px-3">Action Tag</th>
+                    <th className="py-2.5 px-3">Target Module</th>
+                    <th className="py-2.5 px-3 text-center">Summary</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200 dark:divide-slate-700 font-mono text-[11px]">
+                <tbody className="divide-y divide-gray-200 dark:divide-slate-700 text-sm">
                   {filteredAuditLogs.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="py-8 text-center text-gray-400 dark:text-gray-500 font-sans">
@@ -1395,22 +1562,22 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                           key={log.id}
                           className={`transition-colors ${
                             isEven
-                              ? "bg-white dark:bg-slate-800 hover:bg-slate-200/60 dark:hover:bg-slate-700/70"
-                              : "bg-slate-100 dark:bg-slate-900 hover:bg-slate-200/80 dark:hover:bg-slate-700/80"
+                              ? "bg-white dark:bg-slate-800 hover:bg-slate-100/80 dark:hover:bg-slate-700/70"
+                              : "bg-slate-50 dark:bg-slate-900/70 hover:bg-slate-100 dark:hover:bg-slate-700/80"
                           }`}
                         >
-                          <td className="py-2 px-3 text-gray-500 dark:text-gray-400 text-[10px] whitespace-nowrap">
+                          <td className="py-2.5 px-3 text-gray-600 dark:text-slate-300 font-mono text-xs whitespace-nowrap">
                             {formatDateString(log.created_at)}
                           </td>
-                          <td className="py-2 px-3 font-bold text-gray-900 dark:text-slate-200">
+                          <td className="py-2.5 px-3 font-bold text-gray-900 dark:text-white">
                             @{log.operator_username || "system"}
                           </td>
-                          <td className="py-2 px-3">
-                            <span className="bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 px-1.5 py-0.5 rounded font-bold text-[9px]">
+                          <td className="py-2.5 px-3">
+                            <span className="bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 px-2 py-0.5 rounded font-bold text-xs">
                               {log.action_type}
                             </span>
                           </td>
-                          <td className="py-2 px-3 text-gray-600 dark:text-gray-300 font-sans text-[10px]">
+                          <td className="py-2.5 px-3 text-gray-700 dark:text-slate-300 text-sm font-medium">
                             {log.module_target}
                           </td>
                           <td className="py-2 px-3 text-center">
@@ -1420,7 +1587,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                               className="text-blue-500 hover:text-blue-700 p-1"
                               title="View Log Entry Details"
                             >
-                              <Eye className="w-3.5 h-3.5 inline" />
+                              <Eye className="w-4 h-4 inline" />
                             </button>
                           </td>
                         </tr>
@@ -1435,25 +1602,25 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
           {/* Realtime Batch Sales & Stock Logs Table */}
           <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 shadow-xs p-5 space-y-4">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b dark:border-slate-700 pb-3">
-              <h3 className="font-bold text-gray-900 dark:text-white text-sm flex items-center gap-2">
-                <ShoppingBag className="w-4 h-4 text-green-600 dark:text-green-400" />
+              <h3 className="font-bold text-gray-900 dark:text-white text-base flex items-center gap-2">
+                <ShoppingBag className="w-5 h-5 text-green-600 dark:text-green-400" />
                 Batch History & Stock Logs
                 <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse ml-1" title="Realtime Active" />
               </h3>
               
               <div className="flex items-center gap-2">
-                <div className="flex bg-gray-100 dark:bg-slate-900 p-0.5 rounded-lg border dark:border-slate-700 text-[10px]">
+                <div className="flex bg-gray-100 dark:bg-slate-900 p-0.5 rounded-lg border dark:border-slate-700 text-xs">
                   <button
                     type="button"
                     onClick={() => setBatchTabMode("sales")}
-                    className={`px-3 py-1 rounded-md font-bold transition-all ${batchTabMode === "sales" ? 'bg-white dark:bg-slate-700 text-blue-700 dark:text-blue-400 shadow-2xs' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}
+                    className={`px-3 py-1.5 rounded-md font-bold transition-all ${batchTabMode === "sales" ? 'bg-white dark:bg-slate-700 text-blue-700 dark:text-blue-400 shadow-2xs' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}
                   >
                     Batch Sales
                   </button>
                   <button
                     type="button"
                     onClick={() => setBatchTabMode("creation")}
-                    className={`px-3 py-1 rounded-md font-bold transition-all ${batchTabMode === "creation" ? 'bg-white dark:bg-slate-700 text-blue-700 dark:text-blue-400 shadow-2xs' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}
+                    className={`px-3 py-1.5 rounded-md font-bold transition-all ${batchTabMode === "creation" ? 'bg-white dark:bg-slate-700 text-blue-700 dark:text-blue-400 shadow-2xs' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}
                   >
                     Stock Logs
                   </button>
@@ -1472,15 +1639,15 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
             {/* Controls: Date Frame & Export CSV/Excel */}
             <div className="bg-gray-50/70 dark:bg-slate-900/70 p-3 rounded-xl border dark:border-slate-700 space-y-2.5">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-2 text-[10px]">
-                  <span className="font-bold text-gray-400 dark:text-gray-400 uppercase tracking-wider">Date Frame:</span>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Date Frame:</span>
                   <div className="flex bg-gray-100 dark:bg-slate-800 p-0.5 rounded-lg border dark:border-slate-700">
                     {(["all", "today", "week", "month", "custom"] as const).map(f => (
                       <button
                         key={f}
                         type="button"
                         onClick={() => setBatchDateFrame(f)}
-                        className={`px-2.5 py-1 rounded-md font-bold uppercase transition-all ${batchDateFrame === f ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-2xs' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}
+                        className={`px-3 py-1 rounded-md font-bold uppercase transition-all ${batchDateFrame === f ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-2xs' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}
                       >
                         {f}
                       </button>
@@ -1491,7 +1658,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                 <button
                   type="button"
                   onClick={handleExportBatchLogsCSV}
-                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-2xs transition-colors"
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-2xs transition-colors"
                 >
                   <Download className="w-3.5 h-3.5" />
                   Export {batchTabMode === "sales" ? "Batch Sales" : "Stock Logs"} Excel/CSV
@@ -1499,11 +1666,11 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
               </div>
 
               {batchDateFrame === "custom" && (
-                <div className="flex items-center gap-2 pt-1 text-[10px] font-sans">
+                <div className="flex items-center gap-2 pt-1 text-xs font-sans">
                   <label className="text-gray-500 dark:text-gray-400 font-bold">From:</label>
-                  <input type="date" value={batchStartDate} onChange={e => setBatchStartDate(e.target.value)} className="p-1 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-white rounded text-xs" />
+                  <input type="date" value={batchStartDate} onChange={e => setBatchStartDate(e.target.value)} className="p-1.5 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-white rounded-lg text-sm" />
                   <label className="text-gray-500 dark:text-gray-400 font-bold">To:</label>
-                  <input type="date" value={batchEndDate} onChange={e => setBatchEndDate(e.target.value)} className="p-1 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-white rounded text-xs" />
+                  <input type="date" value={batchEndDate} onChange={e => setBatchEndDate(e.target.value)} className="p-1.5 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-white rounded-lg text-sm" />
                 </div>
               )}
 
@@ -1512,7 +1679,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                 placeholder={batchTabMode === "sales" ? "Search batch sales by Sale ID, Item Name, Batch Label..." : "Search stock batches or deductions by Item Name, Batch Label..."}
                 value={batchSearchQuery}
                 onChange={e => setBatchSearchQuery(e.target.value)}
-                className="w-full p-2 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-white rounded-lg text-xs"
+                className="w-full p-2.5 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-white rounded-lg text-sm"
               />
             </div>
 
@@ -1520,7 +1687,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
               {batchTabMode === "sales" ? (
                 /* TABLE 3: Realtime Batch Sales Logs Table */
                 <table className="w-full text-left border-collapse">
-                  <thead className="bg-gray-50/90 dark:bg-slate-900 text-[10px] text-gray-500 dark:text-gray-400 font-bold uppercase sticky top-0 backdrop-blur-xs z-10 border-b dark:border-slate-700">
+                  <thead className="bg-gray-50/90 dark:bg-slate-900 text-xs text-gray-500 dark:text-gray-400 font-bold uppercase sticky top-0 backdrop-blur-xs z-10 border-b dark:border-slate-700">
                     <tr>
                       <th className="py-2.5 px-3">Tx ID</th>
                       <th className="py-2.5 px-3 text-center">Total Qty</th>
@@ -1529,7 +1696,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                       <th className="py-2.5 px-3 text-center">Receipt</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-200 dark:divide-slate-700 font-mono text-[11px]">
+                  <tbody className="divide-y divide-gray-200 dark:divide-slate-700 text-sm">
                     {filteredGroupedBatchSales.length === 0 ? (
                       <tr>
                         <td colSpan={5} className="py-12 text-center text-gray-400 dark:text-gray-500 font-sans">
@@ -1548,12 +1715,12 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                                   ? 'opacity-70 bg-red-50 dark:bg-red-950/40 hover:bg-red-100/70 dark:hover:bg-red-950/60'
                                   : 'opacity-70 bg-red-100/60 dark:bg-red-950/60 hover:bg-red-100 dark:hover:bg-red-950/80'
                                 : isEven
-                                  ? 'bg-white dark:bg-slate-800 hover:bg-slate-200/60 dark:hover:bg-slate-700/70'
-                                  : 'bg-slate-100 dark:bg-slate-900 hover:bg-slate-200/80 dark:hover:bg-slate-700/80'
+                                  ? 'bg-white dark:bg-slate-800 hover:bg-slate-100/80 dark:hover:bg-slate-700/70'
+                                  : 'bg-slate-50 dark:bg-slate-900/70 hover:bg-slate-100 dark:hover:bg-slate-700/80'
                             }`}
                           >
                             <td className="py-2.5 px-3 font-bold">
-                              <span className={sale.isRefunded ? 'text-gray-400 dark:text-slate-500 line-through' : 'text-blue-600 dark:text-blue-400'}>
+                              <span className={sale.isRefunded ? 'text-gray-400 dark:text-slate-500 line-through font-mono' : 'text-blue-600 dark:text-blue-400 font-mono'}>
                                 #{sale.sale_id}
                               </span>
                               {sale.isRefunded && (
@@ -1562,13 +1729,13 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                                 </span>
                               )}
                             </td>
-                            <td className={`py-2.5 px-3 text-center font-bold ${sale.isRefunded ? 'text-gray-400 dark:text-slate-500 line-through' : 'text-gray-800 dark:text-slate-200'}`}>
+                            <td className={`py-2.5 px-3 text-center font-bold font-mono ${sale.isRefunded ? 'text-gray-400 dark:text-slate-500 line-through' : 'text-gray-800 dark:text-slate-200'}`}>
                               {sale.total_qty} pc
                             </td>
-                            <td className={`py-2.5 px-3 text-right font-bold ${sale.isRefunded ? 'text-gray-400 dark:text-slate-500 line-through' : 'text-green-700 dark:text-green-400'}`}>
+                            <td className={`py-2.5 px-3 text-right font-bold font-mono ${sale.isRefunded ? 'text-gray-400 dark:text-slate-500 line-through' : 'text-emerald-700 dark:text-emerald-400'}`}>
                               ₱{sale.total_price.toFixed(2)}
                             </td>
-                            <td className="py-2.5 px-3 text-right text-gray-400 dark:text-gray-400 text-[10px] font-sans whitespace-nowrap">
+                            <td className="py-2.5 px-3 text-right text-gray-600 dark:text-slate-300 text-xs font-mono whitespace-nowrap">
                               {formatDateString(sale.created_at)}
                             </td>
                             <td className="py-2.5 px-3 text-center">
@@ -1590,7 +1757,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
               ) : (
                 /* TABLE 4: Realtime Stock Additions & Deductions Table */
                 <table className="w-full text-left border-collapse">
-                  <thead className="bg-gray-50/90 dark:bg-slate-900 text-[10px] text-gray-500 dark:text-slate-400 font-bold uppercase sticky top-0 backdrop-blur-xs z-10 border-b dark:border-slate-700">
+                  <thead className="bg-gray-50/90 dark:bg-slate-900 text-xs text-gray-500 dark:text-slate-400 font-bold uppercase sticky top-0 backdrop-blur-xs z-10 border-b dark:border-slate-700">
                     <tr>
                       <th className="py-2.5 px-3">Batch Event Tag</th>
                       <th className="py-2.5 px-3">Products Included</th>
@@ -1600,7 +1767,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                       <th className="py-2.5 px-3 text-center">Voucher</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-200 dark:divide-slate-700 font-mono text-[11px]">
+                  <tbody className="divide-y divide-gray-200 dark:divide-slate-700 text-sm">
                     {filteredStockAdditions.length === 0 ? (
                       <tr>
                         <td colSpan={6} className="py-12 text-center text-gray-400 dark:text-slate-500 font-sans">
@@ -1620,26 +1787,26 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                                   ? 'bg-red-50 dark:bg-red-950/40 hover:bg-red-100/70 dark:hover:bg-red-950/60'
                                   : 'bg-red-100/60 dark:bg-red-950/60 hover:bg-red-100 dark:hover:bg-red-950/80'
                                 : isEven
-                                  ? 'bg-white dark:bg-slate-800 hover:bg-slate-200/60 dark:hover:bg-slate-700/70'
-                                  : 'bg-slate-100 dark:bg-slate-900 hover:bg-slate-200/80 dark:hover:bg-slate-700/80'
+                                  ? 'bg-white dark:bg-slate-800 hover:bg-slate-100/80 dark:hover:bg-slate-700/70'
+                                  : 'bg-slate-50 dark:bg-slate-900/70 hover:bg-slate-100 dark:hover:bg-slate-700/80'
                             }`}
                           >
                             <td className="py-2.5 px-3 font-bold">
                               {isDeduct ? (
                                 <span className="text-red-600 dark:text-red-400 flex items-center gap-1.5 flex-wrap">
-                                  <span className="px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-950/80 text-red-700 dark:text-red-300 text-[9px] font-bold">DEDUCT</span>
+                                  <span className="px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-950/80 text-red-700 dark:text-red-300 text-xs font-bold">DEDUCT</span>
                                   {group.batch_tag}
                                 </span>
                               ) : (
-                                <span className="text-indigo-600 dark:text-indigo-400">
+                                <span className="text-indigo-600 dark:text-indigo-400 font-mono text-sm">
                                   {group.batch_tag}
                                 </span>
                               )}
                             </td>
                             <td className="py-2.5 px-3 font-sans">
-                              <p className="font-bold text-gray-900 dark:text-white leading-tight">{group.summary_name}</p>
+                              <p className="font-bold text-gray-900 dark:text-white leading-tight text-sm">{group.summary_name}</p>
                               {group.total_items > 1 && (
-                                <span className="text-[9px] bg-indigo-50 text-indigo-700 dark:bg-indigo-950/80 dark:text-indigo-300 px-1.5 py-0.5 rounded font-mono border border-indigo-100 dark:border-indigo-800 mt-0.5 inline-block font-bold">
+                                <span className="text-xs bg-indigo-50 text-indigo-700 dark:bg-indigo-950/80 dark:text-indigo-300 px-2 py-0.5 rounded font-mono border border-indigo-100 dark:border-indigo-800 mt-1 inline-block font-bold">
                                   {group.total_items} items in bulk batch
                                 </span>
                               )}
@@ -1658,7 +1825,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                             }`}>
                               {isDeduct ? `-₱${Math.abs(group.total_val).toFixed(2)}` : `₱${group.total_val.toFixed(2)}`}
                             </td>
-                            <td className="py-2.5 px-3 text-right text-gray-400 dark:text-slate-400 text-[10px] font-sans whitespace-nowrap">
+                            <td className="py-2.5 px-3 text-right text-gray-500 dark:text-slate-400 text-xs font-mono whitespace-nowrap">
                               {formatDateString(group.created_at)}
                             </td>
                             <td className="py-2.5 px-3 text-center">
@@ -1668,7 +1835,7 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
                                 className="text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 p-1 cursor-pointer"
                                 title="View Stock Event Voucher"
                               >
-                                <Eye className="w-3.5 h-3.5 inline" />
+                                <Eye className="w-4 h-4 inline" />
                               </button>
                             </td>
                           </tr>
@@ -1866,88 +2033,69 @@ export function AdminPanel({ currentOperator, onLogAction, refreshAllData }: Adm
         </div>
       )}
 
-      {/* Edit Account Profile Modal */}
-      {editingProfile && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 font-sans">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl border dark:border-slate-700">
-            <div className="flex justify-between items-center border-b dark:border-slate-700 pb-3">
-              <div className="flex items-center gap-2">
-                <div className="w-9 h-9 rounded-xl bg-blue-100 dark:bg-blue-950 flex items-center justify-center text-blue-600 dark:text-blue-400">
-                  <Edit className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-base text-gray-900 dark:text-white">Edit Account Credentials Profile</h3>
-                  <p className="text-[10px] text-gray-400 font-mono">Editing @{editingProfile.username}</p>
-                </div>
+      {/* Duplicate Account Username Warning Modal */}
+      {duplicateAccountModal && duplicateAccountModal.isOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 font-sans animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl border border-amber-200 dark:border-amber-700/50">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-950/60 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0">
+                <AlertTriangle className="w-5 h-5" />
               </div>
-              <button type="button" onClick={() => setEditingProfile(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-1">
-                <X className="w-5 h-5" />
-              </button>
+              <div>
+                <h3 className="font-bold text-sm text-gray-900 dark:text-white">
+                  {duplicateAccountModal.title}
+                </h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  Operator credentials conflict
+                </p>
+              </div>
             </div>
 
-            <form onSubmit={handleSaveEditProfile} className="space-y-3">
-              <div>
-                <label className="block text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">
-                  Full Display Employee Name
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={editDisplayName}
-                  onChange={e => setEditDisplayName(e.target.value)}
-                  className="w-full p-2.5 border border-gray-200 dark:border-slate-700 rounded-xl text-xs bg-white dark:bg-slate-900 text-gray-800 dark:text-white font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
+            <p className="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">
+              {duplicateAccountModal.message}
+            </p>
 
-              <div>
-                <label className="block text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">
-                  Password PIN Code
-                </label>
-                <input
-                  type="password"
-                  value={editPin}
-                  onChange={e => setEditPin(e.target.value)}
-                  placeholder="Leave blank to keep existing password..."
-                  className="w-full p-2.5 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-mono bg-white dark:bg-slate-900 text-gray-800 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500 placeholder:font-sans focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
+            {duplicateAccountModal.details && (
+              <div className="p-3 bg-amber-50/70 dark:bg-amber-950/30 rounded-xl border border-amber-200/80 dark:border-amber-800/40 text-xs space-y-1.5">
+                {duplicateAccountModal.details.username && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-500 dark:text-gray-400 text-[10px] uppercase font-bold">Username ID:</span>
+                    <span className="font-mono font-bold text-gray-900 dark:text-white">
+                      {duplicateAccountModal.details.username}
+                    </span>
+                  </div>
+                )}
+                {duplicateAccountModal.details.displayName && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-500 dark:text-gray-400 text-[10px] uppercase font-bold">Account Name:</span>
+                    <span className="font-semibold text-gray-800 dark:text-gray-200">
+                      {duplicateAccountModal.details.displayName}
+                    </span>
+                  </div>
+                )}
+                {duplicateAccountModal.details.role && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-500 dark:text-gray-400 text-[10px] uppercase font-bold">Assigned Role:</span>
+                    <span className="font-bold text-indigo-600 dark:text-indigo-400 uppercase">
+                      {duplicateAccountModal.details.role}
+                    </span>
+                  </div>
+                )}
               </div>
+            )}
 
-              <div>
-                <label className="block text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">
-                  Authorization Role
-                </label>
-                <select
-                  value={editRole}
-                  onChange={e => setEditRole(e.target.value)}
-                  className="w-full p-2.5 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold uppercase bg-white dark:bg-slate-900 text-gray-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-                >
-                  <option value="staff">STAFF OPERATOR</option>
-                  <option value="admin">SYSTEM ADMIN</option>
-                </select>
-              </div>
-
-              <div className="flex gap-2 pt-3">
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-md text-xs transition-colors flex items-center justify-center gap-1.5"
-                >
-                  <Edit className="w-4 h-4" />
-                  Save Changes
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingProfile(null)}
-                  className="py-2.5 px-4 bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-gray-200 font-bold rounded-xl text-xs"
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setDuplicateAccountModal(null)}
+                className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
+              >
+                Understood
+              </button>
+            </div>
           </div>
         </div>
       )}
-
-
 
     </>
   )

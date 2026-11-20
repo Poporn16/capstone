@@ -794,7 +794,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
   }
 
   return (
-    <div className="space-y-4 text-xs font-medium font-sans relative">
+    <div className="space-y-3 text-xs font-sans relative">
       {/* Floating Scanner / Action Toast Notification */}
       {scanToast && (
         <div className="fixed top-4 right-4 z-50 animate-in slide-in-from-top-3 fade-in duration-200 pointer-events-none">
@@ -818,42 +818,42 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
       )}
 
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 text-xs font-medium">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 text-xs font-sans">
         
         {/* Stock Registry Directory */}
-        <div className="lg:col-span-1 bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700 shadow-xs space-y-4 flex flex-col h-[580px]">
+        <div className="lg:col-span-1 bg-white dark:bg-slate-800 p-3.5 rounded-xl border dark:border-slate-700 shadow-xs space-y-3 flex flex-col h-[540px]">
           <div className="flex items-center justify-between">
-            <h3 className="font-bold text-gray-800 dark:text-white text-sm tracking-wide">Stock Registry Directory</h3>
-            <span className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
+            <h3 className="font-bold text-gray-800 dark:text-white text-xs tracking-wide">Stock Registry Directory</h3>
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-full border border-emerald-200 dark:border-emerald-800">
               <Scan className="w-3 h-3" /> Scanner Ready
             </span>
           </div>
           
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <div className="relative flex items-center">
-              <Search className="w-4 h-4 text-gray-400 dark:text-slate-400 absolute left-3 pointer-events-none" />
+              <Search className="w-3.5 h-3.5 text-gray-400 dark:text-slate-400 absolute left-3 pointer-events-none" />
               <input 
                 type="text" 
                 placeholder="Search matching barcode, name, brand..." 
                 value={query} 
                 onChange={e => setQuery(e.target.value)} 
-                className="w-full pl-9 pr-8 p-2.5 border border-gray-200 dark:border-slate-700 rounded-xl text-xs bg-gray-50/50 dark:bg-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-gray-400" 
+                className="w-full pl-8 pr-7 py-2 border border-gray-200 dark:border-slate-700 rounded-xl text-xs bg-gray-50/50 dark:bg-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-gray-400" 
               />
               {query && (
                 <button 
                   type="button" 
                   onClick={() => setQuery("")}
-                  className="absolute right-2.5 p-1 rounded-full text-gray-400 hover:text-gray-600 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors"
+                  className="absolute right-2 p-1 rounded-full text-gray-400 hover:text-gray-600 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-slate-700 transition-colors"
                   title="Clear search"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <X className="w-3 h-3" />
                 </button>
               )}
             </div>
             <select 
               value={catFilter} 
               onChange={e => setCatFilter(e.target.value)} 
-              className="w-full p-2.5 border border-gray-200 dark:border-slate-700 rounded-xl uppercase bg-white dark:bg-slate-900 dark:text-white text-xs font-bold focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+              className="w-full py-2 px-3 border border-gray-200 dark:border-slate-700 rounded-xl uppercase bg-white dark:bg-slate-900 dark:text-white text-xs font-bold focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
             >
               <option value="all">All Categories</option>
               <option value="unmarked category">UNMARKED CATEGORY</option>
@@ -861,9 +861,9 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
             </select>
           </div>
 
-          <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+          <div className="flex-1 overflow-y-auto space-y-1.5 pr-1">
             {filtered.length === 0 ? (
-              <p className="text-gray-400 dark:text-slate-500 text-center py-8">No system products match current filters.</p>
+              <p className="text-gray-400 dark:text-slate-500 text-center py-8 text-xs">No system products match current filters.</p>
             ) : (
               filtered.map(item => {
                 const isLow = item.stock <= item.minStock
@@ -876,17 +876,17 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                       setSelectedItem(item)
                       setItemManufacturer("")
                     }}
-                    className={`w-full text-left p-3 border rounded-xl transition-all flex justify-between items-start gap-2 cursor-pointer ${
+                    className={`w-full text-left p-2.5 border rounded-xl transition-all flex justify-between items-start gap-2 cursor-pointer ${
                       isSelected 
                         ? 'border-blue-500 bg-blue-50/60 dark:bg-blue-950/40 dark:border-blue-500 shadow-xs' 
                         : 'border-gray-100 dark:border-slate-700/80 bg-white dark:bg-slate-900/50 hover:bg-gray-50 dark:hover:bg-slate-700/50'
                     }`}
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="font-bold text-gray-900 dark:text-white leading-snug break-words">{item.name}</p>
+                      <p className="font-bold text-gray-900 dark:text-white text-xs leading-snug break-words">{item.name}</p>
                       
                       {/* Barcode & Category */}
-                      <p className="text-[10px] text-gray-400 dark:text-slate-400 font-mono mt-1 flex items-center gap-1.5 flex-wrap">
+                      <p className="text-[10px] text-gray-500 dark:text-slate-400 font-mono mt-0.5 flex items-center gap-1.5 flex-wrap">
                         <span>#{item.barcode || "No Barcode"}</span>
                         <span>•</span>
                         <span className="uppercase font-semibold text-blue-600 dark:text-blue-400">{item.category}</span>
@@ -894,7 +894,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
 
                       {/* Manufacturer Brand Name on Item Card if active batches exist */}
                       {item.batches && item.batches.length > 0 && item.manufacturer && (
-                        <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium mt-1 flex items-center gap-1">
+                        <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium mt-0.5 flex items-center gap-1">
                           <Building2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
                           <span className="truncate">{item.manufacturer}</span>
                         </p>
@@ -902,7 +902,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                     </div>
 
                     <div className="text-right flex-shrink-0">
-                      <span className={`font-mono font-bold text-xs px-2.5 py-1 rounded-lg inline-block ${
+                      <span className={`font-mono font-bold text-xs px-2 py-0.5 rounded-lg inline-block ${
                         isLow 
                           ? 'bg-red-100 dark:bg-red-950/80 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800' 
                           : 'bg-green-100 dark:bg-green-950/80 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800'
@@ -920,40 +920,40 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
         <div className="lg:col-span-2 space-y-4 flex flex-col">
           {!selectedItem ? (
             <div className="bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 border-dashed p-8 text-center text-gray-400 dark:text-slate-400 flex flex-col items-center justify-center flex-1 min-h-[400px]">
-              <Layers className="w-8 h-8 text-gray-300 dark:text-slate-600 mb-2" />
-              <p className="font-semibold text-sm text-gray-700 dark:text-slate-300">No Active Selection Made</p>
-              <p className="text-[11px] mt-0.5">Please click on any product profile row template from the side panel to adjust batch counts or scan a barcode.</p>
+              <Layers className="w-10 h-10 text-gray-300 dark:text-slate-600 mb-2" />
+              <p className="font-semibold text-base text-gray-700 dark:text-slate-300">No Active Selection Made</p>
+              <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">Please click on any product profile row template from the side panel to adjust batch counts or scan a barcode.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 flex-1 items-start">
               
-              <div className="md:col-span-2 bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 shadow-xs p-4 space-y-4 min-h-[520px] flex flex-col">
-                <div className="border-b dark:border-slate-700 pb-3 flex flex-wrap justify-between items-start gap-2">
-                  <div className="space-y-1.5 max-w-full">
+              <div className="md:col-span-2 bg-white dark:bg-slate-800 rounded-xl border dark:border-slate-700 shadow-xs p-3.5 space-y-3 min-h-[500px] flex flex-col">
+                <div className="border-b dark:border-slate-700 pb-2.5 flex flex-wrap justify-between items-start gap-2">
+                  <div className="space-y-1 max-w-full">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <h2 className="text-base font-bold text-gray-900 dark:text-white leading-tight">{selectedItem.name}</h2>
+                      <h2 className="text-sm font-bold text-gray-900 dark:text-white leading-tight">{selectedItem.name}</h2>
                     </div>
                     
                     {/* Barcode in Header */}
-                    <div className="flex items-center gap-2 flex-wrap text-[11px] text-slate-600 dark:text-slate-300 font-mono">
-                      <span className="text-slate-500 dark:text-slate-400">Barcode: #{selectedItem.barcode || "N/A"}</span>
+                    <div className="flex items-center gap-2 flex-wrap text-xs text-slate-600 dark:text-slate-300 font-mono">
+                      <span className="text-slate-500 dark:text-slate-400 text-[10px]">Barcode: #{selectedItem.barcode || "N/A"}</span>
                     </div>
                   </div>
                   <div className="text-right">
-                    <span className="text-[10px] uppercase font-bold tracking-wide px-2.5 py-1 bg-gray-100 dark:bg-slate-700 rounded-md text-gray-700 dark:text-slate-200 border dark:border-slate-600">
+                    <span className="text-[10px] uppercase font-bold tracking-wide px-2.5 py-0.5 bg-gray-100 dark:bg-slate-700 rounded-md text-gray-700 dark:text-slate-200 border dark:border-slate-600">
                       Min Safe Level: {selectedItem.minStock}
                     </span>
                   </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+                <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
                   <h4 className="font-bold text-gray-700 dark:text-slate-200 text-xs tracking-wide">Active Batch Assignments</h4>
                   
                   {(() => {
                     const activeBatches = (selectedItem.batches || []).filter(b => (Number(b.stock) || 0) > 0)
                     if (activeBatches.length === 0) {
                       return (
-                        <p className="text-gray-400 dark:text-slate-500 text-center py-12 bg-gray-50/50 dark:bg-slate-900/40 border border-dashed dark:border-slate-700 rounded-xl">
+                        <p className="text-gray-400 dark:text-slate-500 text-center py-12 bg-gray-50/50 dark:bg-slate-900/40 border border-dashed dark:border-slate-700 rounded-xl text-xs">
                           No active batches assigned. Create a batch on the right to add stock quantities.
                         </p>
                       )
@@ -976,7 +976,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                       const displayPrice = localPrices[batch.id] !== undefined ? localPrices[batch.id] : String(batch.price || 0)
 
                       return (
-                        <div key={batch.id} className="p-3.5 bg-gray-50 dark:bg-slate-900/60 border border-gray-100 dark:border-slate-700 rounded-xl space-y-2.5 transition-colors hover:bg-gray-100/60 dark:hover:bg-slate-900">
+                        <div key={batch.id} className="p-3 bg-gray-50 dark:bg-slate-900/60 border border-gray-100 dark:border-slate-700 rounded-xl space-y-2 transition-colors hover:bg-gray-100/60 dark:hover:bg-slate-900">
                           <div className="flex items-center justify-between gap-2 flex-wrap">
                             <div className="flex items-center gap-2 flex-wrap">
                               <p className="font-bold text-gray-900 dark:text-white font-mono text-xs">{batch.batchLabel}</p>
@@ -988,20 +988,20 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                               )}
                             </div>
                             
-                            <div className="flex items-center gap-2">
-                              <div className="flex items-center gap-1 text-gray-500 dark:text-slate-400 text-[10px]">
+                            <div className="flex items-center gap-1.5">
+                              <div className="flex items-center gap-1 text-gray-500 dark:text-slate-400 text-xs">
                                 <Calendar className="w-3 h-3 text-gray-400" />
                                 <input 
                                   type="date"
                                   value={batch.expiryDate || ""}
                                   onChange={e => handleUpdateBatchExpiry(batch.id, batch.expiryDate, e.target.value, batch.batchLabel)}
-                                  className={`p-1 border rounded-lg font-mono text-[10px] bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 ${expiryClass}`}
+                                  className={`p-1 border rounded-lg font-mono text-xs bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 ${expiryClass}`}
                                 />
                               </div>
                               <button 
                                 type="button" 
                                 onClick={() => setDeleteConfirmBatch({ id: batch.id, label: batch.batchLabel })}
-                                className="p-1.5 border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/50 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900 active:scale-95 transition-all cursor-pointer"
+                                className="p-1 border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/50 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900 active:scale-95 transition-all cursor-pointer"
                                 title="Delete Batch record"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -1009,10 +1009,10 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                             </div>
                           </div>
 
-                          <div className="flex items-center justify-between gap-3 flex-wrap pt-1 border-t border-gray-200/60 dark:border-slate-800">
-                            <div className="flex items-center gap-3 font-mono text-[11px] text-gray-600 dark:text-slate-300">
+                          <div className="flex items-center justify-between gap-2 flex-wrap pt-1 border-t border-gray-200/60 dark:border-slate-800">
+                            <div className="flex items-center gap-2 font-mono text-xs text-gray-600 dark:text-slate-300">
                               <div className="flex items-center gap-1">
-                                <span className="text-gray-400 dark:text-slate-400 text-[10px]">Cost: ₱</span>
+                                <span className="text-gray-500 dark:text-slate-400 text-xs font-bold">Cost: ₱</span>
                                 <input 
                                   type="text"
                                   value={displayCost}
@@ -1026,12 +1026,12 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                                       setLocalCosts(prev => { const n = { ...prev }; delete n[batch.id]; return n })
                                     }
                                   }}
-                                  className="w-16 px-1.5 py-0.5 border rounded-lg bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white font-mono text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                  className="w-16 px-1.5 py-0.5 border rounded-lg bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white font-mono text-xs font-bold focus:outline-none focus:ring-1 focus:ring-blue-500"
                                 />
                               </div>
 
                               <div className="flex items-center gap-1">
-                                <span className="text-gray-400 dark:text-slate-400 text-[10px]">Price: ₱</span>
+                                <span className="text-gray-500 dark:text-slate-400 text-xs font-bold">Price: ₱</span>
                                 <input 
                                   type="text"
                                   value={displayPrice}
@@ -1045,7 +1045,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                                       setLocalPrices(prev => { const n = { ...prev }; delete n[batch.id]; return n })
                                     }
                                   }}
-                                  className="w-16 px-1.5 py-0.5 border rounded-lg bg-white dark:bg-slate-800 dark:border-slate-700 font-bold text-gray-900 dark:text-white text-[10px] focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                  className="w-16 px-1.5 py-0.5 border rounded-lg bg-white dark:bg-slate-800 dark:border-slate-700 font-bold text-gray-900 dark:text-white text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
                                 />
                               </div>
                             </div>
@@ -1159,23 +1159,23 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
               )}
 
               {/* Provision New Batch and Manufacturer Selector */}
-              <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border dark:border-slate-700 shadow-xs space-y-4 h-fit">
+              <div className="bg-white dark:bg-slate-800 p-3.5 rounded-xl border dark:border-slate-700 shadow-xs space-y-3 h-fit">
                 <h4 className="font-bold text-gray-800 dark:text-white text-xs tracking-wide flex items-center gap-1.5 border-b dark:border-slate-700 pb-2">
                   <Plus className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                   Provision New Batch
                 </h4>
 
                 {errorMessage && (
-                  <div className="p-2.5 bg-red-50 dark:bg-red-950/60 border border-red-100 dark:border-red-900 rounded-lg text-red-600 dark:text-red-300 flex items-center gap-1.5 font-bold">
-                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <div className="p-2 bg-red-50 dark:bg-red-950/60 border border-red-100 dark:border-red-900 rounded-lg text-red-600 dark:text-red-300 flex items-center gap-1.5 font-bold text-xs">
+                    <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
                     <span>{errorMessage}</span>
                   </div>
                 )}
 
-                <form onSubmit={handleCreateBatch} className="space-y-3">
+                <form onSubmit={handleCreateBatch} className="space-y-2.5">
                   <div className="space-y-1 relative" ref={manufacturerDropdownRef}>
                     <div className="flex items-center justify-between">
-                      <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] tracking-wider">Manufacturer Brand Name</label>
+                      <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[10px] tracking-wider">Manufacturer Brand Name</label>
                       {itemManufacturer && (
                         <button
                           type="button"
@@ -1183,7 +1183,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                             setItemManufacturer("")
                             setShowManufacturerSuggestions(false)
                           }}
-                          className="text-[9px] text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 font-bold cursor-pointer"
+                          className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-slate-200 font-bold cursor-pointer"
                         >
                           Clear
                         </button>
@@ -1209,7 +1209,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                     {showManufacturerSuggestions && matchingManufacturers.length > 0 && (
                       <div className="absolute top-full left-0 right-0 z-30 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl overflow-hidden max-h-48 overflow-y-auto animate-in fade-in duration-100 font-sans">
                         <div className="p-1.5 space-y-0.5">
-                          <p className="px-2 py-1 text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                          <p className="px-2 py-1 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
                             Suggested Brands ({matchingManufacturers.length})
                           </p>
                           {matchingManufacturers.map(brand => (
@@ -1218,16 +1218,17 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                               type="button"
                               onMouseDown={e => {
                                 e.preventDefault()
+                                itemManufacturer
                                 setItemManufacturer(brand)
                                 setShowManufacturerSuggestions(false)
                               }}
-                              className="w-full text-left px-2.5 py-1.5 text-xs font-semibold rounded-lg text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-blue-950/60 hover:text-blue-600 dark:hover:text-blue-400 flex items-center justify-between transition-colors cursor-pointer"
+                              className="w-full text-left px-2 py-1 text-xs font-semibold rounded-lg text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-blue-950/60 hover:text-blue-600 dark:hover:text-blue-400 flex items-center justify-between transition-colors cursor-pointer"
                             >
                               <span className="flex items-center gap-1.5 truncate">
-                                <Building2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                                <Building2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                                 <span className="truncate">{brand}</span>
                               </span>
-                              <span className="text-[9px] text-blue-600 dark:text-blue-400 uppercase font-bold shrink-0">Use</span>
+                              <span className="text-[10px] text-blue-600 dark:text-blue-400 uppercase font-bold shrink-0">Use</span>
                             </button>
                           ))}
                         </div>
@@ -1236,7 +1237,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] tracking-wider">Batch Lot Code Label *</label>
+                    <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[10px] tracking-wider">Batch Lot Code Label *</label>
                     <input 
                       type="text" 
                       required 
@@ -1249,7 +1250,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] tracking-wider">Initial Stock Units Quantity *</label>
+                    <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[10px] tracking-wider">Initial Stock Units Quantity *</label>
                     <div className="flex items-center gap-1.5 w-full">
                       <input 
                         type="number" 
@@ -1269,7 +1270,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                           const current = parseInt(batchQty) || 0
                           setBatchQty(String(current + 100))
                         }}
-                        className="shrink-0 px-2.5 py-2 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                        className="shrink-0 px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs rounded-lg transition-all shadow-xs flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 whitespace-nowrap"
                         title="Add 1 Box (100 units)"
                       >
                         <Package className="w-3.5 h-3.5 shrink-0" />
@@ -1281,7 +1282,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
 
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1">
-                      <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] tracking-wider">Supply Cost (₱)</label>
+                      <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[10px] tracking-wider">Supply Cost (₱)</label>
                       <input 
                         type="number" 
                         step="0.01"
@@ -1293,7 +1294,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                     </div>
 
                     <div className="space-y-1">
-                      <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] tracking-wider">Selling Price (₱)</label>
+                      <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[10px] tracking-wider">Selling Price (₱)</label>
                       <input 
                         type="number" 
                         step="0.01"
@@ -1306,7 +1307,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[9px] tracking-wider">Product Expiration Date</label>
+                    <label className="block text-gray-500 dark:text-slate-400 font-bold uppercase text-[10px] tracking-wider">Product Expiration Date</label>
                     <input 
                       type="date" 
                       disabled={isProcessing}
@@ -1319,7 +1320,7 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
                   <button 
                     type="submit" 
                     disabled={isProcessing || !batchLabel.trim() || !batchQty || parseInt(batchQty) <= 0}
-                    className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-xs text-xs tracking-wide transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer active:scale-95"
+                    className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-xs text-xs tracking-wide transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer active:scale-95"
                   >
                     {isProcessing ? "Adding Lot Record..." : "Register Batch Inventory"}
                   </button>
@@ -1408,12 +1409,12 @@ export function StockAdjustment({ currentOperator, inventory, categoriesList, fe
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-bold text-gray-800 dark:text-white text-sm">Bulk Stock Management</h3>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300 font-bold uppercase">
+                <h3 className="font-bold text-gray-800 dark:text-white text-base">Bulk Stock Management</h3>
+                <span className="text-xs px-2.5 py-0.5 rounded-full bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-slate-300 font-bold uppercase">
                   {isBulkCollapsed ? "Collapsible Section" : "Expanded"}
                 </span>
               </div>
-              <p className="text-[10px] text-gray-500 dark:text-slate-400 mt-0.5">
+              <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
                 Download Excel template pre-filled with product names, or upload Excel (.xlsx, .xls, .csv) files to update stock quantities.
               </p>
             </div>

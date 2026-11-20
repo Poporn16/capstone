@@ -60,7 +60,6 @@ export function POSCheckout({
   }
 
   const [showReceipt, setShowReceipt] = useState(false)
-  const [showOthersModal, setShowOthersModal] = useState(false)
   const [lastSale, setLastSale] = useState<any>(null)
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
   
@@ -217,6 +216,15 @@ export function POSCheckout({
 
   const visibleGroups = uniqueGroups
 
+  // Helper: Checks if a batch expiration is within 3 months (90 days) -> Automatic 50% Off
+  const isBatchExpiringSoon = (expiryDate?: string | null): { isExpiring: boolean; daysLeft: number } => {
+    if (!expiryDate) return { isExpiring: false, daysLeft: Infinity }
+    const expiryMs = new Date(expiryDate).getTime()
+    if (isNaN(expiryMs)) return { isExpiring: false, daysLeft: Infinity }
+    const daysLeft = Math.ceil((expiryMs - Date.now()) / (1000 * 60 * 60 * 24))
+    return { isExpiring: daysLeft <= 90, daysLeft }
+  }
+
   const getItemBatchAwarePrice = (item: InventoryItem, quantity: number): number => {
     if (!item.batches || item.batches.length === 0) return (item.price || 0) * quantity
 
@@ -234,7 +242,10 @@ export function POSCheckout({
     for (const batch of sortedBatches) {
       if (remainingQty <= 0) break
       const qtyFromBatch = Math.min(remainingQty, batch.stock)
-      totalBatchPrice += qtyFromBatch * (batch.price || item.price || 0)
+      const isExpiring = isBatchExpiringSoon(batch.expiryDate).isExpiring
+      const rawPrice = batch.price || item.price || 0
+      const effectivePrice = isExpiring ? Math.round(rawPrice * 0.5 * 100) / 100 : rawPrice
+      totalBatchPrice += qtyFromBatch * effectivePrice
       remainingQty -= qtyFromBatch
     }
 
@@ -242,7 +253,7 @@ export function POSCheckout({
       totalBatchPrice += remainingQty * (item.price || 0)
     }
 
-    return totalBatchPrice
+    return Math.round(totalBatchPrice * 100) / 100
   }
 
   const getCartItemKey = (ci: CartItem) => {
@@ -412,12 +423,19 @@ export function POSCheckout({
   }
 
   const getCartItemUnitPrice = (ci: CartItem): number => {
-    if (ci.batch && ci.batch.price > 0) return ci.batch.price
+    if (ci.batch && ci.batch.price > 0) {
+      const isExpiring = isBatchExpiringSoon(ci.batch.expiryDate).isExpiring
+      return isExpiring ? Math.round(ci.batch.price * 0.5 * 100) / 100 : ci.batch.price
+    }
     return getItemBatchAwarePrice(ci.item, 1)
   }
 
   const getCartItemLineTotal = (ci: CartItem): number => {
-    if (ci.batch && ci.batch.price > 0) return ci.batch.price * ci.quantity
+    if (ci.batch && ci.batch.price > 0) {
+      const isExpiring = isBatchExpiringSoon(ci.batch.expiryDate).isExpiring
+      const unitPrice = isExpiring ? Math.round(ci.batch.price * 0.5 * 100) / 100 : ci.batch.price
+      return Math.round(unitPrice * ci.quantity * 100) / 100
+    }
     return getItemBatchAwarePrice(ci.item, ci.quantity)
   }
 
@@ -479,7 +497,7 @@ export function POSCheckout({
     return "NONE"
   }
 
-  const isOthersActive = ["naac", "soloparent", "custom"].includes(discountType)
+  const isOthersActive = discountType === "custom"
 
   // Bi-directional Auto-Fill Handlers
   const handleIdNumberChange = (inputVal: string) => {
@@ -609,9 +627,9 @@ export function POSCheckout({
     const trimmedCustomer = customerName.trim()
     const trimmedIdNumber = customerIdNumber.trim()
 
-    // Validation Error: Required ONLY on discounted checkouts (Regular sale is optional)
-    if (discountType !== "none" && (!trimmedCustomer || !trimmedIdNumber)) {
-      const errMsg = "Customer Name and ID Number are required before completing a discounted checkout."
+    // Validation Error: Required ONLY on statutory discounted checkouts (Senior/PWD/Solo Parent/NAAC)
+    if (isStatutoryDiscount && (!trimmedCustomer || !trimmedIdNumber)) {
+      const errMsg = "Customer Name and ID Number are required before completing a Senior/PWD/Solo Parent/NAAC discounted checkout."
       setCheckoutError(errMsg)
       triggerScanToast(errMsg, "warning")
       return
@@ -793,16 +811,16 @@ export function POSCheckout({
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 text-xs font-medium">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 text-xs font-sans">
         <div className="lg:col-span-2 space-y-3 flex flex-col">
           {/* Top Search Bar & Category Pills */}
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xs border border-slate-200/80 dark:border-slate-700 p-4 space-y-3 shrink-0 transition-colors">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xs border border-slate-200/80 dark:border-slate-700 p-3.5 space-y-2.5 shrink-0 transition-colors">
             
             {currentOperator && (
-              <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-slate-100 dark:border-slate-700/60 text-[11px]">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-slate-700/60 text-xs">
                 <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-lg bg-[#1b5e59] text-white flex items-center justify-center font-bold text-[10px] shadow-xs">
-                    <User className="w-3.5 h-3.5" />
+                  <div className="w-5 h-5 rounded-md bg-[#1b5e59] text-white flex items-center justify-center font-bold text-[10px] shadow-xs">
+                    <User className="w-3 h-3" />
                   </div>
                   <span className="text-slate-500 dark:text-slate-400 font-semibold">Terminal Cashier:</span>
                   <span className="font-extrabold text-slate-900 dark:text-white text-xs">{currentOperator.displayName}</span>
@@ -813,14 +831,14 @@ export function POSCheckout({
                 
                 <div className="flex items-center gap-2">
                   {hasActiveShift ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 font-bold text-[9px] border border-emerald-300 dark:border-emerald-800">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 font-bold text-[10px] border border-emerald-300 dark:border-emerald-800">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Shift Active
                     </span>
                   ) : (
                     <button
                       type="button"
                       onClick={onOpenAttendanceModal}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 font-bold text-[9px] border border-rose-300 dark:border-rose-800 hover:bg-rose-200 cursor-pointer"
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 font-bold text-[10px] border border-rose-300 dark:border-rose-800 hover:bg-rose-200 cursor-pointer"
                     >
                       <ShieldAlert className="w-3 h-3 text-rose-600" /> Time In Required
                     </button>
@@ -831,7 +849,7 @@ export function POSCheckout({
             )}
 
             {/* Search Input & Category Dropdown */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
               <div className="relative flex-1 flex items-center">
                 <input 
                   type="text" 
@@ -861,13 +879,13 @@ export function POSCheckout({
                       }
                     }
                   }}
-                  className="w-full pl-4 pr-10 py-2.5 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-white rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-[#1b5e59]/25 focus:border-[#1b5e59] dark:focus:ring-[#2dd4bf]/25 dark:focus:border-[#2dd4bf] transition-all placeholder:text-slate-400 font-medium" 
+                  className="w-full pl-3.5 pr-8 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-white rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-[#1b5e59]/25 focus:border-[#1b5e59] dark:focus:ring-[#2dd4bf]/25 dark:focus:border-[#2dd4bf] transition-all placeholder:text-slate-400 font-medium" 
                 />
                 {query && (
                   <button 
                     type="button" 
                     onClick={() => handleQueryChange("")}
-                    className="absolute right-3 p-1 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
+                    className="absolute right-2.5 p-1 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
                     title="Clear search"
                     aria-label="Clear search input"
                   >
@@ -877,13 +895,13 @@ export function POSCheckout({
               </div>
 
               {/* Category Dropdown */}
-              <div className="relative sm:w-60 shrink-0">
+              <div className="relative sm:w-56 shrink-0">
                 <select
                   id="pos-category-select"
                   aria-label="Filter by category"
                   value={activeCategoryTab}
                   onChange={(e) => handleCategoryTabChange(e.target.value)}
-                  className="w-full px-4 py-2.5 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-white rounded-xl text-xs font-bold uppercase tracking-wider focus:outline-none focus:ring-2 focus:ring-[#1b5e59]/25 focus:border-[#1b5e59] dark:focus:ring-[#2dd4bf]/25 dark:focus:border-[#2dd4bf] cursor-pointer shadow-2xs transition-colors"
+                  className="w-full px-3 py-2 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-white rounded-xl text-xs font-bold uppercase tracking-wider focus:outline-none focus:ring-2 focus:ring-[#1b5e59]/25 focus:border-[#1b5e59] dark:focus:ring-[#2dd4bf]/25 dark:focus:border-[#2dd4bf] cursor-pointer shadow-2xs transition-colors"
                 >
                   <option value="all">ALL CATEGORIES</option>
                   <option value="unmarked category">UNMARKED CATEGORY</option>
@@ -953,7 +971,7 @@ export function POSCheckout({
                       </div>
                       <div className="font-bold text-gray-900 dark:text-white text-xs leading-snug mt-1.5">{item.name}</div>
                       <div className="flex justify-between items-center pt-2 mt-1.5 font-mono border-t border-gray-200/60 dark:border-slate-700/60">
-                        <span className="text-gray-500 dark:text-slate-400 text-[9px] font-normal">{item.barcode || "No Barcode"}</span>
+                        <span className="text-gray-500 dark:text-slate-400 text-[10px] font-normal">{item.barcode || "No Barcode"}</span>
                         <span className="text-[#1b5e59] dark:text-[#2dd4bf] font-bold text-xs">₱{displayUnitPrice.toFixed(2)}</span>
                       </div>
                     </button>
@@ -1025,11 +1043,11 @@ export function POSCheckout({
                       <div className="font-bold text-gray-900 dark:text-white text-xs leading-snug mt-1.5 line-clamp-2 break-words" title={displayName}>
                         {displayName}
                       </div>
-                      <div className="mt-2 flex items-center justify-between text-[10px] pt-1.5 border-t border-gray-200/60 dark:border-slate-700/60">
+                      <div className="mt-2 flex items-center justify-between text-xs pt-1.5 border-t border-gray-200/60 dark:border-slate-700/60">
                         {hasVariants ? (
-                          <span className="text-[9px] text-[#1b5e59] dark:text-[#2dd4bf] font-bold">{itemsInGroup.length} variants</span>
+                          <span className="text-[10px] text-[#1b5e59] dark:text-[#2dd4bf] font-bold">{itemsInGroup.length} variants</span>
                         ) : (
-                          <span className="text-[9px] text-gray-500 dark:text-slate-400 font-mono">{primaryItem?.barcode || "No Barcode"}</span>
+                          <span className="text-[10px] text-gray-500 dark:text-slate-400 font-mono">{primaryItem?.barcode || "No Barcode"}</span>
                         )}
                         <span className="text-[#1b5e59] dark:text-[#2dd4bf] font-bold text-xs font-mono ml-auto">
                           ₱{displayUnitPrice.toFixed(2)}
@@ -1094,12 +1112,17 @@ export function POSCheckout({
                       return (
                         <div key={cartKey} className={`flex justify-between items-center px-2.5 py-1.5 bg-white dark:bg-slate-800 animate-in fade-in slide-in-from-top-1 duration-150 ${itemIdx < groupItems.length - 1 ? 'border-b border-dashed border-slate-100 dark:border-slate-700' : ''}`}>
                           <div className="flex-1 min-w-0 pr-2">
-                            <p className="font-bold text-slate-900 dark:text-white truncate text-[10px]">{ci.item.name}</p>
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-slate-400 font-mono tabular-nums text-[9px]">₱{avgUnitPrice.toFixed(2)} / pc</span>
+                            <p className="font-bold text-slate-900 dark:text-white truncate text-xs">{ci.item.name}</p>
+                            <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                              <span className="text-slate-500 dark:text-slate-400 font-mono tabular-nums text-xs font-semibold">₱{avgUnitPrice.toFixed(2)} / pc</span>
                               {ci.batch && (
-                                <span className="text-[9px] font-bold text-[#1b5e59] dark:text-[#2dd4bf] bg-emerald-50 dark:bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-200/60 dark:border-emerald-800/60">
+                                <span className="text-xs font-bold text-[#1b5e59] dark:text-[#2dd4bf] bg-emerald-50 dark:bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-200/60 dark:border-emerald-800/60">
                                   {ci.batch.manufacturer || ci.batch.batchLabel || "Batch"}
+                                </span>
+                              )}
+                              {((ci.batch && isBatchExpiringSoon(ci.batch.expiryDate).isExpiring) || (!ci.batch && ci.item.batches?.some(b => b.stock > 0 && isBatchExpiringSoon(b.expiryDate).isExpiring))) && (
+                                <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/80 px-1.5 py-0.5 rounded border border-amber-300 dark:border-amber-800">
+                                  ⚡ 50% OFF (Exp &lt; 90d)
                                 </span>
                               )}
                             </div>
@@ -1152,7 +1175,7 @@ export function POSCheckout({
 
           {/* Fixed Bottom Section: Totals, Discounts, Payment, Complete Button */}
           <div className="shrink-0 pt-2 border-t dark:border-slate-700 space-y-2">
-            <div className="space-y-1 text-slate-600 dark:text-slate-300 text-[11px]">
+            <div className="space-y-1 text-slate-600 dark:text-slate-300 text-xs">
               <div className="flex justify-between">
                 <span>Gross Total Price:</span>
                 <span className="font-mono tabular-nums">₱{subtotal.toFixed(2)}</span>
@@ -1171,14 +1194,14 @@ export function POSCheckout({
                 <span>Value Added Tax (12%):</span>
                 <span className="font-mono tabular-nums">{isStatutoryDiscount ? "₱0.00 (Exempt)" : `₱${vat.toFixed(2)}`}</span>
               </div>
-              <div className="flex justify-between border-t border-dashed dark:border-slate-700 pt-1.5 font-bold text-slate-900 dark:text-white text-xs">
+              <div className="flex justify-between border-t border-dashed dark:border-slate-700 pt-1.5 font-bold text-slate-900 dark:text-white text-sm">
                 <span>Total Bill Due:</span>
-                <span className="text-sm text-[#1b5e59] dark:text-[#2dd4bf] font-bold font-mono tabular-nums">₱{total.toFixed(2)}</span>
+                <span className="text-base text-[#1b5e59] dark:text-[#2dd4bf] font-bold font-mono tabular-nums">₱{total.toFixed(2)}</span>
               </div>
             </div>
 
             {paymentMethod === "cash" && cart.length > 0 && (
-              <div className="space-y-2 p-2.5 bg-emerald-50/40 dark:bg-emerald-950/30 rounded-xl border border-emerald-100 dark:border-emerald-900/50 text-[11px]">
+              <div className="space-y-2 p-2.5 bg-emerald-50/40 dark:bg-emerald-950/30 rounded-xl border border-emerald-100 dark:border-emerald-900/50 text-xs">
                 <div className="flex justify-between items-center gap-2">
                   <label className="font-bold whitespace-nowrap text-slate-700 dark:text-slate-200">Cash Rendered:</label>
                   <input 
@@ -1198,7 +1221,7 @@ export function POSCheckout({
                       setCashReceived(sanitized)
                     }} 
                     placeholder="0.00" 
-                    className="w-28 text-right p-1.5 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-lg font-mono tabular-nums font-bold text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-[#1b5e59]/25 focus:border-[#1b5e59] dark:focus:ring-[#2dd4bf]/25 dark:focus:border-[#2dd4bf]" 
+                    className="w-28 text-right p-1.5 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-lg font-mono tabular-nums font-bold text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-[#1b5e59]/25 focus:border-[#1b5e59] dark:focus:ring-[#2dd4bf]/25 dark:focus:border-[#2dd4bf]" 
                   />
                 </div>
                 
@@ -1263,34 +1286,34 @@ export function POSCheckout({
                 )}
               </div>
 
-              <div className="grid grid-cols-3 gap-1.5">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
                 <button 
                   type="button" 
-                  onClick={() => setDiscountType(prev => prev === "senior" ? "none" : "senior")} 
-                  className={`p-1.5 border rounded-lg text-[9px] font-bold uppercase transition-all focus-visible:ring-2 focus-visible:ring-[#1b5e59] ${discountType==='senior'?'bg-[#1b5e59] text-white border-[#1b5e59] dark:bg-[#2dd4bf] dark:text-[#042f2e] dark:border-[#2dd4bf] shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
+                  onClick={() => { setDiscountType(prev => prev === "senior" ? "none" : "senior"); setCustomDiscountPercent(0); }} 
+                  className={`p-2 border rounded-lg text-xs font-bold uppercase transition-all focus-visible:ring-2 focus-visible:ring-[#1b5e59] cursor-pointer ${discountType==='senior'?'bg-[#1b5e59] text-white border-[#1b5e59] dark:bg-[#2dd4bf] dark:text-[#042f2e] dark:border-[#2dd4bf] shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
                 >
                   SENIOR (20%)
                 </button>
                 <button 
                   type="button" 
-                  onClick={() => setDiscountType(prev => prev === "pwd" ? "none" : "pwd")} 
-                  className={`p-1.5 border rounded-lg text-[9px] font-bold uppercase transition-all focus-visible:ring-2 focus-visible:ring-[#1b5e59] ${discountType==='pwd'?'bg-[#1b5e59] text-white border-[#1b5e59] dark:bg-[#2dd4bf] dark:text-[#042f2e] dark:border-[#2dd4bf] shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
+                  onClick={() => { setDiscountType(prev => prev === "pwd" ? "none" : "pwd"); setCustomDiscountPercent(0); }} 
+                  className={`p-2 border rounded-lg text-xs font-bold uppercase transition-all focus-visible:ring-2 focus-visible:ring-[#1b5e59] cursor-pointer ${discountType==='pwd'?'bg-[#1b5e59] text-white border-[#1b5e59] dark:bg-[#2dd4bf] dark:text-[#042f2e] dark:border-[#2dd4bf] shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
                 >
                   PWD (20%)
                 </button>
                 <button 
                   type="button" 
-                  onClick={() => {
-                    if (["soloparent", "naac", "custom"].includes(discountType)) {
-                      setDiscountType("none")
-                      setCustomDiscountPercent(0)
-                    } else {
-                      setShowOthersModal(true)
-                    }
-                  }} 
-                  className={`p-1.5 border rounded-lg text-[9px] font-bold uppercase tracking-wide truncate transition-all focus-visible:ring-2 focus-visible:ring-[#1b5e59] ${isOthersActive?'bg-[#1b5e59] text-white border-[#1b5e59] dark:bg-[#2dd4bf] dark:text-[#042f2e] dark:border-[#2dd4bf] shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
+                  onClick={() => { setDiscountType(prev => prev === "soloparent" ? "none" : "soloparent"); setCustomDiscountPercent(0); }} 
+                  className={`p-2 border rounded-lg text-xs font-bold uppercase transition-all focus-visible:ring-2 focus-visible:ring-[#1b5e59] cursor-pointer ${discountType==='soloparent'?'bg-[#1b5e59] text-white border-[#1b5e59] dark:bg-[#2dd4bf] dark:text-[#042f2e] dark:border-[#2dd4bf] shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
                 >
-                  {discountType === "soloparent" ? "SOLO (10%)" : discountType === "naac" ? "NAAC (20%)" : discountType === "custom" ? `CUSTOM (${customDiscountPercent}%)` : "OTHERS..."}
+                  SOLO PARENT (10%)
+                </button>
+                <button 
+                  type="button" 
+                  onClick={() => { setDiscountType(prev => prev === "naac" ? "none" : "naac"); setCustomDiscountPercent(0); }} 
+                  className={`p-2 border rounded-lg text-xs font-bold uppercase transition-all focus-visible:ring-2 focus-visible:ring-[#1b5e59] cursor-pointer ${discountType==='naac'?'bg-[#1b5e59] text-white border-[#1b5e59] dark:bg-[#2dd4bf] dark:text-[#042f2e] dark:border-[#2dd4bf] shadow-2xs':'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border-gray-300 dark:border-slate-700 hover:bg-gray-50'}`}
+                >
+                  NAAC (20%)
                 </button>
               </div>
 
@@ -1602,7 +1625,7 @@ export function POSCheckout({
                 (paymentMethod === "cash" && isCashShort) ||
                 (paymentMethod === "other" && !referenceNumber.trim() && !paymentProofPhoto)
               } 
-              className="w-full py-3 bg-[#1b5e59] hover:bg-[#154b47] active:bg-[#103b38] dark:bg-[#2dd4bf] dark:hover:bg-[#14b8a6] dark:text-[#042f2e] text-white rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 text-xs tracking-wider uppercase shrink-0 flex items-center justify-center gap-2 cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
+              className="w-full py-2.5 bg-[#1b5e59] hover:bg-[#154b47] active:bg-[#103b38] dark:bg-[#2dd4bf] dark:hover:bg-[#14b8a6] dark:text-[#042f2e] text-white rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 text-xs tracking-wider uppercase shrink-0 flex items-center justify-center gap-2 cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
             >
               Complete Sale Transaction
             </button>
@@ -1610,44 +1633,6 @@ export function POSCheckout({
         </div>
       </div>
     </div>
-
-      {showOthersModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
-          <div className="bg-white dark:bg-slate-800 rounded-xl p-5 max-w-sm w-full border dark:border-slate-700 space-y-4">
-            <h3 className="text-[#1b5e59] dark:text-[#2dd4bf] font-bold text-sm mb-1 border-b dark:border-slate-700 pb-1">Other Privileges</h3>
-            <div className="grid grid-cols-3 gap-2">
-              <button type="button" onClick={()=>{setDiscountType(prev => prev === "soloparent" ? "none" : "soloparent"); setCustomDiscountPercent(0); setShowOthersModal(false);}} className={`p-2 border rounded-xl font-bold text-center text-xs transition-all cursor-pointer ${discountType === 'soloparent' ? 'border-[#1b5e59] bg-[#1b5e59]/10 text-[#1b5e59] dark:border-[#2dd4bf] dark:bg-[#2dd4bf]/15 dark:text-[#2dd4bf]':'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100'}`}>SOLO PARENT</button>
-              <button type="button" onClick={()=>{setDiscountType(prev => prev === "naac" ? "none" : "naac"); setCustomDiscountPercent(0); setShowOthersModal(false);}} className={`p-2 border rounded-xl font-bold text-center text-xs transition-all cursor-pointer ${discountType === 'naac' ? 'border-[#1b5e59] bg-[#1b5e59]/10 text-[#1b5e59] dark:border-[#2dd4bf] dark:bg-[#2dd4bf]/15 dark:text-[#2dd4bf]':'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100'}`}>NAAC</button>
-              <button type="button" onClick={()=>{setDiscountType("custom");}} className={`p-2 border rounded-xl font-bold text-center text-xs transition-all cursor-pointer ${discountType === 'custom' ? 'border-amber-500 bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300':'bg-gray-50 dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-200 hover:bg-gray-100'}`}>CUSTOM</button>
-            </div>
-
-            {discountType === "custom" && (
-              <div className="flex items-center gap-2 pt-2 border-t dark:border-slate-700">
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  placeholder="Percent..."
-                  aria-label="Custom discount percentage"
-                  value={customDiscountPercent || ""}
-                  onChange={e => setCustomDiscountPercent(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
-                  className="w-full p-2 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-lg text-xs font-bold focus:ring-2 focus:ring-[#1b5e59] dark:focus:ring-[#2dd4bf] focus:outline-none text-slate-900 dark:text-white"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowOthersModal(false)}
-                  className="px-4 py-2 bg-[#1b5e59] hover:bg-[#154b47] dark:bg-[#2dd4bf] dark:hover:bg-[#14b8a6] dark:text-[#042f2e] text-white rounded-lg font-bold text-xs cursor-pointer focus-visible:ring-2 focus-visible:ring-[#1b5e59]"
-                >
-                  Apply
-                </button>
-              </div>
-            )}
-            <div className="flex justify-end pt-2 border-t dark:border-slate-700">
-              <button type="button" onClick={() => setShowOthersModal(false)} className="px-4 py-1.5 bg-gray-100 dark:bg-slate-700 hover:bg-gray-200 dark:hover:bg-slate-600 text-gray-700 dark:text-slate-200 rounded-lg font-bold text-xs cursor-pointer focus-visible:ring-2 focus-visible:ring-gray-400">Close</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {showReceipt && lastSale && (
         <div 
